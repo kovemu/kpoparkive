@@ -35,6 +35,20 @@
   margin-bottom: 10px;
 }
 
+/* The importer converts source float:left/right into these safe semantic
+   classes because the DOM renderer deliberately strips the raw float style. */
+.root :global(.namu-float-right) {
+  float: right;
+  margin-left: 20px;
+  margin-bottom: 12px;
+}
+
+.root :global(.namu-float-left) {
+  float: left;
+  margin-right: 20px;
+  margin-bottom: 12px;
+}
+
 .root td,
 .root th {
   border: 1px solid #d6d9de;
@@ -226,7 +240,8 @@
     max-width: 100%;
     margin-left: 0;
   }
-  .root :global(table.wiki[style*="float: right"]) {
+  .root :global(.namu-float-right),
+  .root :global(.namu-float-left) {
     float: none !important;
     width: min(100%, 400px) !important;
     margin-right: auto !important;
