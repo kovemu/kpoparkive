@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
 import { parseNamuHybridSegments } from "../../../../lib/namuHybrid";
-import { normalizeNamuMirrorHtml } from "../../../../lib/namuMirrorNormalize";
-import { parseNamuRaw } from "../../../../lib/namuRawParser";
+import { buildNamuMirrorImportArtifact, NAMU_RENDER_ARTIFACT_VERSION } from "../../../../lib/namuMirrorImportArtifact";
+import { parseNamuRawCanonical } from "../../../../lib/namuRawGrammar";
 import { extractMirrorRawBundle, type RawSourceSegment } from "../../../../lib/namuRawSource";
 import { parseVisibleNamuRawSegments } from "../../../../lib/namuRawSegments";
 
@@ -72,10 +72,17 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const visible = parseVisibleNamuRawSegments(segments);
   const hybrid = parseNamuHybridSegments(segments);
   const completeRaw = Boolean(raw) && isCompleteRawFormat(source.source_format);
-  const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
+  const completeRawNodes = completeRaw ? parseNamuRawCanonical(raw) : [];
+
+  // Preview is not a second renderer pipeline. If the persisted artifact is old,
+  // rebuild it in memory through the exact importer function. This makes every
+  // RESCENE fix prove that it will also apply to the next imported group.
   const importedDomArtifact = Boolean(source.source_article_html);
-  const mirrorSource = source.source_article_html || source.raw_html || "";
-  const mirrorHtml = normalizeNamuMirrorHtml(mirrorSource);
+  const currentImporterArtifact = importedDomArtifact && source.source_render_extraction_version === NAMU_RENDER_ARTIFACT_VERSION;
+  const runtimeArtifact = currentImporterArtifact ? null : buildNamuMirrorImportArtifact(source.raw_html || "");
+  const mirrorHtml = currentImporterArtifact ? source.source_article_html || "" : runtimeArtifact?.articleHtml || "";
+  const templateCss = currentImporterArtifact ? source.source_template_css : runtimeArtifact?.templateCss || null;
+  const renderManifest = currentImporterArtifact ? source.source_render_manifest : runtimeArtifact?.manifest || null;
 
   const [assetRows, clusterDocs] = await Promise.all([
     db<AssetRow[]>(
@@ -104,7 +111,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU SOURCE MIRROR · v6 IMPORT ARTIFACT</div>
+        <div className="draftBadge">NAMU SOURCE MIRROR · IMPORTER CANONICAL</div>
       </header>
       <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
@@ -113,19 +120,19 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
             <h1>{source.source_title}</h1>
             <p>
               {completeRaw
-                ? "A complete Namu raw document is available, so this preview renders the preserved source directly."
-                : importedDomArtifact
-                  ? "This document uses the DOM skeleton, template CSS, raw fragments and media hints captured by the importer."
-                  : "Legacy import fallback: the DOM skeleton is derived from raw_html at render time until this document is re-imported."}
+                ? "A complete Namu raw document is available, so this preview renders the preserved source through the canonical grammar parser."
+                : currentImporterArtifact
+                  ? "This document renders the current persisted importer artifact."
+                  : "The stored artifact is legacy, so this preview rebuilds the current importer artifact in memory from raw_html. No preview-only repair path is used."}
             </p>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
           <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "DOM + RAW"} />
-          <Metric label="Import DOM artifact" value={importedDomArtifact ? "YES" : "LEGACY"} />
-          <Metric label="Template CSS" value={source.source_template_css?.trim() ? "IMPORTED" : "RUNTIME"} />
-          <Metric label="Render artifact" value={source.source_render_extraction_version || "runtime"} />
+          <Metric label="Importer artifact" value={currentImporterArtifact ? "PERSISTED" : "RUNTIME CURRENT"} />
+          <Metric label="Template CSS" value={templateCss?.trim() ? "IMPORTED" : "NONE"} />
+          <Metric label="Render artifact" value={currentImporterArtifact ? source.source_render_extraction_version || "unknown" : NAMU_RENDER_ARTIFACT_VERSION} />
           <Metric label="Mirror raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
           <Metric label="Cluster mapped images" value={String(Object.keys(assets).length)} />
         </div>
@@ -134,16 +141,16 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
           <h2 className="sectionTitle">Document preview</h2>
           {completeRaw
             ? <NamuRawRenderer nodes={completeRawNodes} assets={assets} />
-            : <NamuMirrorDomRenderer html={mirrorHtml} assets={assets} templateCss={source.source_template_css} />}
+            : <NamuMirrorDomRenderer html={mirrorHtml} assets={assets} templateCss={templateCss} />}
         </section>
 
         <details style={{ marginTop: 28 }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Source diagnostics</summary>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Importer grammar diagnostics</summary>
           <div style={{ marginTop: 12, padding: 16, border: "1px solid #d7dde5", borderRadius: 8, background: "#f8fafc" }}>
             <p style={{ marginTop: 0 }}>
-              Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; DOM + RAW mode preserves the mirror's parent layout while replacing raw code blocks in place.
+              Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; DOM + RAW mode preserves the mirror parent layout and applies the same grammar/import artifact pipeline used for future imports.
             </p>
-            {source.source_render_manifest && <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12, lineHeight: 1.5 }}>{JSON.stringify(source.source_render_manifest, null, 2)}</pre>}
+            {renderManifest && <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12, lineHeight: 1.5 }}>{JSON.stringify(renderManifest, null, 2)}</pre>}
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0, fontSize: 13, lineHeight: 1.55 }}>{raw || "No raw syntax blocks recovered."}</pre>
           </div>
         </details>
