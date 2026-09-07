@@ -37,13 +37,13 @@ async function supabaseGet<T>(path: string): Promise<T> {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
     },
     next: { revalidate: 300 },
   });
 
   if (!response.ok) {
-    throw new Error(`Supabase request failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`Supabase request failed: ${response.status} ${body}`);
   }
 
   return response.json() as Promise<T>;
