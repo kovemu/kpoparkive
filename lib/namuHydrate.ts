@@ -1,4 +1,4 @@
-import type { ParsedSection } from "./namuParser";
+import type { ParsedBlock, ParsedSection } from "./namuParser";
 
 type AssetRow = {
   asset_type: string;
@@ -26,59 +26,74 @@ export function hydrateNamuSections(sections: ParsedSection[], assets: AssetRow[
   let skippedAssets = 0;
   let placeholders = 0;
 
-  const hydrated = sections.map((section) => {
+  const hydrated: ParsedSection[] = sections.map((section) => {
     const seenImages = new Set<string>();
-    const content = section.content.flatMap((block) => {
+    const content: ParsedBlock[] = [];
+
+    for (const block of section.content) {
       if (block.type === "image") {
         const asset = byKey.get(`image:${block.source_ref}`);
         if (asset?.status === "skipped") {
           skippedAssets += 1;
-          return [];
+          continue;
         }
         if (asset?.status === "resolved" && (asset.storage_path || asset.resolved_url)) {
           const dedupeKey = asset.storage_path || asset.resolved_url || block.source_ref;
-          if (seenImages.has(dedupeKey)) return [];
+          if (seenImages.has(dedupeKey)) continue;
           seenImages.add(dedupeKey);
           resolvedAssets += 1;
-          return [{ ...block, storage_path: asset.storage_path || undefined, url: asset.resolved_url || block.url } as typeof block & { storage_path?: string }];
+          content.push({
+            ...block,
+            storage_path: asset.storage_path || undefined,
+            url: asset.resolved_url || block.url,
+          } as ParsedBlock);
+          continue;
         }
         placeholders += 1;
-        return [block];
+        content.push(block);
+        continue;
       }
 
       if (block.type === "internal-link") {
         const asset = byKey.get(`internal_link:${block.target}`);
         if (asset?.status === "skipped") {
           skippedAssets += 1;
-          return [{ type: "paragraph" as const, text: block.label }];
+          content.push({ type: "paragraph", text: block.label });
+          continue;
         }
         if (asset?.status === "resolved") {
           const slug = slugFromResolvedUrl(asset.resolved_url);
           if (slug) {
             resolvedAssets += 1;
-            return [{ ...block, slug } as typeof block & { slug?: string }];
+            content.push({ ...block, slug } as ParsedBlock);
+            continue;
           }
         }
-        return [block];
+        content.push(block);
+        continue;
       }
 
       if (block.type === "external-link") {
         const asset = byKey.get(`external_link:${block.url}`);
         if (asset?.status === "resolved" && asset.resolved_url) {
           resolvedAssets += 1;
-          return [{ ...block, url: asset.resolved_url }];
+          content.push({ ...block, url: asset.resolved_url });
+        } else {
+          content.push(block);
         }
-        return [block];
+        continue;
       }
 
       if (block.type === "video") {
         const asset = byKey.get(`video:${block.url}`);
         if (asset?.status === "resolved" && asset.resolved_url) resolvedAssets += 1;
-        return [block];
+        content.push(block);
+        continue;
       }
 
-      return [block];
-    });
+      content.push(block);
+    }
+
     return { ...section, content };
   });
 
