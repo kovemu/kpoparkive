@@ -1,7 +1,8 @@
 import { parse } from "node-html-parser";
+import { normalizeNamuMirrorHtmlWithReport, type NamuMirrorSyntaxRepairReport } from "./namuMirrorNormalize";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v1";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v2-syntax-repair";
 
 export type NamuRenderManifest = {
   version: string;
@@ -19,6 +20,7 @@ export type NamuRenderManifest = {
   hasToc: boolean;
   hasSectionAnchors: boolean;
   hasRawControls: boolean;
+  syntaxRepair: NamuMirrorSyntaxRepairReport;
 };
 
 export type NamuMirrorImportArtifact = {
@@ -73,7 +75,9 @@ function hasFloatRight(style: string | undefined) {
 }
 
 export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArtifact {
-  const articleHtml = extractExactArticleHtml(html || "");
+  const rawArticleHtml = extractExactArticleHtml(html || "");
+  const normalized = normalizeNamuMirrorHtmlWithReport(rawArticleHtml);
+  const articleHtml = normalized.html;
   const rawBundle = extractMirrorRawBundle(html || "");
   const root = parse(articleHtml);
   const templateStyleBlocks = extractTemplateStyleBlocks(articleHtml);
@@ -101,7 +105,8 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
       unresolvedRawFiles: unresolvedRawFiles.slice(0, 300),
       hasToc: Boolean(root.querySelector(".toc") || root.querySelector("#toc")),
       hasSectionAnchors: Boolean(root.querySelector('[id^="s-"]')),
-      hasRawControls: rawBundle.rawBlockCount > 0,
+      hasRawControls: rawBundle.rawBlockCount > 0 || normalized.report.leakedDirectiveOpeners > 0 || normalized.report.orphanDirectiveClosers > 0,
+      syntaxRepair: normalized.report,
     },
   };
 }
