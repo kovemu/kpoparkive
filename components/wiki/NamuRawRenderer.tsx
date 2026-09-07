@@ -42,6 +42,7 @@ function findAsset(assets: AssetMap, file: string) {
   return undefined;
 }
 
+// Inline rendering intentionally mirrors the recursive source nesting.
 function nestedInlineChildren(node: NamuInline): NamuInline[] | undefined {
   if (node.type === "link" || node.type === "footnote" || node.type === "strong" || node.type === "em" || node.type === "size" || node.type === "color" || node.type === "span") return node.children;
   return undefined;
