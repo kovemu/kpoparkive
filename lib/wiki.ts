@@ -6,6 +6,10 @@ export type RichWikiCell = {
   background?: string;
   color?: string;
   align?: "left" | "center" | "right";
+  image_url?: string;
+  image_alt?: string;
+  link_url?: string;
+  link_label?: string;
 };
 
 export type WikiBlock =
