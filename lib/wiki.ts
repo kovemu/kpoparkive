@@ -27,6 +27,21 @@ export type WikiDocument = {
   sections: WikiSection[];
 };
 
+export type WikiMedia = {
+  id: string;
+  document_id: string | null;
+  bucket: string;
+  storage_path: string;
+  role: string | null;
+  caption: string | null;
+  alt_text: string | null;
+  source_credit: string | null;
+  width: number | null;
+  height: number | null;
+  mime_type: string | null;
+  sort_order: number;
+};
+
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://hukrrzhltiyirtkxmotj.supabase.co";
 const SUPABASE_KEY =
@@ -62,6 +77,12 @@ export async function getWikiDocument(slug: string): Promise<WikiDocument | null
   );
 
   return { ...document, sections };
+}
+
+export async function getWikiMedia(documentId: string): Promise<WikiMedia[]> {
+  return supabaseGet<WikiMedia[]>(
+    `media?document_id=eq.${documentId}&select=id,document_id,bucket,storage_path,role,caption,alt_text,source_credit,width,height,mime_type,sort_order&order=sort_order.asc,created_at.asc`,
+  );
 }
 
 export function getStoragePublicUrl(path: string) {
