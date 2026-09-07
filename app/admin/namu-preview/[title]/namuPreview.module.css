@@ -1,0 +1,71 @@
+.preview :global(.namuLead) {
+  display: grid;
+  gap: 12px;
+}
+
+.preview :global(.namuTableWrap) {
+  width: 100%;
+  overflow-x: auto;
+  margin: 12px 0 18px;
+}
+
+.preview :global(.namuLead .namuTableWrap) {
+  width: min(760px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.preview :global(.namuTable) {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.preview :global(.namuTable th),
+.preview :global(.namuTable td) {
+  border: 1px solid #d5dae1;
+  padding: 7px 10px;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.preview :global(.namuTable th) {
+  font-weight: 700;
+}
+
+.preview :global(.namuCellImage) {
+  display: block;
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: 520px;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.preview :global(.namuTable a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+.preview :global(.namuTable a:hover) {
+  text-decoration: underline;
+}
+
+.preview :global(.namuLead > p:first-child) {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .preview :global(.namuTable) {
+    min-width: 560px;
+    font-size: 12px;
+  }
+  .preview :global(.namuTable th),
+  .preview :global(.namuTable td) {
+    padding: 6px 7px;
+  }
+}
