@@ -47,6 +47,17 @@ function mirrorSlug(target: string) {
   return `mirror-${target.normalize("NFKC").toLowerCase().replace(/\([^)]*\)/g, "").replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "")}`;
 }
 
+function renderCellLink(url: string | undefined, label: string | undefined, fallback: string) {
+  if (!url) return fallback;
+  const text = label || fallback || url;
+  if (url.startsWith("/w/")) {
+    let target = url.slice(3).split(/[?#]/)[0];
+    try { target = decodeURIComponent(target); } catch {}
+    return <a href={`/admin/drafts/${mirrorSlug(target)}`}>{text}</a>;
+  }
+  return <a href={url} target={/^https?:\/\//.test(url) ? "_blank" : undefined} rel={/^https?:\/\//.test(url) ? "noreferrer" : undefined}>{text}</a>;
+}
+
 export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
   return (
     <>
@@ -92,6 +103,23 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
         if (block.type === "quote") return <blockquote className="accentQuote" key={index}>{block.text}</blockquote>;
         if (block.type === "callout") return <div className="accentBox" key={index}>{block.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>;
         if (block.type === "list") return <ul className="wikiList" key={index}>{block.items.map((item) => <li key={item}>{item}</li>)}</ul>;
+
+        if (block.type === "rich-table") {
+          return <div className="namuTableWrap" key={index}><table className="namuTable"><tbody>
+            {block.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => {
+              const Tag = cell.header ? "th" : "td";
+              const style: React.CSSProperties = {
+                background: cell.background,
+                color: cell.color,
+                textAlign: cell.align,
+              };
+              return <Tag key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={style}>
+                {cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || "") ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null}
+                {cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text) : cell.text}
+              </Tag>;
+            })}</tr>)}
+          </tbody></table></div>;
+        }
 
         if (block.type === "table") {
           const isReleaseTable = block.columns[0] === "Release";
