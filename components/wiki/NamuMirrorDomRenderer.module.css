@@ -7,8 +7,21 @@
   word-break: normal;
 }
 
+.root a {
+  color: #0275d8;
+  text-decoration: none;
+}
+
+.root a:hover {
+  text-decoration: underline;
+}
+
 .root :global(.RESCENE) {
   color: var(--namu-theme-fg);
+}
+
+.root :global(.RESCENE) a {
+  color: inherit;
 }
 
 .root table {
@@ -17,9 +30,15 @@
   max-width: 100%;
 }
 
+.root :global(table.wiki) {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
 .root td,
 .root th {
   border: 1px solid #d6d9de;
+  padding: 5px 10px;
   vertical-align: middle;
 }
 
@@ -41,15 +60,25 @@
 .root h5,
 .root h6 {
   position: relative;
+  clear: both;
   margin: 34px 0 18px;
   padding: 0 56px 10px 8px;
   border-bottom: 1px solid #cfd3d8;
+  color: #15171a;
+  font-weight: 700;
   line-height: 1.3;
 }
 
 .root h2 { font-size: 29px; }
 .root h3 { font-size: 24px; }
 .root h4 { font-size: 20px; }
+
+.root h2 > a:first-child,
+.root h3 > a:first-child,
+.root h4 > a:first-child {
+  color: #0275d8;
+  font-weight: 700;
+}
 
 .root ul,
 .root ol {
@@ -64,6 +93,91 @@
   margin: 12px 0;
   padding: 10px 14px;
   border-left: 4px solid #d8dde3;
+}
+
+/* NamuWiki table of contents. The mirror emits the semantic hierarchy but its
+   stylesheet is not shipped with Kpoparkive, so preserve the compact boxed UX. */
+.root :global(.toc) {
+  display: inline-block;
+  min-width: 260px;
+  max-width: calc(100% - 430px);
+  margin: 10px 0 24px 10px;
+  padding: 13px 16px 14px;
+  border: 1px solid #c9cdd2;
+  background: #fff;
+  color: #202124;
+  font-size: 15px;
+  line-height: 1.55;
+  vertical-align: top;
+}
+
+.root :global(.toc)::before {
+  content: "Contents";
+  display: block;
+  margin-bottom: 8px;
+  color: #202124;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.root :global(.toc-indent) {
+  display: block;
+}
+
+.root :global(.toc-indent) > :global(.toc-indent) {
+  margin-left: 20px;
+}
+
+.root :global(.toc-item) {
+  display: block;
+  white-space: nowrap;
+}
+
+.root :global(.toc-item) a {
+  color: #0275d8;
+}
+
+/* Common Namu inline sizing classes found in the rendered mirror HTML. */
+.root :global(.wikiSize.size-1) { font-size: 1.2em; }
+.root :global(.wikiSize.size-2) { font-size: 1.4em; }
+.root :global(.wikiSize.size-3) { font-size: 1.6em; }
+.root :global(.wikiSize.size-s1) { font-size: .9em; }
+.root :global(.wikiSize.size-s2) { font-size: .8em; }
+.root :global(.wikiSize.size-s3) { font-size: .7em; }
+.root :global(.wikiSize.size-s4) { font-size: .6em; }
+.root :global(.wikiColor) { color: inherit; }
+.root :global(.wikiFootnote) { font-size: .78em; vertical-align: super; }
+
+/* These template class rules are emitted by Namu raw #!style blocks across
+   creator pages. They are safe fallbacks even before the scoped source CSS is
+   injected, and match the semantics of Namu's album/document templates. */
+.root :global(.albums) tbody {
+  background: #fff;
+}
+
+.root :global(.albums) td {
+  width: 25%;
+  padding: 5px 0;
+  background-origin: border-box;
+  text-align: center;
+}
+
+.root :global(.albums) a {
+  text-decoration: none;
+}
+
+.root :global(.documents) td {
+  padding: 5px 0;
+  letter-spacing: -.02em;
+}
+
+.root :global(.form) {
+  display: inline-block;
+  margin: 0 2px;
+  padding: .1rem 3px;
+  border-radius: 5px;
+  background: #fff;
+  font-size: .63em;
 }
 
 .rawEmbed {
@@ -107,4 +221,15 @@
   .root h3 { font-size: 21px; }
   .root table { font-size: 13px; }
   .tabButton { min-width: 120px; }
+  .root :global(.toc) {
+    min-width: 0;
+    max-width: 100%;
+    margin-left: 0;
+  }
+  .root :global(table.wiki[style*="float: right"]) {
+    float: none !important;
+    width: min(100%, 400px) !important;
+    margin-right: auto !important;
+    margin-left: auto !important;
+  }
 }
