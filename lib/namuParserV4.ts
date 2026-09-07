@@ -95,14 +95,14 @@ function attrNumber(attrs: string, name: string) {
   return raw ? Math.max(1, Math.min(30, Number(raw))) : undefined;
 }
 
-function extractCellStyle(attrs: string, inner: string) {
+function extractCellStyle(attrs: string, inner: string): { background?: string; color?: string; align?: "left" | "center" | "right" } {
   const style = attrs.match(/style=["']([^"']*)["']/i)?.[1] || "";
   const pseudoBg = decodeEntities(inner).match(/<(?:colbgcolor|rowbgcolor|bgcolor)=([^>]+)>/i)?.[1];
   const pseudoColor = decodeEntities(inner).match(/<(?:colcolor|rowcolor|color)=([^>]+)>/i)?.[1];
   const background = safeColor(style.match(/background(?:-color)?\s*:\s*([^;]+)/i)?.[1] || pseudoBg);
   const color = safeColor(style.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i)?.[1] || pseudoColor);
   const alignRaw = (style.match(/text-align\s*:\s*(left|center|right)/i)?.[1] || attrs.match(/align=["']?(left|center|right)/i)?.[1])?.toLowerCase();
-  const align = alignRaw === "left" || alignRaw === "center" || alignRaw === "right" ? alignRaw : undefined;
+  const align: "left" | "center" | "right" | undefined = alignRaw === "left" || alignRaw === "center" || alignRaw === "right" ? alignRaw : undefined;
   return { background, color, align };
 }
 
@@ -131,9 +131,7 @@ function parseTable(html: string): ParsedBlockV4 | null {
   const rows: RichWikiCell[][] = [];
   for (const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const cells: RichWikiCell[] = [];
-    for (const cell of row[1].matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
-      cells.push(parseCell(cell[1], cell[2], cell[3]));
-    }
+    for (const cell of row[1].matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) cells.push(parseCell(cell[1], cell[2], cell[3]));
     if (cells.length && cells.some((cell) => cell.text || cell.image_url || cell.link_url)) rows.push(cells);
   }
   return rows.length ? { type: "rich-table", rows: rows.slice(0, 180) } : null;
