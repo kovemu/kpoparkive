@@ -117,6 +117,39 @@ function escapeCodeHtml(value: string) {
     .replace(/>/g, "&gt;");
 }
 
+function protectRawCodeBlocks(source: string) {
+  const blocks: string[] = [];
+  const html = source.replace(/<pre\b[^>]*>\s*<code\b[^>]*>[\s\S]*?<\/code>\s*<\/pre>/gi, (block) => {
+    const index = blocks.push(block) - 1;
+    return `<!--KPOPARKIVE_GRAMMAR_RAW_${index}-->`;
+  });
+  return { html, blocks };
+}
+
+function restoreRawCodeBlocks(source: string, blocks: string[]) {
+  return source.replace(/<!--KPOPARKIVE_GRAMMAR_RAW_(\d+)-->/g, (match, index: string) => blocks[Number(index)] ?? match);
+}
+
+/**
+ * Partial mirrors sometimes leave the literal Namu [include(...)] invocation
+ * directly in front of the HTML that is already the expansion of that include.
+ * The invocation is control syntax, not visible article text. Remove it only
+ * when a block-level rendered expansion follows immediately. If there is no
+ * expansion, preserve it so a future template evaluator can handle it.
+ */
+export function repairExpandedIncludeResiduesForRender(source: string) {
+  const protectedSource = protectRawCodeBlocks(String(source || ""));
+  let repaired = 0;
+  const html = protectedSource.html.replace(
+    /(?:\[|&#91;)include\(([\s\S]{1,3000}?)\)(?:\]|&#93;)(\s*)(?=<(?:table|div|dl|section|article|figure|aside)\b)/gi,
+    (_full, _args: string, whitespace: string) => {
+      repaired += 1;
+      return whitespace;
+    },
+  );
+  return { html: restoreRawCodeBlocks(html, protectedSource.blocks), repaired };
+}
+
 /**
  * source_article_html is a derived render artifact, so its <pre><code> payloads
  * may be structurally normalized. raw_html/source_wikitext remain byte-faithful.
