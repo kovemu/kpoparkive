@@ -79,6 +79,7 @@ export default async function NamuHybridPreviewPage({ params }: { params: Promis
         <Metric label="Raw chunks" value={String(hybrid.rawChunks)} />
         <Metric label="Rendered chunks" value={String(hybrid.renderedChunks)} />
         <Metric label="Skipped controls" value={String(hybrid.skippedControlChunks)} />
+        <Metric label="Release candidates" value={String(hybrid.releaseCandidates)} />
         <Metric label="Recovered values" value={String(hybrid.recoveredValues)} />
         <Metric label="Raw nodes" value={String(hybrid.rawNodes)} />
         <Metric label="Rendered sections" value={String(hybrid.renderedSections)} />
