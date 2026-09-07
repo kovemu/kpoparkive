@@ -36,14 +36,26 @@ function decodeBasic(value: string) {
 function stripFormatting(value: string) {
   return value
     .replace(/\[br\]/gi, "\n")
-    .replace(/'''([^'].*?)'''/g, "$1")
-    .replace(/''([^'].*?)''/g, "$1")
+    .replace(/'''([\s\S]*?)'''/g, "$1")
+    .replace(/''([\s\S]*?)''/g, "$1")
     .replace(/\{\{\{[+-]?\d+\s*/g, "")
     .replace(/\{\{\{#!(?:wiki|if|style|html|folding)\b[^\n]*\n?/gi, "")
     .replace(/\}\}\}/g, "")
     .replace(/#!(?:wiki|if|style|html|folding)\b[^\n]*/gi, "")
     .replace(/[ \t]+/g, " ")
-    .trim();
+    .replace(/^\s+|\s+$/g, "");
+}
+
+function syntaxBalance(value: string) {
+  let square = 0;
+  let curly = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.slice(i, i + 2) === "[[") { square += 1; i += 1; continue; }
+    if (value.slice(i, i + 2) === "]]" && square > 0) { square -= 1; i += 1; continue; }
+    if (value.slice(i, i + 3) === "{{{") { curly += 1; i += 2; continue; }
+    if (value.slice(i, i + 3) === "}}}" && curly > 0) { curly -= 1; i += 2; continue; }
+  }
+  return { square, curly, open: square > 0 || curly > 0 };
 }
 
 function splitTopLevelPipe(value: string) {
@@ -59,6 +71,28 @@ function splitTopLevelPipe(value: string) {
     if (value[i] === "|" && square === 0 && curly === 0) return i;
   }
   return -1;
+}
+
+function splitTopLevelTableDelimiters(value: string) {
+  const parts: string[] = [];
+  let start = 0;
+  let square = 0;
+  let curly = 0;
+  for (let i = 0; i < value.length - 1; i += 1) {
+    const pair = value.slice(i, i + 2);
+    const triple = value.slice(i, i + 3);
+    if (pair === "[[") { square += 1; i += 1; continue; }
+    if (pair === "]]" && square > 0) { square -= 1; i += 1; continue; }
+    if (triple === "{{{") { curly += 1; i += 2; continue; }
+    if (triple === "}}}" && curly > 0) { curly -= 1; i += 2; continue; }
+    if (pair === "||" && square === 0 && curly === 0) {
+      parts.push(value.slice(start, i));
+      start = i + 2;
+      i += 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts;
 }
 
 function imageFromInner(inner: string): NamuInline | null {
@@ -108,8 +142,8 @@ export function parseNamuInline(source: string): NamuInline[] {
       const pipe = splitTopLevelPipe(inner);
       const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
       const labelSource = pipe >= 0 ? inner.slice(pipe + 1) : target;
-      const nestedImage = labelSource.trim().startsWith("[[") ? parseNamuInline(labelSource) : [];
-      if (nestedImage.some((node) => node.type === "image")) output.push(...nestedImage);
+      const nested = parseNamuInline(labelSource);
+      if (nested.some((node) => node.type === "image")) output.push(...nested);
       else if (target) output.push({ type: "link", target, label: stripFormatting(labelSource) || target });
     }
     cursor = end + 2;
@@ -136,7 +170,7 @@ function parseCellDirectives(source: string) {
     const color = directive.match(/^(?:color|colcolor)=([^,>]+)/i)?.[1];
     if (color && /^#[0-9a-f]{3,8}$/i.test(color.trim())) meta.color = color.trim();
     const width = directive.match(/^width=([^>]+)/i)?.[1];
-    if (width) meta.width = width.trim();
+    if (width) meta.width = /^\d+(?:\.\d+)?$/.test(width.trim()) ? `${width.trim()}px` : width.trim();
     const rowspan = directive.match(/^\|(-?\d+)$/)?.[1];
     if (rowspan) meta.rowspan = Math.max(1, Math.abs(Number(rowspan)));
     const colspan = directive.match(/^-(\d+)$/)?.[1];
@@ -148,25 +182,69 @@ function parseCellDirectives(source: string) {
   return { rest, meta };
 }
 
-function parseTableLines(lines: string[]) {
-  const rows: NamuRawCell[][] = [];
-  let current: NamuRawCell[] = [];
+function makeCell(source: string): NamuRawCell {
+  const { rest, meta } = parseCellDirectives(source);
+  return { ...meta, children: parseNamuInline(rest) };
+}
 
-  for (const line of lines) {
-    const pieces = line.split("||").slice(1);
-    for (let i = 0; i < pieces.length; i += 1) {
-      const piece = pieces[i];
-      if (piece === "" && i === pieces.length - 1) continue;
-      const { rest, meta } = parseCellDirectives(piece);
-      current.push({ ...meta, children: parseNamuInline(rest) });
+/**
+ * Namu tables are logical streams, not physical lines. A cell may contain
+ * multiline [[links]] / {{{wiki blocks}}}, and a bare `||` closes the row.
+ * This parser keeps a pending cell until its nested syntax closes, then treats
+ * the next top-level `||` as a new cell. This is what album grids depend on.
+ */
+function parseTableChunk(lines: string[]) {
+  const rows: NamuRawCell[][] = [];
+  let row: NamuRawCell[] = [];
+  let pending = "";
+
+  const pushPending = () => {
+    if (!pending.trim()) { pending = ""; return; }
+    row.push(makeCell(pending));
+    pending = "";
+  };
+  const pushRow = () => {
+    pushPending();
+    if (row.some((cell) => cell.children.length || cell.background || cell.rowspan || cell.colspan)) rows.push(row);
+    row = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trimStart();
+
+    if (pending && syntaxBalance(pending).open) {
+      pending += `\n${line}`;
+      continue;
     }
-    if (line.trimEnd().endsWith("||") || current.length >= 1) {
-      rows.push(current);
-      current = [];
+
+    if (trimmed === "||") {
+      pushRow();
+      continue;
     }
+
+    if (trimmed.startsWith("||")) {
+      pushPending();
+      const body = trimmed.slice(2);
+      const parts = splitTopLevelTableDelimiters(body);
+      for (let i = 0; i < parts.length; i += 1) {
+        const part = parts[i];
+        const isLast = i === parts.length - 1;
+        if (isLast) {
+          if (part) pending = part;
+          else if (parts.length > 1) pushRow();
+        } else {
+          if (part) row.push(makeCell(part));
+        }
+      }
+      continue;
+    }
+
+    if (pending) pending += `\n${line}`;
   }
-  if (current.length) rows.push(current);
-  return rows.filter((row) => row.some((cell) => cell.children.length || cell.background || cell.rowspan || cell.colspan));
+
+  if (pending || row.length) pushRow();
+  return rows;
 }
 
 function meaningfulParagraph(source: string) {
@@ -174,11 +252,18 @@ function meaningfulParagraph(source: string) {
   return text && !/^#!(?:wiki|if|style|html|folding)\b/i.test(text);
 }
 
+function isStructuralStart(line: string) {
+  const trimmed = line.trimStart();
+  return trimmed.startsWith("||") || /^={2,6}\s/.test(trimmed) || /^#{2,6}\s/.test(trimmed) || /^#!/.test(trimmed);
+}
+
 export function parseNamuRaw(source: string): NamuRawNode[] {
   const lines = decodeBasic(source).replace(/\r\n?/g, "\n").split("\n");
   const nodes: NamuRawNode[] = [];
   let paragraph: string[] = [];
   let table: string[] = [];
+  let tableOpen = false;
+  let skipStyle = false;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -191,19 +276,38 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
   };
   const flushTable = () => {
     if (!table.length) return;
-    const rows = parseTableLines(table);
+    const rows = parseTableChunk(table);
     if (rows.length) nodes.push({ type: "table", rows });
     table = [];
+    tableOpen = false;
   };
 
-  for (const rawLine of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.trimEnd();
-    if (line.trimStart().startsWith("||")) {
+    const trimmed = line.trimStart();
+
+    if (skipStyle) {
+      if (!isStructuralStart(line)) continue;
+      skipStyle = false;
+    }
+
+    if (table.length) {
+      if (trimmed.startsWith("||") || tableOpen) {
+        table.push(line);
+        const joined = table.join("\n");
+        tableOpen = syntaxBalance(joined).open;
+        continue;
+      }
+      flushTable();
+    }
+
+    if (trimmed.startsWith("||")) {
       flushParagraph();
-      table.push(line.trimStart());
+      table = [line];
+      tableOpen = syntaxBalance(line).open;
       continue;
     }
-    if (table.length) flushTable();
 
     const heading = line.match(/^\s*(={2,6})\s*(.*?)\s*\1\s*$/);
     if (heading) {
@@ -221,7 +325,13 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
       flushParagraph();
       continue;
     }
-    if (/^\s*#!(?:style|if)\b/i.test(line) || /^\s*\/\*/.test(line)) {
+    if (/^\s*#!style\b/i.test(line)) {
+      flushParagraph();
+      nodes.push({ type: "raw-control", source: line.trim() });
+      skipStyle = true;
+      continue;
+    }
+    if (/^\s*#!if\b/i.test(line) || /^\s*\/\*/.test(line)) {
       flushParagraph();
       nodes.push({ type: "raw-control", source: line.trim() });
       continue;
