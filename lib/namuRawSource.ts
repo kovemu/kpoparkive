@@ -33,11 +33,16 @@ function decodeEntities(value: string) {
     .replace(/&#93;/gi, "]")
     .replace(/&#123;/gi, "{")
     .replace(/&#125;/gi, "}")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
 }
 
 function unique<T>(values: T[]) {
   return [...new Set(values)];
+}
+
+function normalizeFileKey(value: string) {
+  return decodeEntities(value).normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
 function normalizeMediaUrl(value: string) {
@@ -82,9 +87,28 @@ function extractRawCodeBlocks(articleHtml: string) {
 function extractFileRefs(source: string) {
   return unique(
     [...source.matchAll(/\[\[(?:파일|File):([^\]|\n]+)(?:\|[^\]]*)?\]\]/gi)]
-      .map((match) => match[1].trim())
+      .map((match) => normalizeFileKey(match[1]))
       .filter(Boolean),
   );
+}
+
+function extractDomFileRefs(html: string) {
+  const root = parse(extractArticleHtml(html));
+  const refs: string[] = [];
+
+  for (const image of root.querySelectorAll("img")) {
+    const alt = decodeEntities(image.getAttribute("alt") || "").trim();
+    const match = alt.match(/^(?:파일|File):(.+)$/i);
+    if (match) refs.push(normalizeFileKey(match[1]));
+  }
+
+  for (const anchor of root.querySelectorAll("a")) {
+    const title = decodeEntities(anchor.getAttribute("title") || "").trim();
+    const match = title.match(/^(?:파일|File):(.+)$/i);
+    if (match) refs.push(normalizeFileKey(match[1]));
+  }
+
+  return unique(refs.filter(Boolean));
 }
 
 /**
@@ -99,7 +123,7 @@ function extractFileTargetMap(source: string): RawFileTargetMap {
   const pattern = /\[\[([^\]|\n]+)\|\s*\[\[(?:파일|File):([^\]|\n]+)(?:\|[^\]]*)?\]\]\s*\]\]/gi;
   for (const match of source.matchAll(pattern)) {
     const target = match[1].trim().replace(/#.*$/, "");
-    const file = match[2].trim();
+    const file = normalizeFileKey(match[2]);
     if (target && file && !map[file]) map[file] = target;
   }
   return map;
@@ -115,8 +139,9 @@ function extractInternalLinks(source: string) {
 
 /**
  * The mirror often renders the exact file used by a raw [[파일:...]] reference.
- * Pairing img.alt with data-original gives us a generic filename -> CDN URL
- * resolver without guessing filenames or doing web search per asset.
+ * Pairing img.alt with a CDN-bearing attribute gives us a generic filename ->
+ * URL resolver. Some mirror bugs put the CDN URL inside a malformed width attr;
+ * scan the serialized tag as a final recovery hint instead of losing the asset.
  */
 export function extractRenderedFileMap(html: string): RenderedFileMap {
   const root = parse(extractArticleHtml(html));
@@ -125,8 +150,10 @@ export function extractRenderedFileMap(html: string): RenderedFileMap {
     const alt = decodeEntities(image.getAttribute("alt") || "").trim();
     const match = alt.match(/^(?:파일|File):(.+)$/i);
     if (!match) continue;
-    const file = match[1].trim();
-    const src = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || "";
+    const file = normalizeFileKey(match[1]);
+    const serialized = image.toString();
+    const embeddedHint = serialized.match(/(?:https?:)?\/\/file\.namu\.moe\/file\/[a-z0-9]+/i)?.[0] || "";
+    const src = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || embeddedHint;
     const url = normalizeMediaUrl(src);
     if (file && url && !map[file]) map[file] = url;
   }
@@ -167,12 +194,14 @@ export function extractMirrorRawBundle(html: string): MirrorRawBundle {
     .reduce((sum, segment) => sum + textFromRenderedHtml(segment.source).length, 0);
   const rawCharacters = sourceWikitext.length;
   const denominator = rawCharacters + renderedCharacters;
+  const renderedFileMap = extractRenderedFileMap(html);
+  const fileRefs = unique([...extractFileRefs(sourceWikitext), ...extractDomFileRefs(html), ...Object.keys(renderedFileMap)]);
 
   return {
     sourceWikitext,
     segments,
-    fileRefs: extractFileRefs(sourceWikitext),
-    renderedFileMap: extractRenderedFileMap(html),
+    fileRefs,
+    renderedFileMap,
     fileTargetMap: extractFileTargetMap(sourceWikitext),
     internalLinks: extractInternalLinks(sourceWikitext),
     rawCharacters,
