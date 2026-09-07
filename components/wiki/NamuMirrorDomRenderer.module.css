@@ -78,15 +78,6 @@
   min-width: 0;
 }
 
-/* namu.moe exposes tab bodies as raw blocks. Until the interactive tab client is
-   attached, render the same default state as NamuWiki: the first tab is visible. */
-.rawPanel:global(.tab.tab-b),
-.rawPanel:global(.tab.tab-c),
-.rawPanel:global(.tab.tab-d),
-.rawPanel:global(.subtab) {
-  display: none;
-}
-
 .tabButton {
   display: inline-flex;
   align-items: center;
@@ -100,11 +91,6 @@
   color: inherit;
   font-weight: 700;
   text-align: center;
-}
-
-.tabButton:global(.tab-a) {
-  background: #fff;
-  color: var(--namu-theme-bg);
 }
 
 .unresolvedImage {
