@@ -13,6 +13,7 @@ export type NamuHybridParse = {
   skippedControlChunks: number;
   rawNodes: number;
   renderedSections: number;
+  releaseCandidates: number;
   recoveredValues: number;
 };
 
@@ -40,16 +41,6 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * namu.moe sometimes leaves the country flag helper itself as raw #!if syntax
- * inside an otherwise rendered infobox cell. We must keep the surrounding table
- * stitched together, but an entirely empty hole loses the visible country name.
- *
- * Only the primary country branch is safe to materialize here: it explicitly
- * requires both administrative-area alternatives to be null and its first wiki
- * target is the country document. Other #!if blocks remain stored but invisible,
- * so this never chooses between arbitrary template branches.
- */
 function controlFlagFallbackHtml(source: string) {
   const trimmed = source.trimStart();
   if (!/^#!if\b/i.test(trimmed)) return null;
@@ -61,8 +52,10 @@ function controlFlagFallbackHtml(source: string) {
 }
 
 function normalizeDate(value: string) {
-  const korean = value.match(/\b(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\b/);
-  const dotted = value.match(/\b(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.?/);
+  // Do not use a trailing \b after Korean "일": JavaScript word boundaries are
+  // ASCII-word based, so perfectly valid strings such as "2024년 3월 26일" fail.
+  const korean = value.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  const dotted = value.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.?/);
   const match = korean || dotted;
   if (!match) return null;
   const year = match[1];
@@ -79,12 +72,6 @@ function inlineText(children: NamuInline[]) {
   }).join(" ");
 }
 
-/**
- * Album navigation templates leak as raw Namu source on namu.moe even when an
- * infobox value is missing from the rendered mirror. Build a same-document release
- * catalog from those raw album tables. It is deliberately date + link only; no
- * external lookup or title guessing is involved.
- */
 function extractReleaseCatalog(segments: RawSourceSegment[]) {
   const candidates: ReleaseCandidate[] = [];
   const seen = new Set<string>();
@@ -134,15 +121,6 @@ function isBlankCell(cell: Extract<ParsedSectionV5["content"][number], { type: "
   return Boolean(cell) && !cell?.text && !cell?.image_url && !cell?.link_url;
 }
 
-/**
- * Recover only values that are provable from two independent positions in the
- * same stored source document. Example: the rendered infobox contains a debut
- * date but namu.moe leaves the corresponding debut-album cell blank, while the
- * raw album navigation contains exactly one release on that exact date.
- *
- * Zero or multiple matches are intentionally left blank. This is a generic mirror
- * repair rule, not a group-specific fact table.
- */
 function recoverMissingDebutAlbumValues(sections: ParsedSectionV5[], releases: ReleaseCandidate[]) {
   let recovered = 0;
   if (!releases.length) return recovered;
@@ -180,20 +158,6 @@ function recoverMissingDebutAlbumValues(sections: ParsedSectionV5[], releases: R
   return recovered;
 }
 
-/**
- * Preserve the mirror's exact segment order, but do not parse every rendered
- * fragment independently. namu.moe frequently emits unsupported control syntax
- * as <pre><code> *inside* an otherwise valid table. Splitting on that code block tears the
- * surrounding <table>/<tr>/<td> markup into invalid fragments and is the main
- * reason infobox rows used to appear as unrelated link rows.
- *
- * Control-only raw blocks are therefore treated like transparent holes: rendered
- * HTML on both sides is stitched back together before V5 sees it. Safe visible
- * fallbacks (currently country-name branches) are inserted into the hole without
- * changing table geometry. A visible raw block is still a hard boundary and is
- * rendered in its original source position. This is generic for every imported
- * document; no group-specific reconstruction rules belong here.
- */
 export function parseNamuHybridSegments(segments: RawSourceSegment[]): NamuHybridParse {
   const chunks: NamuHybridChunk[] = [];
   const releaseCatalog = extractReleaseCatalog(segments);
@@ -227,8 +191,6 @@ export function parseNamuHybridSegments(segments: RawSourceSegment[]): NamuHybri
     }
 
     if (isControlRaw(segment.source)) {
-      // Keep the HTML context alive across #!if / #!style islands. A narrowly
-      // provable country-name branch may contribute visible text to that hole.
       const fallback = controlFlagFallbackHtml(segment.source);
       if (fallback) renderedBuffer.push({ sourceIndex, source: fallback });
       skippedControlChunks += 1;
@@ -245,5 +207,14 @@ export function parseNamuHybridSegments(segments: RawSourceSegment[]): NamuHybri
 
   flushRendered();
 
-  return { chunks, rawChunks, renderedChunks, skippedControlChunks, rawNodes, renderedSections, recoveredValues };
+  return {
+    chunks,
+    rawChunks,
+    renderedChunks,
+    skippedControlChunks,
+    rawNodes,
+    renderedSections,
+    releaseCandidates: releaseCatalog.length,
+    recoveredValues,
+  };
 }
