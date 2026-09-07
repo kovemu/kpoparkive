@@ -38,10 +38,11 @@ export function NamuTabControl({ tabKey, label, className, style }: { tabKey: st
   const group = tabGroup(tabKey);
   const active = tabs?.isSelected(group, tabKey) ?? defaultKey(group) === tabKey;
   const isSubtab = /-\d+$/i.test(tabKey);
+  const stateClassName = [className, active ? "selected" : ""].filter(Boolean).join(" ");
 
   return <button
     type="button"
-    className={className}
+    className={stateClassName}
     data-namu-tab-control={tabKey}
     data-namu-tab-active={active ? "true" : "false"}
     aria-pressed={active}
@@ -57,7 +58,7 @@ export function NamuTabControl({ tabKey, label, className, style }: { tabKey: st
       padding: isSubtab ? "5px 14px" : "6px 14px",
       borderRadius: 8,
       background: active ? "#fff" : "rgba(255,255,255,.18)",
-      color: active ? "var(--accent, #fc6fcf)" : "inherit",
+      color: active ? "var(--namu-theme-bg, var(--accent, #fc6fcf))" : "inherit",
       textAlign: "center",
       fontWeight: 700,
       lineHeight: 1.25,
@@ -71,7 +72,8 @@ export function NamuTabContent({ tabKey, className, style, children }: { tabKey:
   const group = tabGroup(tabKey);
   const active = tabs?.isSelected(group, tabKey) ?? defaultKey(group) === tabKey;
   if (!active) return null;
-  return <div className={className} style={style} data-namu-tab-content={tabKey}>{children}</div>;
+  const stateClassName = [className, "selected"].filter(Boolean).join(" ");
+  return <div className={stateClassName} style={style} data-namu-tab-content={tabKey}>{children}</div>;
 }
 
 export function useNamuTabs() {
