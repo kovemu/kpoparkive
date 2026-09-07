@@ -6,12 +6,14 @@ export type RawSourceSegment = {
 };
 
 export type RenderedFileMap = Record<string, string>;
+export type RawFileTargetMap = Record<string, string>;
 
 export type MirrorRawBundle = {
   sourceWikitext: string;
   segments: RawSourceSegment[];
   fileRefs: string[];
   renderedFileMap: RenderedFileMap;
+  fileTargetMap: RawFileTargetMap;
   internalLinks: string[];
   rawCharacters: number;
   renderedCharacters: number;
@@ -85,6 +87,24 @@ function extractFileRefs(source: string) {
   );
 }
 
+/**
+ * Keep the outer wiki target for image links such as
+ * [[YoYo|[[파일:YoYo.jpg|width=100%]]]]. If the current mirror page only keeps
+ * the image as raw syntax, the linked target is usually a document whose
+ * rendered infobox contains that exact file. The asset resolver can fetch that
+ * target and recover the CDN URL without filename guessing or search APIs.
+ */
+function extractFileTargetMap(source: string): RawFileTargetMap {
+  const map: RawFileTargetMap = {};
+  const pattern = /\[\[([^\]|\n]+)\|\s*\[\[(?:파일|File):([^\]|\n]+)(?:\|[^\]]*)?\]\]\s*\]\]/gi;
+  for (const match of source.matchAll(pattern)) {
+    const target = match[1].trim().replace(/#.*$/, "");
+    const file = match[2].trim();
+    if (target && file && !map[file]) map[file] = target;
+  }
+  return map;
+}
+
 function extractInternalLinks(source: string) {
   return unique(
     [...source.matchAll(/\[\[([^\]|\n]+)(?:\|[^\]]*)?\]\]/g)]
@@ -153,6 +173,7 @@ export function extractMirrorRawBundle(html: string): MirrorRawBundle {
     segments,
     fileRefs: extractFileRefs(sourceWikitext),
     renderedFileMap: extractRenderedFileMap(html),
+    fileTargetMap: extractFileTargetMap(sourceWikitext),
     internalLinks: extractInternalLinks(sourceWikitext),
     rawCharacters,
     renderedCharacters,
