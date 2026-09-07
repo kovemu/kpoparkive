@@ -20,6 +20,15 @@ const albumCoverPaths: Record<string, string> = {
   "Pretty Girl": "rescene/albums/pretty-girl.jpg",
 };
 
+const relatedDocumentSlugs: Record<string, string> = {
+  "RESCENE / Member chemistry": "rescene-member-chemistry",
+  "RESCENE / Activities": "rescene-activities",
+  "RESCENE / YouTube": "rescene-youtube",
+  "RESCENE / Live broadcasts": "rescene-live",
+  "RESCENE / Awards": "rescene-awards",
+  "RESCENE / Trivia": "rescene-trivia",
+};
+
 function flagFor(nationality: string) {
   if (nationality === "South Korea") return "🇰🇷";
   if (nationality === "Japan") return "🇯🇵";
@@ -54,7 +63,14 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
           );
         }
 
-        if (block.type === "related") return <div className="subdocNotice" key={index}>{block.label}: <span className="pendingLink">{block.target}</span></div>;
+        if (block.type === "related") {
+          const slug = relatedDocumentSlugs[block.target];
+          return (
+            <div className="subdocNotice" key={index}>
+              {block.label}: {slug ? <a href={`/wiki/${slug}`}>{block.target}</a> : <span className="pendingLink">{block.target}</span>}
+            </div>
+          );
+        }
         if (block.type === "quote") return <blockquote className="accentQuote" key={index}>{block.text}</blockquote>;
         if (block.type === "callout") return <div className="accentBox" key={index}>{block.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>;
         if (block.type === "list") return <ul className="wikiList" key={index}>{block.items.map((item) => <li key={item}>{item}</li>)}</ul>;
