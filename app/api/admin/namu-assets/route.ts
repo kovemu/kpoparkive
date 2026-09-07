@@ -35,9 +35,17 @@ function extensionFor(contentType: string, url: string) {
   return url.match(/\.(webp|png|gif|svg|jpe?g)(?:\?|$)/i)?.[1]?.replace("jpeg", "jpg") || "jpg";
 }
 
+function normalizeDirectUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  const url = value.trim();
+  if (url.startsWith("//")) return `https:${url}`;
+  if (url.startsWith("/")) return `https://www.namu.moe${url}`;
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.1" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.2", Referer: "https://www.namu.moe/" }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -83,10 +91,10 @@ export async function POST(request: Request) {
       try {
         let patch: Record<string, unknown> = { status: "resolved", updated_at: new Date().toISOString() };
         if (row.asset_type === "image") {
-          const directUrl = /^https?:\/\//i.test(row.source_ref) ? row.source_ref : typeof row.metadata?.url === "string" ? row.metadata.url : null;
+          const directUrl = normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
           if (!directUrl) throw new Error("source image is a file reference; web enrichment required");
           const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
-          patch = { ...patch, resolved_url: uploaded.publicUrl, storage_path: uploaded.path, confidence: 1, metadata: { ...row.metadata, content_type: uploaded.contentType, bytes: uploaded.bytes } };
+          patch = { ...patch, resolved_url: uploaded.publicUrl, storage_path: uploaded.path, confidence: 1, metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes } };
         } else if (row.asset_type === "video") {
           const videoId = typeof row.metadata?.video_id === "string" ? row.metadata.video_id : null;
           patch = { ...patch, resolved_url: row.provider === "youtube" && videoId ? `https://www.youtube.com/embed/${videoId}` : row.source_ref, confidence: 1 };
