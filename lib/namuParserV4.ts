@@ -1,7 +1,9 @@
+import type { RichWikiCell } from "./wiki";
+
 export type ParsedBlockV4 =
   | { type: "paragraph"; text: string }
   | { type: "list"; items: string[] }
-  | { type: "table"; columns: string[]; rows: string[][] }
+  | { type: "rich-table"; rows: RichWikiCell[][] }
   | { type: "related"; label: string; target: string }
   | { type: "image"; source_ref: string; url?: string; alt?: string; role?: string }
   | { type: "video"; provider: string; url: string; video_id?: string; label?: string }
@@ -32,6 +34,8 @@ function decodeEntities(value: string) {
 function cleanWikiSyntax(value: string) {
   let text = decodeEntities(value);
   text = text
+    .replace(/<\/?(?:colbgcolor|colcolor|rowbgcolor|rowcolor|tablebgcolor|tablecolor|tablewidth|tablealign|width|height|bgcolor|color|align)(?:=[^>]*)?>/gi, " ")
+    .replace(/(?:dark-)?style\s*=\s*(?:"[^"]*"|'[^']*')/gi, " ")
     .replace(/\[age\([^\]]+\)\](?:세)?/gi, "")
     .replace(/\[dday\([^\]]+\)\]/gi, "")
     .replace(/\[br\]/gi, " ")
@@ -39,9 +43,9 @@ function cleanWikiSyntax(value: string) {
     .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/\{\{\{#!if\s+출력\s*==\s*null\s+([^{}]+)\}\}\}/gi, "$1")
-    .replace(/#!if\s+[^\n{}]+/gi, " ")
+    .replace(/#!if\s+[^{}\n]+/gi, " ")
     .replace(/\{\{\{#!wiki\s+(?:style|class|tag)=(?:"[^"]*"|'[^']*'|[^\s{}]+)\s*/gi, " ")
-    .replace(/\{\{\{#!folding\s+[^\n{}]*\s*/gi, " ")
+    .replace(/\{\{\{#!folding\s+[^{}\n]*\s*/gi, " ")
     .replace(/\{\{\{\+\d+\s*/g, " ")
     .replace(/\}\}\}/g, " ")
     .replace(/'{2,5}/g, "")
@@ -52,13 +56,12 @@ function cleanWikiSyntax(value: string) {
 }
 
 function stripTags(value: string) {
-  return cleanWikiSyntax(
-    value
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, " "),
-  );
+  const htmlStripped = value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+  return cleanWikiSyntax(htmlStripped);
 }
 
 function cleanHeading(value: string) {
@@ -70,7 +73,7 @@ function slugifyHeading(value: string, fallback: number) {
   return base || `section-${fallback}`;
 }
 
-function normalizeImageUrl(src: string) {
+function normalizeUrl(src: string) {
   const decoded = decodeEntities(src.trim());
   if (decoded.startsWith("//")) return `https:${decoded}`;
   if (decoded.startsWith("/")) return `https://www.namu.moe${decoded}`;
@@ -79,6 +82,61 @@ function normalizeImageUrl(src: string) {
 
 function youtubeId(url: string) {
   return url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i)?.[1];
+}
+
+function safeColor(value?: string) {
+  if (!value) return undefined;
+  const color = value.trim().replace(/["']/g, "");
+  return /^(?:#[0-9a-f]{3,8}|rgb\([^)]*\)|rgba\([^)]*\)|[a-z]{3,20})$/i.test(color) ? color : undefined;
+}
+
+function attrNumber(attrs: string, name: string) {
+  const raw = attrs.match(new RegExp(`${name}=["']?(\\d+)`, "i"))?.[1];
+  return raw ? Math.max(1, Math.min(30, Number(raw))) : undefined;
+}
+
+function extractCellStyle(attrs: string, inner: string) {
+  const style = attrs.match(/style=["']([^"']*)["']/i)?.[1] || "";
+  const pseudoBg = decodeEntities(inner).match(/<(?:colbgcolor|rowbgcolor|bgcolor)=([^>]+)>/i)?.[1];
+  const pseudoColor = decodeEntities(inner).match(/<(?:colcolor|rowcolor|color)=([^>]+)>/i)?.[1];
+  const background = safeColor(style.match(/background(?:-color)?\s*:\s*([^;]+)/i)?.[1] || pseudoBg);
+  const color = safeColor(style.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i)?.[1] || pseudoColor);
+  const alignRaw = (style.match(/text-align\s*:\s*(left|center|right)/i)?.[1] || attrs.match(/align=["']?(left|center|right)/i)?.[1])?.toLowerCase();
+  const align = alignRaw === "left" || alignRaw === "center" || alignRaw === "right" ? alignRaw : undefined;
+  return { background, color, align };
+}
+
+function parseCell(tag: string, attrs: string, inner: string): RichWikiCell {
+  const { background, color, align } = extractCellStyle(attrs, inner);
+  const img = inner.match(/<img\b[^>]*(?:data-original|data-src|src)=["']([^"']+)["'][^>]*>/i);
+  const imgAlt = inner.match(/<img\b[^>]*alt=["']([^"']*)["'][^>]*>/i)?.[1];
+  const link = inner.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+  const text = stripTags(inner);
+  return {
+    text,
+    rowspan: attrNumber(attrs, "rowspan"),
+    colspan: attrNumber(attrs, "colspan"),
+    header: tag.toLowerCase() === "th",
+    background,
+    color,
+    align,
+    image_url: img ? normalizeUrl(img[1]) : undefined,
+    image_alt: imgAlt ? decodeEntities(imgAlt) : undefined,
+    link_url: link ? normalizeUrl(link[1]) : undefined,
+    link_label: link ? stripTags(link[2]) : undefined,
+  };
+}
+
+function parseTable(html: string): ParsedBlockV4 | null {
+  const rows: RichWikiCell[][] = [];
+  for (const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells: RichWikiCell[] = [];
+    for (const cell of row[1].matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+      cells.push(parseCell(cell[1], cell[2], cell[3]));
+    }
+    if (cells.length && cells.some((cell) => cell.text || cell.image_url || cell.link_url)) rows.push(cells);
+  }
+  return rows.length ? { type: "rich-table", rows: rows.slice(0, 180) } : null;
 }
 
 function addMatches(fragment: string, regex: RegExp, kind: Candidate["kind"], priority: number, candidates: Candidate[]) {
@@ -96,7 +154,6 @@ function orderedTopLevelCandidates(fragment: string) {
   addMatches(fragment, /<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "iframe", 75, candidates);
   addMatches(fragment, /<img\b[^>]*>/gi, "image", 60, candidates);
   addMatches(fragment, /<a\b[^>]*>[\s\S]*?<\/a>/gi, "link", 40, candidates);
-
   candidates.sort((a, b) => a.start - b.start || b.priority - a.priority || b.end - a.end);
   const selected: Candidate[] = [];
   for (const candidate of candidates) {
@@ -104,19 +161,6 @@ function orderedTopLevelCandidates(fragment: string) {
     selected.push(candidate);
   }
   return selected.sort((a, b) => a.start - b.start);
-}
-
-function parseTable(html: string): ParsedBlockV4 | null {
-  const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)]
-    .map((row) => [...row[1].matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)].map((cell) => stripTags(cell[1])))
-    .filter((row) => row.length > 0 && row.some(Boolean));
-  if (!rows.length) return null;
-  const width = Math.min(12, Math.max(...rows.map((row) => row.length)));
-  const normalized = rows.map((row) => [...row.slice(0, width), ...Array(Math.max(0, width - row.length)).fill("")]);
-  const first = normalized[0];
-  const firstHasTh = /<th\b/i.test(html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/i)?.[0] || "");
-  const looksLikeHeader = firstHasTh || (first.every((cell) => cell.length <= 80) && new Set(first).size === first.length && normalized.length > 1);
-  return { type: "table", columns: looksLikeHeader ? first : Array.from({ length: width }, (_, i) => `Column ${i + 1}`), rows: looksLikeHeader ? normalized.slice(1, 160) : normalized.slice(0, 160) };
 }
 
 function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
@@ -134,7 +178,7 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
     const src = candidate.html.match(/(?:data-original|data-src|src)=["']([^"']+)["']/i)?.[1];
     const alt = candidate.html.match(/alt=["']([^"']*)["']/i)?.[1];
     if (!src) return null;
-    const url = normalizeImageUrl(src);
+    const url = normalizeUrl(src);
     const cleanAlt = alt ? decodeEntities(alt) : undefined;
     if (!/^https?:\/\//i.test(url) || /cc-by-nc-sa-2\.0-88x31\.png/i.test(url) || /상세 내용 아이콘/i.test(cleanAlt || "")) return null;
     return { type: "image", source_ref: url, url, alt: cleanAlt };
@@ -142,7 +186,7 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
   if (candidate.kind === "iframe") {
     const src = candidate.html.match(/src=["']([^"']+)["']/i)?.[1];
     if (!src) return null;
-    const url = normalizeImageUrl(src);
+    const url = normalizeUrl(src);
     const provider = /youtu/i.test(url) ? "youtube" : /vimeo/i.test(url) ? "vimeo" : "external";
     return { type: "video", provider, url, video_id: provider === "youtube" ? youtubeId(url) : undefined };
   }
@@ -155,9 +199,7 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
     try { target = decodeURIComponent(raw); } catch {}
     if (target === "@문서명@" && label.includes("/")) target = label;
     if (!target || target.startsWith("파일:") || target.startsWith("분류:")) return null;
-    if (/^자세한 내용은|문서 참고/.test(label) || (label.includes("/") && /상세 내용 아이콘/.test(candidate.html))) {
-      return { type: "related", label: "Detailed article", target };
-    }
+    if (/^자세한 내용은|문서 참고/.test(label) || (label.includes("/") && /상세 내용 아이콘/.test(candidate.html))) return { type: "related", label: "Detailed article", target };
     return { type: "internal-link", target, label };
   }
   if (/^https?:\/\//i.test(href)) return { type: "external-link", url: decodeEntities(href), label };
@@ -165,13 +207,8 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
 }
 
 function textBetween(fragment: string, start: number, end: number) {
-  const raw = fragment.slice(start, end)
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, " ")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
-  const text = stripTags(raw);
-  if (!text || text.length < 12) return null;
-  if (/^(#!wiki|#!if|\{\{\{|\}\}\})/.test(text) || /^문서 참고하십시오/.test(text)) return null;
+  const text = stripTags(fragment.slice(start, end));
+  if (!text || text.length < 12 || /^문서 참고하십시오/.test(text)) return null;
   return { type: "paragraph" as const, text };
 }
 
@@ -188,7 +225,6 @@ function parseOrderedBlocks(fragment: string) {
   }
   const tail = textBetween(fragment, cursor, fragment.length);
   if (tail) blocks.push(tail);
-
   const deduped: ParsedBlockV4[] = [];
   let previousKey = "";
   for (const block of blocks) {
@@ -204,46 +240,19 @@ function articleHtml(html: string) {
   return html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] || html;
 }
 
-function fallbackFileImages(fragment: string, existing: ParsedBlockV4[]) {
-  const hasVisualImage = existing.some((block) => block.type === "image");
-  if (hasVisualImage) return existing;
-  const seen = new Set<string>();
-  const fileBlocks: ParsedBlockV4[] = [];
-  for (const match of fragment.matchAll(/(?:\[\[)?파일:([^|\]\n<]+)/gi)) {
-    const name = cleanWikiSyntax(match[1]).replace(/["'][\s\S]*$/, "").trim();
-    if (!name || name.length > 180 || /상세 내용 아이콘|국기\.svg|유튜브 아이콘|틱톡 아이콘/i.test(name)) continue;
-    const ref = `파일:${name}`;
-    if (seen.has(ref)) continue;
-    seen.add(ref);
-    fileBlocks.push({ type: "image", source_ref: ref, alt: name });
-  }
-  return fileBlocks.length ? [...existing, ...fileBlocks] : existing;
-}
-
 export function parseNamuHtmlV4(html: string): ParsedSectionV4[] {
   const article = articleHtml(html);
   const headings = [...article.matchAll(/<h([2-4])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
   const sections: ParsedSectionV4[] = [];
-
   const firstHeadingStart = headings[0]?.index ?? article.length;
-  const leadFragment = article.slice(0, firstHeadingStart);
-  const lead = fallbackFileImages(leadFragment, parseOrderedBlocks(leadFragment));
+  const lead = parseOrderedBlocks(article.slice(0, firstHeadingStart));
   if (lead.length) sections.push({ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: lead });
-
   headings.forEach((match, index) => {
     const start = (match.index ?? 0) + match[0].length;
     const end = index + 1 < headings.length ? (headings[index + 1].index ?? article.length) : article.length;
     const heading = cleanHeading(match[2]) || `Section ${index + 1}`;
-    const fragment = article.slice(start, end);
-    sections.push({
-      section_key: slugifyHeading(heading, index + 1),
-      heading,
-      heading_level: Number(match[1]),
-      sort_order: (index + 1) * 10,
-      content: fallbackFileImages(fragment, parseOrderedBlocks(fragment)),
-    });
+    sections.push({ section_key: slugifyHeading(heading, index + 1), heading, heading_level: Number(match[1]), sort_order: (index + 1) * 10, content: parseOrderedBlocks(article.slice(start, end)) });
   });
-
-  if (!sections.length) return [{ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: fallbackFileImages(article, parseOrderedBlocks(article)) }];
+  if (!sections.length) return [{ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: parseOrderedBlocks(article) }];
   return sections;
 }
