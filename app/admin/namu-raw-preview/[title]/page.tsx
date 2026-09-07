@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
 import { parseNamuHybridSegments } from "../../../../lib/namuHybrid";
+import { normalizeNamuMirrorHtml } from "../../../../lib/namuMirrorNormalize";
 import { parseNamuRaw } from "../../../../lib/namuRawParser";
 import { extractMirrorRawBundle, type RawSourceSegment } from "../../../../lib/namuRawSource";
 import { parseVisibleNamuRawSegments } from "../../../../lib/namuRawSegments";
@@ -67,6 +68,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const hybrid = parseNamuHybridSegments(segments);
   const completeRaw = Boolean(raw) && isCompleteRawFormat(source.source_format);
   const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
+  const mirrorHtml = normalizeNamuMirrorHtml(source.raw_html || "");
 
   const assetRows = await db<AssetRow[]>(
     `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
@@ -110,7 +112,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
           <h2 className="sectionTitle">Document preview</h2>
           {completeRaw
             ? <NamuRawRenderer nodes={completeRawNodes} assets={assets} />
-            : <NamuMirrorDomRenderer html={source.raw_html || ""} assets={assets} />}
+            : <NamuMirrorDomRenderer html={mirrorHtml} assets={assets} />}
         </section>
 
         <details style={{ marginTop: 28 }}>
