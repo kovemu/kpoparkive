@@ -50,6 +50,7 @@ function cleanText(value: string) {
     .replace(/\}\}\}/g, " ")
     .replace(/\[\[([^|\]]+)\|([^\]]*)\]\]/g, (_, target, label) => cleanText(label) || displayWikiTarget(target))
     .replace(/\[\[([^|\]]+)\]\]/g, (_, target) => displayWikiTarget(target))
+    .replace(/\[\[([^|\]]+)\|([^\]]+)$/g, (_, target, label) => cleanText(label) || displayWikiTarget(target))
     .replace(/\[\[([^|\]]+)\|\s*$/g, (_, target) => displayWikiTarget(target))
     .replace(/파일:[^\n<>]{1,180}?\.(?:svg|png|jpe?g|gif|webp)/gi, " ")
     .replace(/'{2,5}/g, "")
@@ -129,11 +130,12 @@ function parseCell(cell: HTMLElement): RichWikiCell {
   const images = cell.querySelectorAll("img").filter((img) => !nearestTag(img, "table") || nearestTag(img, "table") === nearestTag(cell, "table"));
   const image = images.find((img) => !/상세 내용 아이콘|cc-by-nc-sa/i.test(img.getAttribute("alt") || ""));
   const anchors = cell.querySelectorAll("a").filter((anchor) => !nearestTag(anchor, "table") || nearestTag(anchor, "table") === nearestTag(cell, "table"));
-  const meaningfulAnchor = anchors.find((anchor) => {
+  const meaningfulAnchors = anchors.filter((anchor) => {
     const href = anchor.getAttribute("href") || "";
     const label = cleanText(anchor.textContent || "");
     return href && !href.startsWith("#fn-") && !/^파일:/.test(label);
   });
+  const meaningfulAnchor = meaningfulAnchors[0];
 
   let text = preserveCountryAndDate(cleanText(cell.textContent || ""));
   const imgSrc = image?.getAttribute("data-original") || image?.getAttribute("data-src") || image?.getAttribute("src") || undefined;
@@ -227,16 +229,31 @@ function parseNode(node: HTMLElement): ParsedBlockV5 | null {
   return null;
 }
 
+function normalizeTarget(target: string) {
+  return target.normalize("NFKC").replace(/#.*$/, "").trim().toLowerCase();
+}
+
 function dedupeBlocks(blocks: ParsedBlockV5[]) {
   const output: ParsedBlockV5[] = [];
-  const seenLinks = new Set<string>();
+  const indexByTarget = new Map<string, number>();
   for (const block of blocks) {
-    if (block.type === "internal-link") {
-      const key = `${block.target}|${block.label}`;
-      if (seenLinks.has(key)) continue;
-      seenLinks.add(key);
+    if (block.type !== "internal-link") {
+      output.push(block);
+      continue;
     }
-    output.push(block);
+    const key = normalizeTarget(block.target);
+    const existingIndex = indexByTarget.get(key);
+    if (existingIndex === undefined) {
+      indexByTarget.set(key, output.length);
+      output.push(block);
+      continue;
+    }
+    const existing = output[existingIndex];
+    if (existing.type === "internal-link") {
+      const existingScore = (existing.label.includes("/") ? 100 : 0) + existing.label.length;
+      const nextScore = (block.label.includes("/") ? 100 : 0) + block.label.length;
+      if (nextScore > existingScore) output[existingIndex] = block;
+    }
   }
   return output;
 }
