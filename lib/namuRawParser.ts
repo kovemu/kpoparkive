@@ -15,13 +15,22 @@ export type NamuRawCell = {
   nopad?: boolean;
 };
 
+export type NamuRawTableMeta = {
+  className?: string;
+  width?: string;
+  align?: "left" | "center" | "right";
+  background?: string;
+  color?: string;
+  borderColor?: string;
+};
+
 export type NamuDirectiveKind = "wiki" | "if" | "style" | "folding" | "html" | "unknown";
 
 export type NamuRawNode =
   | { type: "heading"; level: number; text: string }
   | { type: "paragraph"; children: NamuInline[] }
   | { type: "tab"; label: string }
-  | { type: "table"; rows: NamuRawCell[][] }
+  | { type: "table"; rows: NamuRawCell[][]; meta?: NamuRawTableMeta }
   | { type: "directive"; kind: NamuDirectiveKind; args: string; title?: string; children: NamuRawNode[]; source: string }
   | { type: "list"; ordered: boolean; items: Array<{ depth: number; children: NamuInline[] }> }
   | { type: "quote"; children: NamuRawNode[] }
@@ -29,8 +38,6 @@ export type NamuRawNode =
 
 function decodeBasic(value: string) {
   return value
-    // namu.moe exposes source code with escaped line breaks inside <pre><code>.
-    // Decode them before any structural parsing so wiki/table blocks stay multiline.
     .replace(/\\n/g, "\n")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
@@ -206,6 +213,22 @@ export function parseNamuInline(source: string): NamuInline[] {
   return output;
 }
 
+function normalizeDimension(value: string) {
+  const trimmed = value.trim();
+  return /^\d+(?:\.\d+)?$/.test(trimmed) ? `${trimmed}px` : trimmed;
+}
+
+function firstThemeValue(value: string) {
+  return value.split(",", 1)[0]?.trim() || "";
+}
+
+function safeTableColor(value: string) {
+  const candidate = firstThemeValue(value);
+  if (/^#[0-9a-f]{3,8}$/i.test(candidate)) return candidate;
+  if (/^(?:transparent|inherit|currentColor)$/i.test(candidate)) return candidate;
+  return undefined;
+}
+
 function parseCellDirectives(source: string) {
   let rest = source.trim();
   const directives: string[] = [];
@@ -217,14 +240,29 @@ function parseCellDirectives(source: string) {
   }
 
   const meta: Omit<NamuRawCell, "children"> = {};
+  const tableMeta: NamuRawTableMeta = {};
   for (const directive of directives) {
     if (/^nopad$/i.test(directive)) meta.nopad = true;
-    const bg = directive.match(/^(?:bgcolor|tablebgcolor|colbgcolor)=([^,>]+)/i)?.[1];
+
+    const tableClass = directive.match(/^tableclass=(.+)$/i)?.[1]?.trim();
+    if (tableClass && /^[a-z0-9_ -]+$/i.test(tableClass)) tableMeta.className = tableClass;
+    const tableWidth = directive.match(/^tablewidth=(.+)$/i)?.[1]?.trim();
+    if (tableWidth) tableMeta.width = normalizeDimension(tableWidth);
+    const tableAlign = directive.match(/^tablealign=(left|center|right)$/i)?.[1]?.toLowerCase();
+    if (tableAlign === "left" || tableAlign === "center" || tableAlign === "right") tableMeta.align = tableAlign;
+    const tableBg = directive.match(/^tablebgcolor=(.+)$/i)?.[1];
+    if (tableBg) tableMeta.background = safeTableColor(tableBg);
+    const tableColor = directive.match(/^tablecolor=(.+)$/i)?.[1];
+    if (tableColor) tableMeta.color = safeTableColor(tableColor);
+    const tableBorder = directive.match(/^tablebordercolor=(.+)$/i)?.[1];
+    if (tableBorder) tableMeta.borderColor = safeTableColor(tableBorder);
+
+    const bg = directive.match(/^(?:bgcolor|colbgcolor)=([^,>]+)/i)?.[1];
     if (bg && /^#[0-9a-f]{3,8}$/i.test(bg.trim())) meta.background = bg.trim();
     const color = directive.match(/^(?:color|colcolor)=([^,>]+)/i)?.[1];
     if (color && /^#[0-9a-f]{3,8}$/i.test(color.trim())) meta.color = color.trim();
     const width = directive.match(/^width=([^>]+)/i)?.[1];
-    if (width) meta.width = /^\d+(?:\.\d+)?$/.test(width.trim()) ? `${width.trim()}px` : width.trim();
+    if (width) meta.width = normalizeDimension(width);
     const rowspan = directive.match(/^\|(-?\d+)$/)?.[1];
     if (rowspan) meta.rowspan = Math.max(1, Math.abs(Number(rowspan)));
     const colspan = directive.match(/^-(\d+)$/)?.[1];
@@ -233,33 +271,48 @@ function parseCellDirectives(source: string) {
     if (/^\(/.test(directive)) meta.align = "left";
     if (/^\)/.test(directive)) meta.align = "right";
   }
-  return { rest, meta };
+  return { rest, meta, tableMeta };
 }
 
-function makeCell(source: string): NamuRawCell {
-  const { rest, meta } = parseCellDirectives(source);
-  return { ...meta, children: parseNamuInline(rest) };
+function makeCell(source: string) {
+  const { rest, meta, tableMeta } = parseCellDirectives(source);
+  return { cell: { ...meta, children: parseNamuInline(rest) } as NamuRawCell, tableMeta };
+}
+
+function mergeTableMeta(target: NamuRawTableMeta, incoming: NamuRawTableMeta) {
+  if (incoming.className !== undefined) target.className = incoming.className;
+  if (incoming.width !== undefined) target.width = incoming.width;
+  if (incoming.align !== undefined) target.align = incoming.align;
+  if (incoming.background !== undefined) target.background = incoming.background;
+  if (incoming.color !== undefined) target.color = incoming.color;
+  if (incoming.borderColor !== undefined) target.borderColor = incoming.borderColor;
 }
 
 /**
  * Namu tables are logical streams, not physical lines. A cell may contain
  * multiline [[links]] / {{{wiki blocks}}}, and a bare `||` closes the row.
- * This parser keeps a pending cell until its nested syntax closes, then treats
- * the next top-level `||` as a new cell. This is what album grids depend on.
+ * Table-level directives are collected separately so table geometry survives
+ * instead of leaking into the first cell.
  */
 function parseTableChunk(lines: string[]) {
   const rows: NamuRawCell[][] = [];
+  const tableMeta: NamuRawTableMeta = {};
   let row: NamuRawCell[] = [];
   let pending = "";
 
+  const appendCell = (source: string) => {
+    const parsed = makeCell(source);
+    mergeTableMeta(tableMeta, parsed.tableMeta);
+    row.push(parsed.cell);
+  };
   const pushPending = () => {
     if (!pending.trim()) { pending = ""; return; }
-    row.push(makeCell(pending));
+    appendCell(pending);
     pending = "";
   };
   const pushRow = () => {
     pushPending();
-    if (row.some((cell) => cell.children.length || cell.background || cell.rowspan || cell.colspan)) rows.push(row);
+    if (row.some((cell) => cell.children.length || cell.background || cell.color || cell.width || cell.rowspan || cell.colspan || cell.nopad)) rows.push(row);
     row = [];
   };
 
@@ -288,7 +341,7 @@ function parseTableChunk(lines: string[]) {
           if (part) pending = part;
           else if (parts.length > 1) pushRow();
         } else {
-          if (part) row.push(makeCell(part));
+          if (part) appendCell(part);
         }
       }
       continue;
@@ -298,7 +351,7 @@ function parseTableChunk(lines: string[]) {
   }
 
   if (pending || row.length) pushRow();
-  return rows;
+  return { rows, meta: Object.keys(tableMeta).length ? tableMeta : undefined };
 }
 
 function meaningfulParagraph(source: string) {
@@ -310,17 +363,6 @@ function tabLabel(source: string) {
   const text = stripFormatting(source).trim();
   const match = text.match(/^\[\s*([^\[\]\n]{1,80}?)\s*\]$/);
   return match?.[1]?.trim() || null;
-}
-
-function isStructuralStart(line: string) {
-  const trimmed = line.trimStart();
-  return trimmed.startsWith("||")
-    || /^={2,6}\s/.test(trimmed)
-    || /^#{2,6}\s/.test(trimmed)
-    || /^#!/.test(trimmed)
-    || /^\{\{\{#!/.test(trimmed)
-    || /^\s*(?:\*|\d+\.|[a-zA-Z]\.)\s+/.test(line)
-    || /^\s*>/.test(line);
 }
 
 function directiveKind(value: string): NamuDirectiveKind {
@@ -396,8 +438,8 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
   };
   const flushTable = () => {
     if (!table.length) return;
-    const rows = parseTableChunk(table);
-    if (rows.length) nodes.push({ type: "table", rows });
+    const parsed = parseTableChunk(table);
+    if (parsed.rows.length) nodes.push({ type: "table", rows: parsed.rows, meta: parsed.meta });
     table = [];
     tableOpen = false;
   };
