@@ -23,6 +23,7 @@ async function db<T>(path: string): Promise<T> {
 type AssetRow = {
   asset_type: string;
   source_ref: string;
+  label: string | null;
   status: string;
   resolved_url: string | null;
   storage_path: string | null;
@@ -36,7 +37,9 @@ function fileKey(ref: string) {
 function usableAssetUrl(row: AssetRow) {
   if (row.resolved_url) return row.resolved_url;
   const candidate = row.metadata?.enrichment_url;
-  return typeof candidate === "string" && /^https?:\/\//i.test(candidate) ? candidate : null;
+  if (typeof candidate === "string" && /^https?:\/\//i.test(candidate)) return candidate;
+  if (/^https?:\/\//i.test(row.source_ref)) return row.source_ref;
+  return null;
 }
 
 function isCompleteRawFormat(format: string | null) {
@@ -86,7 +89,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
 
   const [assetRows, clusterDocs] = await Promise.all([
     db<AssetRow[]>(
-      `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
+      `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,label,status,resolved_url,storage_path,metadata`,
     ),
     db<{ raw_html: string }[]>(
       `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(source.root_title)}&select=raw_html&limit=80`,
@@ -103,7 +106,9 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   for (const [key, url] of Object.entries(bundle.renderedFileMap)) assets[fileKey(key)] = url;
   for (const row of assetRows) {
     const url = usableAssetUrl(row);
-    if (url) assets[fileKey(row.source_ref)] = url;
+    if (!url) continue;
+    assets[fileKey(row.source_ref)] = url;
+    if (row.label) assets[fileKey(row.label)] = url;
   }
 
   return (
