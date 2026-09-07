@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parse } from "node-html-parser";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -49,6 +50,24 @@ function normalizeDirectUrl(value: unknown) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+function normalizedFileName(value: string) {
+  return value.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
+}
+
+function extractFileMap(rawHtml: string) {
+  const root = parse(rawHtml || "");
+  const map = new Map<string, string>();
+  for (const image of root.querySelectorAll("img")) {
+    const alt = image.getAttribute("alt") || "";
+    if (!/^(?:파일|File):/i.test(alt)) continue;
+    const key = normalizedFileName(alt);
+    const rawUrl = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || "";
+    const url = normalizeDirectUrl(rawUrl);
+    if (key && url && !map.has(key)) map.set(key, url);
+  }
+  return map;
+}
+
 function isNoiseImageRef(value: string) {
   return /(?:CC-white|cc-by-nc-sa|유튜브 아이콘|youtube icon|MBC 로고|상세 내용 아이콘)/i.test(value);
 }
@@ -92,7 +111,7 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.4", Referer: "https://www.namu.moe/" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.5", Referer: "https://www.namu.moe/" }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -135,6 +154,17 @@ export async function POST(request: Request) {
     const resolved: string[] = [];
     const skipped: string[] = [];
     const unresolved: { id: string; ref: string; reason: string }[] = [];
+    const fileMaps = new Map<string, Map<string, string>>();
+
+    async function mirrorFileUrl(documentId: string, sourceRef: string) {
+      let map = fileMaps.get(documentId);
+      if (!map) {
+        const docs = await db(`source_documents?id=eq.${documentId}&select=raw_html&limit=1`) as { raw_html: string }[];
+        map = extractFileMap(docs[0]?.raw_html || "");
+        fileMaps.set(documentId, map);
+      }
+      return map.get(normalizedFileName(sourceRef)) || null;
+    }
 
     for (const row of rows) {
       try {
@@ -147,20 +177,21 @@ export async function POST(request: Request) {
           }
 
           const enrichedUrl = normalizeDirectUrl(row.metadata?.enrichment_url);
-          const directUrl = enrichedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
-          if (!directUrl) throw new Error("source image is a file reference; web enrichment required");
+          const mirrorMappedUrl = await mirrorFileUrl(row.source_document_id, row.source_ref);
+          const directUrl = enrichedUrl || mirrorMappedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
+          if (!directUrl) throw new Error("source image file is not present in mirror markup; enrichment required");
           const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
           patch = {
             ...patch,
             resolved_url: uploaded.publicUrl,
             storage_path: uploaded.path,
-            confidence: enrichedUrl ? Number(row.metadata?.enrichment_confidence ?? 0.75) : 1,
+            confidence: enrichedUrl || mirrorMappedUrl ? 1 : 0.9,
             metadata: {
               ...row.metadata,
               original_url: directUrl,
               content_type: uploaded.contentType,
               bytes: uploaded.bytes,
-              resolved_from: enrichedUrl ? "web_enrichment" : "source",
+              resolved_from: enrichedUrl ? "raw-file-map" : mirrorMappedUrl ? "mirror-img-alt" : "source",
             },
           };
         } else if (row.asset_type === "video") {
