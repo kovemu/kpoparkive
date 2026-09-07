@@ -17,11 +17,15 @@ export type NamuRawCell = {
 export type NamuRawNode =
   | { type: "heading"; level: number; text: string }
   | { type: "paragraph"; children: NamuInline[] }
+  | { type: "tab"; label: string }
   | { type: "table"; rows: NamuRawCell[][] }
   | { type: "raw-control"; source: string };
 
 function decodeBasic(value: string) {
   return value
+    // namu.moe exposes source code with escaped line breaks inside <pre><code>.
+    // Decode them before any structural parsing so wiki/table blocks stay multiline.
+    .replace(/\\n/g, "\n")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&amp;/gi, "&")
@@ -30,16 +34,21 @@ function decodeBasic(value: string) {
     .replace(/&#91;/gi, "[")
     .replace(/&#93;/gi, "]")
     .replace(/&#123;/gi, "{")
-    .replace(/&#125;/gi, "}");
+    .replace(/&#125;/gi, "}")
+    .replace(/&#8203;|&#x200b;/gi, "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
 }
 
 function stripFormatting(value: string) {
   return value
+    .replace(/\\n/g, "\n")
     .replace(/\[br\]/gi, "\n")
+    .replace(/\{\{\{#!html\b[\s\S]*?\}\}\}/gi, "")
     .replace(/'''([\s\S]*?)'''/g, "$1")
     .replace(/''([\s\S]*?)''/g, "$1")
     .replace(/\{\{\{[+-]?\d+\s*/g, "")
-    .replace(/\{\{\{#!(?:wiki|if|style|html|folding)\b[^\n]*\n?/gi, "")
+    .replace(/\{\{\{#!(?:wiki|if|style|folding)\b[^\n]*\n?/gi, "")
     .replace(/\}\}\}/g, "")
     .replace(/#!(?:wiki|if|style|html|folding)\b[^\n]*/gi, "")
     .replace(/[ \t]+/g, " ")
@@ -252,6 +261,12 @@ function meaningfulParagraph(source: string) {
   return text && !/^#!(?:wiki|if|style|html|folding)\b/i.test(text);
 }
 
+function tabLabel(source: string) {
+  const text = stripFormatting(source).trim();
+  const match = text.match(/^\[\s*([^\[\]\n]{1,80}?)\s*\]$/);
+  return match?.[1]?.trim() || null;
+}
+
 function isStructuralStart(line: string) {
   const trimmed = line.trimStart();
   return trimmed.startsWith("||") || /^={2,6}\s/.test(trimmed) || /^#{2,6}\s/.test(trimmed) || /^#!/.test(trimmed);
@@ -268,7 +283,10 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
   const flushParagraph = () => {
     if (!paragraph.length) return;
     const joined = paragraph.join("\n").trim();
-    if (meaningfulParagraph(joined)) {
+    const tab = tabLabel(joined);
+    if (tab) {
+      nodes.push({ type: "tab", label: tab });
+    } else if (meaningfulParagraph(joined)) {
       const children = parseNamuInline(joined);
       if (children.length) nodes.push({ type: "paragraph", children });
     }
