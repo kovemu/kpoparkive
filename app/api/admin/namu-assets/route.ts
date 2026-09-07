@@ -43,9 +43,13 @@ function normalizeDirectUrl(value: unknown) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+function isNoiseImageRef(value: string) {
+  return /(?:CC-white|cc-by-nc-sa|유튜브 아이콘|youtube icon|MBC 로고|상세 내용 아이콘)/i.test(value);
+}
+
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.2", Referer: "https://www.namu.moe/" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.3", Referer: "https://www.namu.moe/" }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -75,26 +79,47 @@ export async function POST(request: Request) {
   if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const body = await request.json() as { rootTitle?: string; batchSize?: number };
+    const body = await request.json() as { rootTitle?: string; batchSize?: number; retryUnresolved?: boolean };
     const rootTitle = String(body.rootTitle || "").trim();
     if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
     const batchSize = Math.max(1, Math.min(Number(body.batchSize ?? 12), 30));
+    const statusFilter = body.retryUnresolved ? "in.(pending,unresolved)" : "eq.pending";
 
-    const rows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=eq.pending&select=id,source_document_id,source_title,asset_type,source_ref,label,provider,metadata&order=created_at.asc&limit=${batchSize}`) as Array<{
+    const rows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=${statusFilter}&select=id,source_document_id,source_title,asset_type,source_ref,label,provider,metadata&order=created_at.asc&limit=${batchSize}`) as Array<{
       id: string; source_document_id: string; source_title: string; asset_type: string; source_ref: string; label: string | null; provider: string | null; metadata: Record<string, unknown>;
     }>;
 
     const resolved: string[] = [];
+    const skipped: string[] = [];
     const unresolved: { id: string; ref: string; reason: string }[] = [];
 
     for (const row of rows) {
       try {
         let patch: Record<string, unknown> = { status: "resolved", updated_at: new Date().toISOString() };
         if (row.asset_type === "image") {
-          const directUrl = normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
+          if (isNoiseImageRef(`${row.source_ref} ${row.label || ""}`)) {
+            await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "skipped", confidence: 1, metadata: { ...row.metadata, skip_reason: "decorative or provider icon" }, updated_at: new Date().toISOString() }) });
+            skipped.push(row.id);
+            continue;
+          }
+
+          const enrichedUrl = normalizeDirectUrl(row.metadata?.enrichment_url);
+          const directUrl = enrichedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
           if (!directUrl) throw new Error("source image is a file reference; web enrichment required");
           const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
-          patch = { ...patch, resolved_url: uploaded.publicUrl, storage_path: uploaded.path, confidence: 1, metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes } };
+          patch = {
+            ...patch,
+            resolved_url: uploaded.publicUrl,
+            storage_path: uploaded.path,
+            confidence: enrichedUrl ? Number(row.metadata?.enrichment_confidence ?? 0.75) : 1,
+            metadata: {
+              ...row.metadata,
+              original_url: directUrl,
+              content_type: uploaded.contentType,
+              bytes: uploaded.bytes,
+              resolved_from: enrichedUrl ? "web_enrichment" : "source",
+            },
+          };
         } else if (row.asset_type === "video") {
           const videoId = typeof row.metadata?.video_id === "string" ? row.metadata.video_id : null;
           patch = { ...patch, resolved_url: row.provider === "youtube" && videoId ? `https://www.youtube.com/embed/${videoId}` : row.source_ref, confidence: 1 };
@@ -119,7 +144,7 @@ export async function POST(request: Request) {
     }
 
     const remaining = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=eq.pending&select=id`) as { id: string }[];
-    return NextResponse.json({ ok: true, rootTitle, processed: rows.length, resolved: resolved.length, unresolved, remaining: remaining.length });
+    return NextResponse.json({ ok: true, rootTitle, processed: rows.length, resolved: resolved.length, skipped: skipped.length, unresolved, remaining: remaining.length });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown asset resolution error" }, { status: 500 });
   }
