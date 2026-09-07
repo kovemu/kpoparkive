@@ -21,44 +21,30 @@ const albumCoverPaths: Record<string, string> = {
 };
 
 const albumDocumentSlugs: Record<string, string> = {
-  YoYo: "yoyo",
-  "Re:Scene": "re-scene",
-  SCENEDROME: "scenedrome",
-  "Glow Up": "glow-up",
-  Dearest: "dearest",
-  "Heart Drop": "heart-drop",
-  "lip bomb": "lip-bomb",
-  "Busy Boy": "busy-boy",
-  Runaway: "runaway",
-  "Pretty Girl": "pretty-girl",
+  YoYo: "yoyo", "Re:Scene": "re-scene", SCENEDROME: "scenedrome", "Glow Up": "glow-up", Dearest: "dearest",
+  "Heart Drop": "heart-drop", "lip bomb": "lip-bomb", "Busy Boy": "busy-boy", Runaway: "runaway", "Pretty Girl": "pretty-girl",
 };
 
 const relatedDocumentSlugs: Record<string, string> = {
-  "RESCENE / Discography": "rescene-discography",
-  "RESCENE / Member chemistry": "rescene-member-chemistry",
-  "RESCENE / Activities": "rescene-activities",
-  "RESCENE / Content": "rescene-content",
-  "RESCENE / Performances & events": "rescene-performances-events",
-  "RESCENE / Music shows": "rescene-music-shows",
-  "RESCENE / YouTube": "rescene-youtube",
-  "RESCENE / Live broadcasts": "rescene-live",
-  "RESCENE / Advertising & pictorials": "rescene-advertising-pictorials",
-  "RESCENE / Awards": "rescene-awards",
-  "RESCENE / Trivia": "rescene-trivia",
-  "RESCENE / Music videos": "rescene-music-videos",
-  "RESCENE / Music show fancams": "rescene-fancams",
-  "RESCENE / Detailed chart performance": "rescene-chart-performance",
-  "RESCENE / Fan chants": "rescene-fan-chants",
-  "RESCENE / Goods": "rescene-goods",
-  "RESCENE / Karaoke catalog": "rescene-karaoke",
-  REMINE: "remine",
-  remini: "remini",
+  "RESCENE / Discography": "rescene-discography", "RESCENE / Member chemistry": "rescene-member-chemistry",
+  "RESCENE / Activities": "rescene-activities", "RESCENE / Content": "rescene-content",
+  "RESCENE / Performances & events": "rescene-performances-events", "RESCENE / Music shows": "rescene-music-shows",
+  "RESCENE / YouTube": "rescene-youtube", "RESCENE / Live broadcasts": "rescene-live",
+  "RESCENE / Advertising & pictorials": "rescene-advertising-pictorials", "RESCENE / Awards": "rescene-awards",
+  "RESCENE / Trivia": "rescene-trivia", "RESCENE / Music videos": "rescene-music-videos",
+  "RESCENE / Music show fancams": "rescene-fancams", "RESCENE / Detailed chart performance": "rescene-chart-performance",
+  "RESCENE / Fan chants": "rescene-fan-chants", "RESCENE / Goods": "rescene-goods", "RESCENE / Karaoke catalog": "rescene-karaoke",
+  REMINE: "remine", remini: "remini",
 };
 
 function flagFor(nationality: string) {
   if (nationality === "South Korea") return "🇰🇷";
   if (nationality === "Japan") return "🇯🇵";
   return "";
+}
+
+function mirrorSlug(target: string) {
+  return `mirror-${target.normalize("NFKC").toLowerCase().replace(/\([^)]*\)/g, "").replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "")}`;
 }
 
 export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
@@ -68,63 +54,61 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
         if (block.type === "paragraph") return <p key={index}>{block.text}</p>;
 
         if (block.type === "members") {
-          return (
-            <div className="memberGrid" key={index}>
-              {block.items.map((member) => {
-                const photoPath = memberPhotoPaths[member.name];
-                return (
-                  <article className="memberCard" key={member.name}>
-                    <div className="memberPortrait">
-                      {photoPath ? (
-                        <img src={getStoragePublicUrl(photoPath)} alt={`${member.name} of RESCENE`} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 30%", display: "block" }} />
-                      ) : member.name.slice(0, 1)}
-                    </div>
-                    <a href={`/wiki/${member.name.toLowerCase()}`} className="memberName">{member.name}</a>
-                    <div className="memberMeta">{member.birthday}</div>
-                    <div className="flag" title={member.nationality}>{flagFor(member.nationality)}</div>
-                  </article>
-                );
-              })}
-            </div>
-          );
+          return <div className="memberGrid" key={index}>{block.items.map((member) => {
+            const photoPath = memberPhotoPaths[member.name];
+            return <article className="memberCard" key={member.name}>
+              <div className="memberPortrait">{photoPath ? <img src={getStoragePublicUrl(photoPath)} alt={`${member.name} of RESCENE`} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 30%", display: "block" }} /> : member.name.slice(0, 1)}</div>
+              <a href={`/wiki/${member.name.toLowerCase()}`} className="memberName">{member.name}</a>
+              <div className="memberMeta">{member.birthday}</div><div className="flag" title={member.nationality}>{flagFor(member.nationality)}</div>
+            </article>;
+          })}</div>;
         }
 
         if (block.type === "related") {
-          const slug = relatedDocumentSlugs[block.target];
-          return (
-            <div className="subdocNotice" key={index}>
-              {block.label}: {slug ? <a href={`/wiki/${slug}`}>{block.target}</a> : <span className="pendingLink">{block.target}</span>}
-            </div>
-          );
+          const slug = relatedDocumentSlugs[block.target] || (block.target.includes("/") ? mirrorSlug(block.target) : undefined);
+          return <div className="subdocNotice" key={index}>{block.label}: {slug ? <a href={`/admin/drafts/${slug}`}>{block.target}</a> : <span className="pendingLink">{block.target}</span>}</div>;
         }
+
+        if (block.type === "internal-link") {
+          const slug = block.slug || relatedDocumentSlugs[block.label] || mirrorSlug(block.target);
+          return <p className="wikiLinkRow" key={index}><a href={`/admin/drafts/${slug}`}>{block.label}</a></p>;
+        }
+
+        if (block.type === "external-link") return <p className="wikiLinkRow" key={index}><a href={block.url} target="_blank" rel="noreferrer">{block.label || block.url}</a></p>;
+
+        if (block.type === "image") {
+          const src = block.storage_path ? getStoragePublicUrl(block.storage_path) : block.url;
+          if (!src) return <div className="assetPlaceholder" key={index}>Image pending · {block.alt || block.source_ref}</div>;
+          return <figure className="wikiMedia" key={index}><img src={src} alt={block.alt || ""} loading="lazy" />{block.caption && <figcaption>{block.caption}</figcaption>}</figure>;
+        }
+
+        if (block.type === "video") {
+          if (block.provider === "youtube" && block.video_id) {
+            return <div className="wikiVideo" key={index}><iframe src={`https://www.youtube.com/embed/${block.video_id}`} title={block.label || "YouTube video"} loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div>;
+          }
+          return <div className="videoPlaceholder" key={index}><a href={block.url} target="_blank" rel="noreferrer">Open {block.provider} video</a></div>;
+        }
+
         if (block.type === "quote") return <blockquote className="accentQuote" key={index}>{block.text}</blockquote>;
         if (block.type === "callout") return <div className="accentBox" key={index}>{block.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>;
         if (block.type === "list") return <ul className="wikiList" key={index}>{block.items.map((item) => <li key={item}>{item}</li>)}</ul>;
 
         if (block.type === "table") {
           const isReleaseTable = block.columns[0] === "Release";
-          return (
-            <div className="simpleTable" key={index} style={{ "--table-columns": block.columns.length } as React.CSSProperties}>
-              <div className="tableHead">{block.columns.map((column) => <span key={column}>{column}</span>)}</div>
-              {block.rows.map((row, rowIndex) => (
-                <div key={rowIndex}>
-                  {row.map((cell, cellIndex) => {
-                    if (cellIndex === 0) {
-                      const coverPath = isReleaseTable ? albumCoverPaths[cell] : undefined;
-                      const albumSlug = isReleaseTable ? albumDocumentSlugs[cell] : undefined;
-                      return (
-                        <strong key={cellIndex} style={coverPath ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>
-                          {coverPath && <img src={getStoragePublicUrl(coverPath)} alt={`${cell} cover`} width={54} height={54} style={{ width: 54, height: 54, objectFit: "cover", flex: "0 0 auto", border: "1px solid #d7dde5" }} />}
-                          {albumSlug ? <a href={`/wiki/${albumSlug}`}>{cell}</a> : <span>{cell}</span>}
-                        </strong>
-                      );
-                    }
-                    return <span key={cellIndex}>{cell}</span>;
-                  })}
-                </div>
-              ))}
-            </div>
-          );
+          return <div className="simpleTable" key={index} style={{ "--table-columns": block.columns.length } as React.CSSProperties}>
+            <div className="tableHead">{block.columns.map((column, i) => <span key={`${column}-${i}`}>{column}</span>)}</div>
+            {block.rows.map((row, rowIndex) => <div key={rowIndex}>{row.map((cell, cellIndex) => {
+              if (cellIndex === 0) {
+                const coverPath = isReleaseTable ? albumCoverPaths[cell] : undefined;
+                const albumSlug = isReleaseTable ? albumDocumentSlugs[cell] : undefined;
+                return <strong key={cellIndex} style={coverPath ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>
+                  {coverPath && <img src={getStoragePublicUrl(coverPath)} alt={`${cell} cover`} width={54} height={54} style={{ width: 54, height: 54, objectFit: "cover", flex: "0 0 auto", border: "1px solid #d7dde5" }} />}
+                  {albumSlug ? <a href={`/wiki/${albumSlug}`}>{cell}</a> : <span>{cell}</span>}
+                </strong>;
+              }
+              return <span key={cellIndex}>{cell}</span>;
+            })}</div>)}
+          </div>;
         }
 
         if (block.type === "gallery-placeholder") return <div className="profileHistory" key={index}>{block.labels.map((label) => <div key={label}>{label}</div>)}</div>;
