@@ -1,9 +1,22 @@
 import React from "react";
 import type { NamuInline, NamuRawCell, NamuRawNode } from "../../lib/namuRawParser";
+import styles from "./NamuRawRenderer.module.css";
 
 type AssetMap = Record<string, string>;
 
+type FootnoteEntry = {
+  number: number;
+  id?: string;
+  children: NamuInline[];
+};
+
+type FootnoteRegistry = {
+  numbers: Map<NamuInline, number>;
+  entries: FootnoteEntry[];
+};
+
 function internalHref(target: string) {
+  if (target.startsWith("#")) return `#${encodeURIComponent(target.slice(1))}`;
   const [title, anchor] = target.split("#", 2);
   const base = `/admin/namu-hybrid-preview/${encodeURIComponent(title || target)}`;
   return anchor ? `${base}#${encodeURIComponent(anchor)}` : base;
@@ -29,11 +42,48 @@ function findAsset(assets: AssetMap, file: string) {
   return undefined;
 }
 
-function Inline({ nodes, assets }: { nodes: NamuInline[]; assets: AssetMap }) {
+function collectFootnotes(nodes: NamuRawNode[]): FootnoteRegistry {
+  const numbers = new Map<NamuInline, number>();
+  const entries: FootnoteEntry[] = [];
+  const named = new Map<string, number>();
+
+  const visitInline = (inlineNodes: NamuInline[]) => {
+    for (const node of inlineNodes) {
+      if (node.type !== "footnote") continue;
+      let number = node.id ? named.get(node.id) : undefined;
+      if (!number) {
+        number = entries.length + 1;
+        entries.push({ number, id: node.id, children: node.children });
+        if (node.id) named.set(node.id, number);
+      }
+      numbers.set(node, number);
+      visitInline(node.children);
+    }
+  };
+
+  const visitNodes = (blockNodes: NamuRawNode[]) => {
+    for (const node of blockNodes) {
+      if (node.type === "paragraph") visitInline(node.children);
+      else if (node.type === "table") node.rows.forEach((row) => row.forEach((cell) => visitInline(cell.children)));
+      else if (node.type === "directive" || node.type === "quote") visitNodes(node.children);
+      else if (node.type === "list") node.items.forEach((item) => visitInline(item.children));
+    }
+  };
+
+  visitNodes(nodes);
+  return { numbers, entries };
+}
+
+function Inline({ nodes, assets, footnotes }: { nodes: NamuInline[]; assets: AssetMap; footnotes: FootnoteRegistry }) {
   return <>
     {nodes.map((node, index) => {
       if (node.type === "text") return <React.Fragment key={index}>{node.text.split("\n").map((part, line) => <React.Fragment key={line}>{line > 0 && <br />}{part}</React.Fragment>)}</React.Fragment>;
       if (node.type === "link") return <a key={index} href={internalHref(node.target)} style={{ whiteSpace: "pre-line" }}>{node.label}</a>;
+      if (node.type === "footnote") {
+        const number = footnotes.numbers.get(node);
+        if (!number) return null;
+        return <sup key={index} id={`fnref-${number}`} className={styles.footnoteRef}><a href={`#fn-${number}`}>[{number}]</a></sup>;
+      }
       const file = normalizeFileRef(node.file);
       const url = findAsset(assets, file);
       if (url) return <img key={index} src={url} alt={file} loading="lazy" style={imageStyle(node.width, node.height)} />;
@@ -53,8 +103,64 @@ function cellStyle(cell: NamuRawCell): React.CSSProperties {
   };
 }
 
-export default function NamuRawRenderer({ nodes, assets = {} }: { nodes: NamuRawNode[]; assets?: AssetMap }) {
-  return <div className="namuRawRenderer">
+const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
+  "text-align": "textAlign",
+  "background": "background",
+  "background-color": "backgroundColor",
+  "color": "color",
+  "width": "width",
+  "max-width": "maxWidth",
+  "min-width": "minWidth",
+  "height": "height",
+  "min-height": "minHeight",
+  "margin": "margin",
+  "margin-left": "marginLeft",
+  "margin-right": "marginRight",
+  "margin-top": "marginTop",
+  "margin-bottom": "marginBottom",
+  "padding": "padding",
+  "padding-left": "paddingLeft",
+  "padding-right": "paddingRight",
+  "padding-top": "paddingTop",
+  "padding-bottom": "paddingBottom",
+  "border": "border",
+  "border-left": "borderLeft",
+  "border-right": "borderRight",
+  "border-top": "borderTop",
+  "border-bottom": "borderBottom",
+  "font-size": "fontSize",
+  "font-weight": "fontWeight",
+  "line-height": "lineHeight",
+  "white-space": "whiteSpace",
+  "word-break": "wordBreak",
+  "overflow": "overflow",
+};
+
+function safeWikiStyle(args: string): React.CSSProperties | undefined {
+  const styleSource = args.match(/\bstyle\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bstyle\s*=\s*'([^']*)'/i)?.[1];
+  if (!styleSource) return undefined;
+  const output: Record<string, string> = {};
+  for (const declaration of styleSource.split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const reactProperty = SAFE_STYLE_PROPERTIES[property];
+    if (!reactProperty) continue;
+    const value = declaration.slice(separator + 1).trim();
+    if (!value || /url\s*\(|expression\s*\(|javascript:|[<>]/i.test(value)) continue;
+    output[String(reactProperty)] = value;
+  }
+  return Object.keys(output).length ? output as React.CSSProperties : undefined;
+}
+
+function directiveClass(args: string) {
+  const value = args.match(/\bclass\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bclass\s*=\s*'([^']*)'/i)?.[1];
+  if (!value || !/^[a-z0-9_ -]+$/i.test(value)) return undefined;
+  return value.trim() || undefined;
+}
+
+function NodeList({ nodes, assets, footnotes }: { nodes: NamuRawNode[]; assets: AssetMap; footnotes: FootnoteRegistry }) {
+  return <>
     {nodes.map((node, index) => {
       if (node.type === "heading") {
         if (node.level <= 2) return <h2 key={index} className="sectionTitle">{node.text}</h2>;
@@ -62,11 +168,43 @@ export default function NamuRawRenderer({ nodes, assets = {} }: { nodes: NamuRaw
         return <h4 key={index} className="sectionTitle">{node.text}</h4>;
       }
       if (node.type === "tab") return <span key={index} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 38, padding: "7px 14px", border: "1px solid #cfd5dd", borderBottom: "2px solid var(--accent, #fc6fcf)", background: "#fff", fontSize: 14, fontWeight: 700, lineHeight: 1.2 }}>{node.label}</span>;
-      if (node.type === "paragraph") return <p key={index} className="wikiParagraph"><Inline nodes={node.children} assets={assets} /></p>;
-      if (node.type === "table") return <div key={index} style={{ overflowX: "auto", margin: "12px 0" }}><table className="wikiTable" style={{ borderCollapse: "collapse", width: "100%" }}><tbody>
-        {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell)}><Inline nodes={cell.children} assets={assets} /></td>)}</tr>)}
+      if (node.type === "paragraph") return <p key={index} className="wikiParagraph"><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></p>;
+      if (node.type === "table") return <div key={index} className={styles.tableWrap}><table className={`wikiTable ${styles.table}`}><tbody>
+        {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell)}><Inline nodes={cell.children} assets={assets} footnotes={footnotes} /></td>)}</tr>)}
       </tbody></table></div>;
+      if (node.type === "list") {
+        const ListTag = node.ordered ? "ol" : "ul";
+        return <ListTag key={index} className={styles.list}>{node.items.map((item, itemIndex) => <li key={itemIndex} style={{ marginLeft: `${item.depth * 18}px` }}><Inline nodes={item.children} assets={assets} footnotes={footnotes} /></li>)}</ListTag>;
+      }
+      if (node.type === "quote") return <blockquote key={index} className={styles.quote}><NodeList nodes={node.children} assets={assets} footnotes={footnotes} /></blockquote>;
+      if (node.type === "directive") {
+        if (node.kind === "html" || !node.children.length) return null;
+        if (node.kind === "folding") {
+          return <details key={index} className={styles.folding}>
+            <summary>{node.title || "Details"}</summary>
+            <div className={styles.foldingBody}><NodeList nodes={node.children} assets={assets} footnotes={footnotes} /></div>
+          </details>;
+        }
+        const sourceClass = directiveClass(node.args);
+        const classNames = [styles.directive, node.kind === "wiki" ? styles.wikiBlock : styles.ifBlock, sourceClass].filter(Boolean).join(" ");
+        return <div key={index} className={classNames} style={safeWikiStyle(node.args)} data-namu-directive={node.kind} data-namu-condition={node.kind === "if" ? node.args : undefined}>
+          <NodeList nodes={node.children} assets={assets} footnotes={footnotes} />
+        </div>;
+      }
       return null;
     })}
+  </>;
+}
+
+export default function NamuRawRenderer({ nodes, assets = {} }: { nodes: NamuRawNode[]; assets?: AssetMap }) {
+  const footnotes = collectFootnotes(nodes);
+  return <div className={`namuRawRenderer ${styles.root}`}>
+    <NodeList nodes={nodes} assets={assets} footnotes={footnotes} />
+    {footnotes.entries.length > 0 && <div className={styles.footnotes} aria-label="Footnotes">
+      {footnotes.entries.map((entry) => <div key={entry.number} id={`fn-${entry.number}`} className={styles.footnoteRow}>
+        <a className={styles.footnoteIndex} href={`#fnref-${entry.number}`}>[{entry.number}]</a>
+        <div><Inline nodes={entry.children} assets={assets} footnotes={footnotes} /></div>
+      </div>)}
+    </div>}
   </div>;
 }
