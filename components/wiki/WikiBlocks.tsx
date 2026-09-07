@@ -61,11 +61,16 @@ function namuTarget(url: string) {
   try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
+function cellHref(url: string) {
+  const target = namuTarget(url);
+  return target ? `/admin/drafts/${mirrorSlug(target)}` : url;
+}
+
 function renderCellLink(url: string | undefined, label: string | undefined, fallback: string, hasImage = false) {
   if (!url) return fallback;
   const target = namuTarget(url);
   const rawText = label || fallback;
-  const text = rawText && !/^https?:\/\//i.test(rawText) ? rawText : "";
+  const text = rawText && !/^https?:\/\//i.test(rawText) && !/^<img\b/i.test(rawText) ? rawText : "";
   if (target) {
     if (!text && hasImage) return null;
     return <a href={`/admin/drafts/${mirrorSlug(target)}`}>{text || target}</a>;
@@ -126,8 +131,10 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
               const Tag = cell.header ? "th" : "td";
               const style: React.CSSProperties = { background: cell.background, color: cell.color, textAlign: cell.align };
               const hasImage = Boolean(cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || ""));
+              const image = hasImage ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null;
+              const linkedImage = image && cell.link_url ? <a href={cellHref(cell.link_url)} target={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "_blank" : undefined} rel={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "noreferrer" : undefined}>{image}</a> : image;
               return <Tag key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={style}>
-                {hasImage ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null}
+                {linkedImage}
                 {cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage) : cell.text}
               </Tag>;
             })}</tr>)}
