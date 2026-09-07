@@ -1,3 +1,13 @@
+export type RichWikiCell = {
+  text: string;
+  rowspan?: number;
+  colspan?: number;
+  header?: boolean;
+  background?: string;
+  color?: string;
+  align?: "left" | "center" | "right";
+};
+
 export type WikiBlock =
   | { type: "paragraph"; text: string }
   | { type: "members"; items: { name: string; birthday: string; nationality: string }[] }
@@ -10,6 +20,7 @@ export type WikiBlock =
   | { type: "callout"; paragraphs: string[] }
   | { type: "list"; items: string[] }
   | { type: "table"; columns: string[]; rows: string[][] }
+  | { type: "rich-table"; rows: RichWikiCell[][] }
   | { type: "gallery-placeholder"; labels: string[] };
 
 export type WikiSection = {
