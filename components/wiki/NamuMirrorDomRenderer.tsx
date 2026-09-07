@@ -86,6 +86,97 @@ function safeClassName(value: string | undefined) {
   return tokens.length ? tokens.join(" ") : undefined;
 }
 
+function quotedArg(args: string, name: string) {
+  const double = args.match(new RegExp(`\\b${name}\\s*=\\s*\"([^\"]*)\"`, "i"))?.[1];
+  if (double !== undefined) return double;
+  return args.match(new RegExp(`\\b${name}\\s*=\\s*'([^']*)'`, "i"))?.[1];
+}
+
+function directiveClass(args: string) {
+  return safeClassName(quotedArg(args, "class"));
+}
+
+function directiveStyle(args: string) {
+  return safeStyle(quotedArg(args, "style"));
+}
+
+function directiveTag(args: string) {
+  return quotedArg(args, "tag")?.toLowerCase();
+}
+
+function directiveTabKey(args: string) {
+  const className = directiveClass(args);
+  if (!className) return null;
+  const tokens = className.split(/\s+/);
+  return tokens.find((token) => /^tab-[a-z](?:-\d+)?$/i.test(token)) || null;
+}
+
+function defaultTabSelected(key: string) {
+  if (/^tab-[a-z]$/i.test(key)) return key.toLowerCase() === "tab-a";
+  return /-1$/i.test(key);
+}
+
+function rawText(value: string) {
+  return value.replace(/\\n/g, "\n").replace(/\r\n?/g, "\n").trim();
+}
+
+function tabLabel(body: string) {
+  const normalized = body.trim();
+  const bracket = normalized.match(/^\[\s*([\s\S]*?)\s*\]$/);
+  return (bracket?.[1] || normalized).replace(/'''|''/g, "").trim();
+}
+
+function renderRawCode(source: string, assets: AssetMap, key: string): React.ReactNode {
+  const normalized = rawText(source);
+  const bare = normalized.match(/^#!([a-z]+)\b([^\n]*)(?:\n([\s\S]*))?$/i);
+  if (!bare) {
+    const nodes = parseNamuRaw(normalized);
+    return nodes.length ? <NamuRawRenderer key={key} nodes={nodes} assets={assets} /> : null;
+  }
+
+  const kind = bare[1].toLowerCase();
+  const args = bare[2].trim();
+  const body = bare[3] || "";
+  if (kind === "html") return null;
+
+  const sourceClass = directiveClass(args);
+  const sourceStyle = directiveStyle(args);
+  const tag = directiveTag(args);
+  const tabKey = directiveTabKey(args);
+
+  if (tag === "a" && tabKey) {
+    const active = defaultTabSelected(tabKey);
+    const isSubtab = /-\d+$/i.test(tabKey);
+    return <div
+      key={key}
+      className={sourceClass}
+      data-namu-tab-control={tabKey}
+      data-namu-tab-active={active ? "true" : "false"}
+      style={{
+        flex: isSubtab ? "1 1 38%" : "1 1 20%",
+        minWidth: isSubtab ? 120 : 110,
+        margin: "4px 8px",
+        padding: isSubtab ? "5px 14px" : "6px 14px",
+        borderRadius: 8,
+        background: active ? "#fff" : "rgba(255,255,255,.18)",
+        color: active ? "var(--accent, #fc6fcf)" : "inherit",
+        textAlign: "center",
+        fontWeight: 700,
+        lineHeight: 1.25,
+        ...sourceStyle,
+      }}
+    >{tabLabel(body)}</div>;
+  }
+
+  if (tabKey && !defaultTabSelected(tabKey)) return null;
+
+  const nodes = body.trim() ? parseNamuRaw(body) : [];
+  if (!nodes.length) return null;
+  return <div key={key} className={sourceClass} style={sourceStyle} data-namu-directive={kind} data-namu-tab-content={tabKey || undefined}>
+    <NamuRawRenderer nodes={nodes} assets={assets} />
+  </div>;
+}
+
 function normalizeMediaUrl(value: string | undefined) {
   const url = String(value || "").trim();
   if (!url) return undefined;
@@ -106,7 +197,7 @@ function internalHref(value: string | undefined) {
 }
 
 function looksLikeNamuRaw(value: string) {
-  const source = value.trimStart();
+  const source = rawText(value);
   return /^#![a-z]+\b/i.test(source) || /^\|\|/m.test(source) || /\[\[[^\]]+\]\]/.test(source) || /\{\{\{/.test(source);
 }
 
@@ -139,10 +230,7 @@ function renderNode(node: Node, assets: AssetMap, key: string): React.ReactNode 
   if (tag === "pre") {
     const code = node.childNodes.find((child) => child instanceof HTMLElement && child.tagName.toLowerCase() === "code") as HTMLElement | undefined;
     const raw = code?.textContent || "";
-    if (code && looksLikeNamuRaw(raw)) {
-      const nodes = parseNamuRaw(raw);
-      return nodes.length ? <NamuRawRenderer key={key} nodes={nodes} assets={assets} /> : null;
-    }
+    if (code && looksLikeNamuRaw(raw)) return renderRawCode(raw, assets, key);
   }
 
   const common = {
@@ -161,7 +249,7 @@ function renderNode(node: Node, assets: AssetMap, key: string): React.ReactNode 
   if (tag === "header") return <header {...common}>{children}</header>;
   if (tag === "footer") return <footer {...common}>{children}</footer>;
   if (tag === "main") return <main {...common}>{children}</main>;
-  if (tag === "table") return <table {...common}><tbody>{children}</tbody></table>;
+  if (tag === "table") return <table {...common}>{children}</table>;
   if (tag === "tbody") return <tbody {...common}>{children}</tbody>;
   if (tag === "thead") return <thead {...common}>{children}</thead>;
   if (tag === "tfoot") return <tfoot {...common}>{children}</tfoot>;
