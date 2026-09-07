@@ -53,8 +53,11 @@ function decodeTitle(value: string) {
 }
 
 function validWikiTitle(title: string) {
-  return Boolean(title)
-    && !title.startsWith("분류:")
+  if (!title) return false;
+  if (/^@.+@$/.test(title)) return false;
+  if (/\/$/.test(title)) return false;
+  if (/^(?:\d{4}년|\d{1,2}월(?:\s|$)|\d{1,2}월\s*\d{1,2}일|\d{1,2}월\s*$)/.test(title)) return false;
+  return !title.startsWith("분류:")
     && !title.startsWith("파일:")
     && !title.startsWith("틀:")
     && !title.startsWith("나무위키:")
@@ -67,25 +70,42 @@ function extractLinks(html: string) {
   return unique(matches.map((match) => decodeTitle(match[1]))).filter(validWikiTitle);
 }
 
-function relationScore(title: string, label: string, context: string, rootTitle: string) {
+function enclosingContext(html: string, index: number, linkLength: number) {
+  const before = html.slice(Math.max(0, index - 2400), index);
+  const after = html.slice(index + linkLength, Math.min(html.length, index + linkLength + 2400));
+  const rowStart = before.lastIndexOf("<tr");
+  const rowEnd = after.indexOf("</tr>");
+  if (rowStart >= 0 && rowEnd >= 0) return stripHtml(before.slice(rowStart) + html.slice(index, index + linkLength) + after.slice(0, rowEnd + 5));
+  const liStart = before.lastIndexOf("<li");
+  const liEnd = after.indexOf("</li>");
+  if (liStart >= 0 && liEnd >= 0) return stripHtml(before.slice(liStart) + html.slice(index, index + linkLength) + after.slice(0, liEnd + 5));
+  return stripHtml(html.slice(Math.max(0, index - 140), Math.min(html.length, index + linkLength + 140)));
+}
+
+function relationScore(title: string, label: string, context: string, rootTitle: string, sourceTitle: string) {
   if (title === rootTitle) return { score: 100, reason: "root" };
   if (title.startsWith(`${rootTitle}/`)) return { score: 100, reason: "root-subdocument" };
   if (title.includes(`(${rootTitle})`) || title.includes(`[${rootTitle}]`)) return { score: 95, reason: "root-qualified-title" };
 
-  const rootMention = context.includes(rootTitle) || label.includes(rootTitle);
-  const memberContext = /멤버|member|프로필|profile|출생|생년월일|포지션|position/i.test(context);
-  const discographyContext = /음반|앨범|discography|album|single|싱글|미니\s*앨범|정규\s*앨범|EP|발매/i.test(context);
-  const activityContext = /활동|공연|행사|콘텐츠|유튜브|라이브|응원법|굿즈|수상|음원|직캠|music show|fancam|award|goods|live/i.test(context);
+  // Contextual discovery is intentionally allowed only on the root group page.
+  // Following contextual links from member/subdocuments caused graph explosion into dates,
+  // cities, MBTI pages, unrelated idols, etc.
+  if (sourceTitle !== rootTitle) return { score: 0, reason: "non-root-context-disabled" };
 
-  if (rootMention && memberContext) return { score: 90, reason: "member-context" };
-  if (rootMention && discographyContext) return { score: 86, reason: "discography-context" };
-  if (rootMention && activityContext) return { score: 82, reason: "activity-context" };
-  if (memberContext && label.length <= 24 && !/[/:]/.test(label)) return { score: 78, reason: "member-table-context" };
-  if (discographyContext && label.length <= 60) return { score: 74, reason: "discography-table-context" };
+  const compact = `${label} ${context}`.replace(/\s+/g, " ");
+  const rootMention = compact.includes(rootTitle);
+  const memberContext = /멤버|member|프로필|profile|생년월일|포지션|position/i.test(compact);
+  const discographyContext = /음반|앨범|discography|album|single|싱글|미니\s*앨범|정규\s*앨범|EP|발매/i.test(compact);
+  const activityContext = /활동|공연|행사|콘텐츠|유튜브|라이브|응원법|굿즈|수상|음원|직캠|music show|fancam|award|goods|live/i.test(compact);
+
+  // Root-page unqualified titles require a tight structural context, not a wide text window.
+  if (rootMention && memberContext && label.length <= 28 && !/[/:]/.test(label)) return { score: 90, reason: "root-member-row" };
+  if (rootMention && discographyContext && label.length <= 70) return { score: 86, reason: "root-discography-row" };
+  if (rootMention && activityContext && label.length <= 70) return { score: 82, reason: "root-activity-row" };
   return { score: 0, reason: "unrelated" };
 }
 
-function extractRelationCandidates(html: string, rootTitle: string) {
+function extractRelationCandidates(html: string, rootTitle: string, sourceTitle: string) {
   const matches = [...html.matchAll(/<a\b[^>]*href=["'](?:https?:\/\/(?:www\.)?namu\.moe)?\/w\/([^"'#?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
   const best = new Map<string, RelationCandidate>();
 
@@ -94,16 +114,16 @@ function extractRelationCandidates(html: string, rootTitle: string) {
     if (!validWikiTitle(title)) continue;
     const label = stripHtml(match[2]).trim() || title;
     const index = match.index ?? 0;
-    const context = stripHtml(html.slice(Math.max(0, index - 420), Math.min(html.length, index + match[0].length + 420)));
-    const { score, reason } = relationScore(title, label, context, rootTitle);
-    if (score < 74) continue;
+    const context = enclosingContext(html, index, match[0].length);
+    const { score, reason } = relationScore(title, label, context, rootTitle, sourceTitle);
+    if (score < 82) continue;
     const previous = best.get(title);
     if (!previous || previous.score < score) best.set(title, { title, label, score, reason });
   }
 
   return [...best.values()]
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
-    .slice(0, 80);
+    .slice(0, 60);
 }
 
 function extractImages(html: string) {
@@ -155,7 +175,7 @@ export async function fetchMirrorDocument(title: string, mirrorBase = DEFAULT_MI
   const response = await fetch(url, {
     cache: "no-store",
     headers: {
-      "User-Agent": "KpoparkiveIndexer/0.3 (+https://kpoparkive.vercel.app)",
+      "User-Agent": "KpoparkiveIndexer/0.4 (+https://kpoparkive.vercel.app)",
       Accept: "text/html,application/xhtml+xml",
     },
   });
@@ -171,7 +191,7 @@ export async function fetchMirrorDocument(title: string, mirrorBase = DEFAULT_MI
     images: extractImages(html),
     videos: extractVideos(html),
     externalLinks: extractExternalLinks(html),
-    relationCandidates: extractRelationCandidates(html, rootTitle),
+    relationCandidates: extractRelationCandidates(html, rootTitle, title),
   };
 }
 
