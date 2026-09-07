@@ -51,12 +51,17 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
     source_title: string;
     root_title: string;
     raw_html: string;
+    source_article_html: string | null;
+    source_template_css: string | null;
+    source_render_manifest: Record<string, unknown> | null;
+    source_render_extraction_version: string | null;
+    source_render_extracted_at: string | null;
     source_wikitext: string | null;
     source_raw_segments: RawSourceSegment[] | null;
     source_format: string | null;
     raw_extracted_at: string | null;
   }[]>(
-    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,root_title,raw_html,source_wikitext,source_raw_segments,source_format,raw_extracted_at&limit=1`,
+    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,root_title,raw_html,source_article_html,source_template_css,source_render_manifest,source_render_extraction_version,source_render_extracted_at,source_wikitext,source_raw_segments,source_format,raw_extracted_at&limit=1`,
   );
   const source = docs[0];
   if (!source) notFound();
@@ -68,7 +73,9 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const hybrid = parseNamuHybridSegments(segments);
   const completeRaw = Boolean(raw) && isCompleteRawFormat(source.source_format);
   const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
-  const mirrorHtml = normalizeNamuMirrorHtml(source.raw_html || "");
+  const importedDomArtifact = Boolean(source.source_article_html);
+  const mirrorSource = source.source_article_html || source.raw_html || "";
+  const mirrorHtml = normalizeNamuMirrorHtml(mirrorSource);
 
   const [assetRows, clusterDocs] = await Promise.all([
     db<AssetRow[]>(
@@ -79,9 +86,6 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
     ),
   ]);
 
-  // A template may reference an image that is only rendered concretely on a
-  // sibling document (album/member/detail page). Reuse those mirror <img alt>
-  // mappings across the imported group cluster before falling back to queue data.
   const assets: Record<string, string> = {};
   for (const clusterDoc of clusterDocs) {
     const map = extractMirrorRawBundle(clusterDoc.raw_html || "").renderedFileMap;
@@ -100,7 +104,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU SOURCE MIRROR · v5 HYBRID</div>
+        <div className="draftBadge">NAMU SOURCE MIRROR · v6 IMPORT ARTIFACT</div>
       </header>
       <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
@@ -110,17 +114,19 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
             <p>
               {completeRaw
                 ? "A complete Namu raw document is available, so this preview renders the preserved source directly."
-                : "The stored mirror DOM is preserved as the layout skeleton, and unsupported Namu source blocks are interpreted in place instead of being printed as code."}
+                : importedDomArtifact
+                  ? "This document uses the DOM skeleton, template CSS, raw fragments and media hints captured by the importer."
+                  : "Legacy import fallback: the DOM skeleton is derived from raw_html at render time until this document is re-imported."}
             </p>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
           <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "DOM + RAW"} />
+          <Metric label="Import DOM artifact" value={importedDomArtifact ? "YES" : "LEGACY"} />
+          <Metric label="Render artifact" value={source.source_render_extraction_version || "runtime"} />
           <Metric label="Mirror raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
           <Metric label="Visible raw blocks" value={String(visible.visibleRawBlocks)} />
-          <Metric label="Rendered sections" value={String(hybrid.renderedSections)} />
-          <Metric label="Skipped controls" value={String(hybrid.skippedControlChunks)} />
           <Metric label="Cluster mapped images" value={String(Object.keys(assets).length)} />
         </div>
 
@@ -137,6 +143,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
             <p style={{ marginTop: 0 }}>
               Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; DOM + RAW mode preserves the mirror's parent layout while replacing raw code blocks in place.
             </p>
+            {source.source_render_manifest && <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12, lineHeight: 1.5 }}>{JSON.stringify(source.source_render_manifest, null, 2)}</pre>}
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0, fontSize: 13, lineHeight: 1.55 }}>{raw || "No raw syntax blocks recovered."}</pre>
           </div>
         </details>
