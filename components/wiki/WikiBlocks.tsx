@@ -1,4 +1,13 @@
 import type { WikiBlock } from "../../lib/wiki";
+import { getStoragePublicUrl } from "../../lib/wiki";
+
+const memberPhotoPaths: Record<string, string> = {
+  Woni: "rescene/members/woni/runaway-b.jpg",
+  Liv: "rescene/members/liv/runaway-b.jpg",
+  Minami: "rescene/members/minami/runaway-b.jpg",
+  May: "rescene/members/may/runaway-b.jpg",
+  Zena: "rescene/members/zena/runaway-b.jpg",
+};
 
 function flagFor(nationality: string) {
   if (nationality === "South Korea") return "🇰🇷";
@@ -17,14 +26,25 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
         if (block.type === "members") {
           return (
             <div className="memberGrid" key={index}>
-              {block.items.map((member) => (
-                <article className="memberCard" key={member.name}>
-                  <div className="memberPortrait">{member.name.slice(0, 1)}</div>
-                  <a href={`/wiki/${member.name.toLowerCase()}`} className="memberName">{member.name}</a>
-                  <div className="memberMeta">{member.birthday}</div>
-                  <div className="flag" title={member.nationality}>{flagFor(member.nationality)}</div>
-                </article>
-              ))}
+              {block.items.map((member) => {
+                const photoPath = memberPhotoPaths[member.name];
+                return (
+                  <article className="memberCard" key={member.name}>
+                    <div className="memberPortrait">
+                      {photoPath ? (
+                        <img
+                          src={getStoragePublicUrl(photoPath)}
+                          alt={`${member.name} of RESCENE`}
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        />
+                      ) : member.name.slice(0, 1)}
+                    </div>
+                    <a href={`/wiki/${member.name.toLowerCase()}`} className="memberName">{member.name}</a>
+                    <div className="memberMeta">{member.birthday}</div>
+                    <div className="flag" title={member.nationality}>{flagFor(member.nationality)}</div>
+                  </article>
+                );
+              })}
             </div>
           );
         }
