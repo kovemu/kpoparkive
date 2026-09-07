@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ParsedSection } from "../../../../lib/namuParser";
+import { hydrateNamuSections } from "../../../../lib/namuHydrate";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -69,12 +70,22 @@ async function upsertDraft(row: {
     documentId = inserted[0].id;
   }
 
+  const assets = await db(`source_asset_queue?source_document_id=eq.${row.id}&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`) as Array<{
+    asset_type: string;
+    source_ref: string;
+    status: string;
+    resolved_url: string | null;
+    storage_path: string | null;
+    metadata?: Record<string, unknown>;
+  }>;
+  const hydrated = hydrateNamuSections(row.translated_sections, assets);
+
   await db(`document_sections?document_id=eq.${documentId}`, { method: "DELETE" });
-  if (row.translated_sections.length) {
+  if (hydrated.sections.length) {
     await db("document_sections", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(row.translated_sections.map((section) => ({
+      body: JSON.stringify(hydrated.sections.map((section) => ({
         document_id: documentId,
         section_key: section.section_key,
         heading: section.heading,
@@ -94,7 +105,7 @@ async function upsertDraft(row: {
       updated_at: new Date().toISOString(),
     }),
   });
-  return { documentId, slug };
+  return { documentId, slug, hydrated };
 }
 
 export async function GET(request: Request) {
@@ -155,13 +166,19 @@ export async function POST(request: Request) {
     ) as { id: string; source_title: string; source_url: string; source_hash: string; crawl_depth: number; translated_title: string; translated_sections: ParsedSection[]; generated_document_id: string | null }[];
 
     let rootGeneratedId = translatedRows.find((row) => row.crawl_depth === 0)?.generated_document_id || null;
-    const generated: { title: string; slug: string }[] = [];
+    const generated: { title: string; slug: string; resolvedAssets: number; skippedAssets: number; placeholders: number }[] = [];
     for (const row of translatedRows) {
       if (!row.translated_title || !row.translated_sections?.length) continue;
       if (row.crawl_depth > 0 && !rootGeneratedId) continue;
       const result = await upsertDraft(row, rootGeneratedId);
       if (row.crawl_depth === 0) rootGeneratedId = result.documentId;
-      generated.push({ title: row.source_title, slug: result.slug });
+      generated.push({
+        title: row.source_title,
+        slug: result.slug,
+        resolvedAssets: result.hydrated.resolvedAssets,
+        skippedAssets: result.hydrated.skippedAssets,
+        placeholders: result.hydrated.placeholders,
+      });
     }
 
     return NextResponse.json({ ok: true, rootTitle, translationVersion: TRANSLATION_VERSION, applied, generated });
