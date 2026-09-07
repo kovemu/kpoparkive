@@ -248,10 +248,6 @@ function cleanRawSource(source: string) {
 function extractPreCodeSource(node: HTMLElement) {
   const direct = node.querySelector("code");
   if (direct) return direct.textContent || "";
-
-  // node-html-parser may keep PRE contents as one raw text node. In that case
-  // `childNodes.find(<code>)` never succeeds and React prints literal <code>
-  // tags. Recover the code payload from either serialized form instead.
   for (const candidate of [node.innerHTML, node.textContent]) {
     const match = String(candidate || "").match(/^\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*$/i);
     if (match) return decodeEntities(match[1]);
@@ -277,16 +273,16 @@ function sanitizeDynamicCssValue(value: string) {
   return clean;
 }
 
-function scopedDocumentCss(html: string) {
+function scopedDocumentCss(html: string, persistedTemplateCss?: string | null) {
   const output: string[] = [];
-  for (const block of extractNamuStyleBlocks(html)) {
+  const blocks = persistedTemplateCss?.trim() ? [persistedTemplateCss.trim()] : extractNamuStyleBlocks(html);
+  for (const block of blocks) {
     const css = block.replace(/\/\*[\s\S]*?\*\//g, "");
     const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
     let rule: RegExpExecArray | null;
     while ((rule = rulePattern.exec(css))) {
       const selectorSource = rule[1].trim();
       if (!selectorSource || selectorSource.startsWith("@")) continue;
-      // React owns tab visibility/state. Do not allow recovered CSS to fight it.
       if (/(?:^|[\s,.>+~])(?:div|a)?\.(?:tab|subtab|selected)\b/i.test(selectorSource)) continue;
 
       const selectors = selectorSource
@@ -324,9 +320,6 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
   const args = bare[2].trim();
   const body = bare[3] || "";
   if (kind === "html" || kind === "style") return null;
-  // Mirror pages often emit every unresolved conditional branch. Rendering all
-  // of them is worse than hiding the unevaluated template control. Concrete
-  // rendered siblings remain in the DOM, so suppress raw #!if residue here.
   if (kind === "if") return null;
 
   const sourceClass = directiveClass(args);
@@ -336,13 +329,7 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
 
   if (tag === "a" && tabKey) {
     const label = (body.match(/^\[\s*([\s\S]*?)\s*\]$/)?.[1] || body).replace(/'''|''/g, "").trim();
-    return <NamuTabControl
-      key={key}
-      tabKey={tabKey}
-      label={label}
-      className={[styles.tabButton, sourceClass].filter(Boolean).join(" ")}
-      style={sourceStyle}
-    />;
+    return <NamuTabControl key={key} tabKey={tabKey} label={label} className={[styles.tabButton, sourceClass].filter(Boolean).join(" ")} style={sourceStyle} />;
   }
 
   const nodes = body.trim() ? parseNamuRaw(body) : [];
@@ -454,11 +441,11 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
   return <React.Fragment key={key}>{children}</React.Fragment>;
 }
 
-export default function NamuMirrorDomRenderer({ html, assets = {} }: { html: string; assets?: AssetMap }) {
+export default function NamuMirrorDomRenderer({ html, assets = {}, templateCss = null }: { html: string; assets?: AssetMap; templateCss?: string | null }) {
   const theme = deriveTheme(html);
   const root = parse(html || "");
   const article = root.querySelector("article") || root;
-  const documentCss = scopedDocumentCss(html);
+  const documentCss = scopedDocumentCss(html, templateCss);
   const themeStyle = {
     "--namu-theme-bg": theme.background,
     "--namu-theme-fg": theme.foreground,
