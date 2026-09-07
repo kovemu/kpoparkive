@@ -47,6 +47,43 @@ function isNoiseImageRef(value: string) {
   return /(?:CC-white|cc-by-nc-sa|유튜브 아이콘|youtube icon|MBC 로고|상세 내용 아이콘)/i.test(value);
 }
 
+function looksGenericWikiTarget(target: string) {
+  return /^(?:\d{4}년|\d{1,2}월(?:\s*\d{1,2}일)?|SBS|MBC|KBS|JTBC|tvN|엠넷|Mnet|유튜브|YouTube|Instagram|X|트위터|OST|가수|아이돌|대한민국|일본|미국)$/i.test(target)
+    || /(?:^|\/)(?:참가자|\d+회|FINAL)$/i.test(target)
+    || /^\d{1,2}월\s*\d{1,2}일$/.test(target);
+}
+
+function isRootAffinityTarget(target: string, rootTitle: string) {
+  return target === rootTitle
+    || target.startsWith(`${rootTitle}/`)
+    || target.includes(`(${rootTitle})`)
+    || target.includes(`[${rootTitle}]`);
+}
+
+async function classifyInternalTarget(target: string, rootTitle: string) {
+  const sources = await db(`source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(target)}&select=generated_document_id,root_title&limit=1`) as { generated_document_id: string | null; root_title: string | null }[];
+  const source = sources[0];
+
+  if (source?.generated_document_id) {
+    const docs = await db(`documents?id=eq.${source.generated_document_id}&select=slug,status&limit=1`) as { slug: string; status: string }[];
+    if (docs[0]) return { disposition: "internal" as const, url: docs[0].status === "published" ? `/wiki/${docs[0].slug}` : `/admin/drafts/${docs[0].slug}`, confidence: 1 };
+  }
+
+  if (source && source.root_title === rootTitle) {
+    return { disposition: "internal_pending" as const, confidence: 0.95, reason: "target belongs to imported group cluster but draft has not been generated yet" };
+  }
+
+  if (isRootAffinityTarget(target, rootTitle)) {
+    return { disposition: "crawl_candidate" as const, confidence: 0.9, reason: "target is explicitly qualified by the root group" };
+  }
+
+  if (looksGenericWikiTarget(target)) {
+    return { disposition: "plain_text" as const, confidence: 0.98, reason: "generic/date/broadcaster navigation target does not need a Kpoparkive document" };
+  }
+
+  return { disposition: "plain_text" as const, confidence: 0.82, reason: "background reference outside the imported group cluster" };
+}
+
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
   const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.3", Referer: "https://www.namu.moe/" }, redirect: "follow" });
@@ -126,12 +163,25 @@ export async function POST(request: Request) {
         } else if (row.asset_type === "external_link") {
           patch = { ...patch, resolved_url: row.source_ref, confidence: 1 };
         } else if (row.asset_type === "internal_link") {
-          const sources = await db(`source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(row.source_ref)}&select=generated_document_id&limit=1`) as { generated_document_id: string | null }[];
-          const generatedId = sources[0]?.generated_document_id;
-          if (!generatedId) throw new Error("target document not generated yet");
-          const docs = await db(`documents?id=eq.${generatedId}&select=slug,status&limit=1`) as { slug: string; status: string }[];
-          if (!docs[0]) throw new Error("generated document missing");
-          patch = { ...patch, resolved_url: docs[0].status === "published" ? `/wiki/${docs[0].slug}` : `/admin/drafts/${docs[0].slug}`, confidence: 1 };
+          const classification = await classifyInternalTarget(row.source_ref, rootTitle);
+          if (classification.disposition === "internal") {
+            patch = { ...patch, resolved_url: classification.url, confidence: classification.confidence, metadata: { ...row.metadata, link_disposition: classification.disposition } };
+          } else if (classification.disposition === "internal_pending" || classification.disposition === "crawl_candidate") {
+            throw new Error(classification.reason);
+          } else {
+            await db(`source_asset_queue?id=eq.${row.id}`, {
+              method: "PATCH",
+              headers: { Prefer: "return=minimal" },
+              body: JSON.stringify({
+                status: "skipped",
+                confidence: classification.confidence,
+                metadata: { ...row.metadata, link_disposition: classification.disposition, skip_reason: classification.reason },
+                updated_at: new Date().toISOString(),
+              }),
+            });
+            skipped.push(row.id);
+            continue;
+          }
         }
 
         await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) });
