@@ -5,7 +5,7 @@ import { parseNamuHtmlV4 } from "../../../../lib/namuParserV4";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const PARSE_VERSION = "namu-html-v4-source-order";
+const PARSE_VERSION = "namu-html-v4-source-order-nondestructive-assets";
 
 type AssetQueueRow = {
   source_document_id: string;
@@ -34,12 +34,16 @@ async function db(path: string, init: RequestInit = {}) {
 function queueRows(documentId: string, rootTitle: string, sourceTitle: string, blocks: ParsedBlock[]) {
   const rows: AssetQueueRow[] = [];
   for (const block of blocks) {
-    if (block.type === "image") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "image", source_ref: block.source_ref, label: block.alt || null, provider: block.url ? "direct" : "namu_file", role: block.role || null, metadata: { url: block.url || null } });
-    else if (block.type === "video") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "video", source_ref: block.url, label: block.label || null, provider: block.provider, role: null, metadata: { video_id: block.video_id || null } });
-    else if (block.type === "external-link") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "external_link", source_ref: block.url, label: block.label, provider: (() => { try { return new URL(block.url).hostname; } catch { return "external"; } })(), role: null, metadata: {} });
-    else if (block.type === "internal-link") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "internal_link", source_ref: block.target, label: block.label, provider: "namu", role: null, metadata: {} });
+    if (block.type === "image") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "image", source_ref: block.source_ref, label: block.alt || null, provider: block.url ? "direct" : "namu_file", role: block.role || null, metadata: { url: block.url || null, origin: "compatibility-v4" } });
+    else if (block.type === "video") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "video", source_ref: block.url, label: block.label || null, provider: block.provider, role: null, metadata: { video_id: block.video_id || null, origin: "compatibility-v4" } });
+    else if (block.type === "external-link") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "external_link", source_ref: block.url, label: block.label, provider: (() => { try { return new URL(block.url).hostname; } catch { return "external"; } })(), role: null, metadata: { origin: "compatibility-v4" } });
+    else if (block.type === "internal-link") rows.push({ source_document_id: documentId, root_title: rootTitle, source_title: sourceTitle, asset_type: "internal_link", source_ref: block.target, label: block.label, provider: "namu", role: null, metadata: { origin: "compatibility-v4" } });
   }
   return rows;
+}
+
+function queueKey(assetType: string, sourceRef: string) {
+  return `${assetType}\u0000${sourceRef}`;
 }
 
 export async function POST(request: Request) {
@@ -61,20 +65,33 @@ export async function POST(request: Request) {
       }
 
       try {
-        // v4 is deliberately about document fidelity: preserve the source's block order
-        // and include the lead area before section 1. v3 remains the asset extractor for
-        // now because it is intentionally exhaustive and catches nested media/link refs.
+        // V4 remains a compatibility/localization AST only. The importer-owned DOM
+        // skeleton, raw fragments, template CSS and asset hints are canonical and
+        // must never be deleted or overwritten by this fallback parser.
         const sections = parseNamuHtmlV4(row.raw_html || "");
         const assetSections = parseNamuHtml(row.raw_html || "");
         const assetBlocks = assetSections.flatMap((section) => section.content);
-        const assets = queueRows(row.id, rootTitle, row.source_title, assetBlocks);
+        const candidateAssets = queueRows(row.id, rootTitle, row.source_title, assetBlocks);
         const totalBlocks = sections.reduce((sum, section) => sum + section.content.length, 0);
 
-        await db(`source_documents?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ parsed_sections: sections, parse_version: PARSE_VERSION, parsed_at: new Date().toISOString(), translation_status: "ready", updated_at: new Date().toISOString() }) });
+        await db(`source_documents?id=eq.${row.id}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ parsed_sections: sections, parse_version: PARSE_VERSION, parsed_at: new Date().toISOString(), translation_status: "ready", updated_at: new Date().toISOString() }),
+        });
 
-        await db(`source_asset_queue?source_document_id=eq.${row.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+        const existing = await db(
+          `source_asset_queue?source_document_id=eq.${row.id}&select=asset_type,source_ref`,
+        ) as Array<{ asset_type: string; source_ref: string }>;
+        const existingKeys = new Set(existing.map((asset) => queueKey(asset.asset_type, asset.source_ref)));
+        const assets = candidateAssets.filter((asset) => !existingKeys.has(queueKey(asset.asset_type, asset.source_ref)));
+
         if (assets.length) {
-          await db("source_asset_queue?on_conflict=source_document_id,asset_type,source_ref", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(assets) });
+          await db("source_asset_queue", {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(assets),
+          });
         }
 
         results.push({ title: row.source_title, status: "parsed", sections: sections.length, blocks: totalBlocks, queuedAssets: assets.length });
@@ -84,7 +101,19 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, rootTitle, parseVersion: PARSE_VERSION, documents: results.length, parsed: results.filter((r) => r.status === "parsed").length, unchanged: results.filter((r) => r.status === "unchanged").length, totalSections: results.reduce((sum, r) => sum + r.sections, 0), totalBlocks: results.reduce((sum, r) => sum + r.blocks, 0), totalQueuedAssets: results.reduce((sum, r) => sum + r.queuedAssets, 0), results });
+    return NextResponse.json({
+      ok: true,
+      rootTitle,
+      parseVersion: PARSE_VERSION,
+      assetQueueMode: "non-destructive-missing-only",
+      documents: results.length,
+      parsed: results.filter((r) => r.status === "parsed").length,
+      unchanged: results.filter((r) => r.status === "unchanged").length,
+      totalSections: results.reduce((sum, r) => sum + r.sections, 0),
+      totalBlocks: results.reduce((sum, r) => sum + r.blocks, 0),
+      totalQueuedAssets: results.reduce((sum, r) => sum + r.queuedAssets, 0),
+      results,
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown parse error" }, { status: 500 });
   }
