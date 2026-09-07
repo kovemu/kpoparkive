@@ -21,7 +21,8 @@ export default function NamuHybridRenderer({ chunks, assets = {} }: { chunks: Na
   return <div className="namuHybridRenderer">
     {chunks.map((chunk) => {
       if (chunk.type === "raw") {
-        return <div key={`raw-${chunk.sourceIndex}`} data-hybrid-source="raw">
+        const onlyTabs = chunk.nodes.length > 0 && chunk.nodes.every((node) => node.type === "tab");
+        return <div key={`raw-${chunk.sourceIndex}`} data-hybrid-source="raw" style={onlyTabs ? { display: "inline-block", marginRight: -1, verticalAlign: "bottom" } : undefined}>
           <NamuRawRenderer nodes={chunk.nodes} assets={assets} />
         </div>;
       }
