@@ -5,10 +5,13 @@ export type RawSourceSegment = {
   source: string;
 };
 
+export type RenderedFileMap = Record<string, string>;
+
 export type MirrorRawBundle = {
   sourceWikitext: string;
   segments: RawSourceSegment[];
   fileRefs: string[];
+  renderedFileMap: RenderedFileMap;
   internalLinks: string[];
   rawCharacters: number;
   renderedCharacters: number;
@@ -33,6 +36,13 @@ function decodeEntities(value: string) {
 
 function unique<T>(values: T[]) {
   return [...new Set(values)];
+}
+
+function normalizeMediaUrl(value: string) {
+  const url = decodeEntities(value || "").trim();
+  if (url.startsWith("//")) return `https:${url}`;
+  if (url.startsWith("/")) return `https://www.namu.moe${url}`;
+  return /^https?:\/\//i.test(url) ? url : "";
 }
 
 function cleanRawBlock(value: string) {
@@ -84,6 +94,26 @@ function extractInternalLinks(source: string) {
 }
 
 /**
+ * The mirror often renders the exact file used by a raw [[파일:...]] reference.
+ * Pairing img.alt with data-original gives us a generic filename -> CDN URL
+ * resolver without guessing filenames or doing web search per asset.
+ */
+export function extractRenderedFileMap(html: string): RenderedFileMap {
+  const root = parse(extractArticleHtml(html));
+  const map: RenderedFileMap = {};
+  for (const image of root.querySelectorAll("img")) {
+    const alt = decodeEntities(image.getAttribute("alt") || "").trim();
+    const match = alt.match(/^(?:파일|File):(.+)$/i);
+    if (!match) continue;
+    const file = match[1].trim();
+    const src = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || "";
+    const url = normalizeMediaUrl(src);
+    if (file && url && !map[file]) map[file] = url;
+  }
+  return map;
+}
+
+/**
  * namu.moe is a hybrid mirror: constructs unsupported by its renderer survive
  * inside <pre><code> as Namu source, while supported constructs are emitted as
  * rendered HTML. Do not pretend those code blocks are a complete document.
@@ -122,6 +152,7 @@ export function extractMirrorRawBundle(html: string): MirrorRawBundle {
     sourceWikitext,
     segments,
     fileRefs: extractFileRefs(sourceWikitext),
+    renderedFileMap: extractRenderedFileMap(html),
     internalLinks: extractInternalLinks(sourceWikitext),
     rawCharacters,
     renderedCharacters,
