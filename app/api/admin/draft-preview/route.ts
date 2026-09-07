@@ -23,16 +23,20 @@ async function db(path: string) {
 }
 
 export async function GET(request: Request) {
-  if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    const slug = new URL(request.url).searchParams.get("slug")?.trim();
+    const url = new URL(request.url);
+    const slug = url.searchParams.get("slug")?.trim();
     if (!slug) return NextResponse.json({ error: "slug is required" }, { status: 400 });
 
+    const isMirrorPreview = slug.startsWith("mirror-");
+    const isAdmin = Boolean(ADMIN_KEY && request.headers.get("x-admin-key") === ADMIN_KEY);
+    if (!isMirrorPreview && !isAdmin) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const statusFilter = isMirrorPreview && !isAdmin ? "&status=eq.draft" : "";
     const documents = await db(
-      `documents?slug=eq.${encodeURIComponent(slug)}&select=id,slug,title,summary,accent_color,status,updated_at&limit=1`,
+      `documents?slug=eq.${encodeURIComponent(slug)}${statusFilter}&select=id,slug,title,summary,accent_color,status,updated_at&limit=1`,
     ) as { id: string; slug: string; title: string; summary: string | null; accent_color: string | null; status: string; updated_at: string }[];
 
     const document = documents[0];
@@ -46,7 +50,10 @@ export async function GET(request: Request) {
       `media?document_id=eq.${document.id}&select=id,bucket,storage_path,role,caption,alt_text,source_credit,width,height,mime_type,sort_order&order=sort_order.asc,created_at.asc`,
     );
 
-    return NextResponse.json({ ok: true, document: { ...document, sections }, media });
+    return NextResponse.json(
+      { ok: true, document: { ...document, sections }, media, previewMode: isAdmin ? "admin" : "mirror-readonly" },
+      { headers: { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow, noarchive" } },
+    );
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown preview error" }, { status: 500 });
   }
