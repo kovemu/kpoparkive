@@ -47,10 +47,12 @@ function validColor(value?: string) {
 
 function cleanControlText(input: string) {
   let text = input;
-  if (/대한민국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "대한민국";
-  if (/일본/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "일본";
-  if (/미국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "미국";
-  if (/중국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "중국";
+  const country = ["대한민국", "일본", "미국", "중국"].find((name) => text.includes(name));
+  if (country && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) {
+    const date = text.match(/\b\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?/);
+    return date ? `${date[0].replace(/\s+/g, " ")} ${country}` : country;
+  }
+  if (/REMINE/.test(text)) return "REMINE (리마인)";
   text = text
     .replace(/#!(?:wiki|if|folding|style|html)\b[^{}]*/gi, " ")
     .replace(/\{\{\{(?:[-+]\d+)?/g, " ")
@@ -58,6 +60,8 @@ function cleanControlText(input: string) {
     .replace(/<(?:tableclass|nopad|rowkeepall|colkeepall|keepall|thead|sortable)[^>]*>/gi, " ")
     .replace(/\[dday\([^\]]+\)\]/gi, "")
     .replace(/\(\s*\)/g, "")
+    .replace(/^\{\s*padding:[^}]+\}$/gi, "")
+    .replace(/^\|\s*<[^>]+>\s*$/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return text;
@@ -65,12 +69,15 @@ function cleanControlText(input: string) {
 
 function sanitizeCell(cell: RichWikiCell): RichWikiCell {
   const text = cleanControlText(cell.text || "");
+  const linkLabel = cell.link_label ? cleanControlText(cell.link_label) : cell.link_label;
+  const fileLink = /^파일:/i.test(linkLabel || "") || /\/w\/%?ED%8C%8C%EC%9D%BC/i.test(cell.link_url || "");
   return {
     ...cell,
     text,
     background: validColor(cell.background),
     color: validColor(cell.color),
-    link_label: cell.link_label ? cleanControlText(cell.link_label) : cell.link_label,
+    link_url: fileLink ? undefined : cell.link_url,
+    link_label: fileLink ? undefined : linkLabel,
   };
 }
 
@@ -87,7 +94,7 @@ function sanitizeBlocks(blocks: WikiBlock[]): WikiBlock[] {
       if (isControlNoise(block.text)) continue;
       const text = cleanControlText(block.text);
       if (!text || /^문서 를 의 .*부분을 참고하십시오/.test(text)) continue;
-      if (text.startsWith("#!style")) continue;
+      if (/\]\]\s*\[|^\|\s*<|^\{\s*padding:/.test(text)) continue;
       output.push({ ...block, text });
       continue;
     }
@@ -106,6 +113,19 @@ function sanitizeBlocks(blocks: WikiBlock[]): WikiBlock[] {
     output.push(block);
   }
   return output;
+}
+
+function isMainInfobox(block: WikiBlock) {
+  if (block.type !== "rich-table") return false;
+  const text = block.rows.flat().map((cell) => cell.text).join(" ");
+  return text.includes("데뷔일") && text.includes("장르") && text.includes("리더") && text.includes("소속사");
+}
+
+function cleanLead(blocks: WikiBlock[]) {
+  const mainInfoboxIndex = blocks.findIndex(isMainInfobox);
+  if (mainInfoboxIndex < 0) return blocks.filter((block) => block.type !== "paragraph");
+  const main = blocks[mainInfoboxIndex];
+  return [main];
 }
 
 function numberSections(sections: { heading_level: number; heading: string }[]) {
@@ -133,10 +153,13 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
   const assets = await db<AssetRow[]>(
     `source_asset_queue?source_document_id=eq.${source.id}&select=asset_type,source_ref,resolved_url,storage_path,status`,
   );
-  const hydrated = sections.map((section) => ({
-    ...section,
-    content: sanitizeBlocks(hydrate(section.content as WikiBlock[], assets)),
-  }));
+  const hydrated = sections.map((section) => {
+    const sanitized = sanitizeBlocks(hydrate(section.content as WikiBlock[], assets));
+    return {
+      ...section,
+      content: section.heading ? sanitized : cleanLead(sanitized),
+    };
+  });
   const visibleSections = hydrated.filter((section) => section.heading);
   const numbers = numberSections(hydrated);
 
