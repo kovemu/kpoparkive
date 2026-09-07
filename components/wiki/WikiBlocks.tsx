@@ -20,13 +20,33 @@ const albumCoverPaths: Record<string, string> = {
   "Pretty Girl": "rescene/albums/pretty-girl.jpg",
 };
 
+const albumDocumentSlugs: Record<string, string> = {
+  YoYo: "yoyo",
+  "Re:Scene": "re-scene",
+  SCENEDROME: "scenedrome",
+  "Glow Up": "glow-up",
+  Dearest: "dearest",
+  "Heart Drop": "heart-drop",
+  "lip bomb": "lip-bomb",
+  "Busy Boy": "busy-boy",
+  Runaway: "runaway",
+  "Pretty Girl": "pretty-girl",
+};
+
 const relatedDocumentSlugs: Record<string, string> = {
+  "RESCENE / Discography": "rescene-discography",
   "RESCENE / Member chemistry": "rescene-member-chemistry",
   "RESCENE / Activities": "rescene-activities",
   "RESCENE / YouTube": "rescene-youtube",
   "RESCENE / Live broadcasts": "rescene-live",
   "RESCENE / Awards": "rescene-awards",
   "RESCENE / Trivia": "rescene-trivia",
+  "RESCENE / Music videos": "rescene-music-videos",
+  "RESCENE / Music show fancams": "rescene-fancams",
+  "RESCENE / Detailed chart performance": "rescene-chart-performance",
+  "RESCENE / Fan chants": "rescene-fan-chants",
+  "RESCENE / Goods": "rescene-goods",
+  "RESCENE / Karaoke catalog": "rescene-karaoke",
 };
 
 function flagFor(nationality: string) {
@@ -85,10 +105,11 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
                   {row.map((cell, cellIndex) => {
                     if (cellIndex === 0) {
                       const coverPath = isReleaseTable ? albumCoverPaths[cell] : undefined;
+                      const albumSlug = isReleaseTable ? albumDocumentSlugs[cell] : undefined;
                       return (
                         <strong key={cellIndex} style={coverPath ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>
                           {coverPath && <img src={getStoragePublicUrl(coverPath)} alt={`${cell} cover`} width={54} height={54} style={{ width: 54, height: 54, objectFit: "cover", flex: "0 0 auto", border: "1px solid #d7dde5" }} />}
-                          <span>{cell}</span>
+                          {albumSlug ? <a href={`/wiki/${albumSlug}`}>{cell}</a> : <span>{cell}</span>}
                         </strong>
                       );
                     }
