@@ -1,8 +1,13 @@
 import { parse } from "node-html-parser";
 import { normalizeNamuMirrorHtmlWithReport, type NamuMirrorSyntaxRepairReport } from "./namuMirrorNormalize";
+import {
+  analyzeNamuRawGrammar,
+  mergeNamuRawGrammarAnalyses,
+  normalizeNamuRawCodeBlocksForRender,
+} from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v2-syntax-repair";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v3-grammar-aware";
 
 export type NamuRenderManifest = {
   version: string;
@@ -21,6 +26,9 @@ export type NamuRenderManifest = {
   hasSectionAnchors: boolean;
   hasRawControls: boolean;
   syntaxRepair: NamuMirrorSyntaxRepairReport;
+  rawGrammar: ReturnType<typeof mergeNamuRawGrammarAnalyses> & {
+    renderNormalizedCodeBlocks: number;
+  };
 };
 
 export type NamuMirrorImportArtifact = {
@@ -76,9 +84,26 @@ function hasFloatRight(style: string | undefined) {
 
 export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArtifact {
   const rawArticleHtml = extractExactArticleHtml(html || "");
-  const normalized = normalizeNamuMirrorHtmlWithReport(rawArticleHtml);
-  const articleHtml = normalized.html;
   const rawBundle = extractMirrorRawBundle(html || "");
+
+  // Phase 1: repair only syntax leaked by the partial mirror renderer. Raw
+  // <pre><code> blocks are protected by this pass and canonical source remains untouched.
+  const mirrorNormalized = normalizeNamuMirrorHtmlWithReport(rawArticleHtml);
+
+  // Phase 2: source_article_html is a derived render artifact. Normalize only
+  // structural boundaries inside its raw code blocks so renderer and importer
+  // parse exactly the same Namu grammar. source_wikitext/raw_html remain intact.
+  const renderNormalized = normalizeNamuRawCodeBlocksForRender(mirrorNormalized.html);
+  const articleHtml = renderNormalized.html;
+
+  const rawAnalyses = rawBundle.segments
+    .filter((segment) => segment.type === "raw")
+    .map((segment) => analyzeNamuRawGrammar(segment.source));
+  const rawGrammar = {
+    ...mergeNamuRawGrammarAnalyses(rawAnalyses),
+    renderNormalizedCodeBlocks: renderNormalized.normalizedBlocks,
+  };
+
   const root = parse(articleHtml);
   const templateStyleBlocks = extractTemplateStyleBlocks(articleHtml);
   const renderedFiles = rawBundle.renderedFileMap;
@@ -105,8 +130,9 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
       unresolvedRawFiles: unresolvedRawFiles.slice(0, 300),
       hasToc: Boolean(root.querySelector(".toc") || root.querySelector("#toc")),
       hasSectionAnchors: Boolean(root.querySelector('[id^="s-"]')),
-      hasRawControls: rawBundle.rawBlockCount > 0 || normalized.report.leakedDirectiveOpeners > 0 || normalized.report.orphanDirectiveClosers > 0,
-      syntaxRepair: normalized.report,
+      hasRawControls: rawGrammar.rawControls > 0 || mirrorNormalized.report.leakedDirectiveOpeners > 0 || mirrorNormalized.report.orphanDirectiveClosers > 0,
+      syntaxRepair: mirrorNormalized.report,
+      rawGrammar,
     },
   };
 }
