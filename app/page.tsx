@@ -75,10 +75,19 @@ export default async function Home() {
         </div>
 
         <div className="introGrid">
-          <div className="leadCopy">
-            <p><strong>{document.title}</strong> {document.summary?.replace(/^RESCENE\s+/, "")}</p>
-            <p className="dbBadge">Live document · Supabase-backed</p>
-          </div>
+          <nav className="toc tocTop" aria-label="Contents">
+            <div className="tocHeader">Contents <span>⌄</span></div>
+            <ol>
+              {document.sections.map((section, index) => {
+                const level = Math.max(1, section.heading_level - 1);
+                return (
+                  <li key={section.id} className={`tocLevel${level}`}>
+                    <a href={`#${section.section_key}`}><span>{numbers[index]}.</span> {section.heading}</a>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
 
           <aside className="infobox" aria-label="RESCENE profile">
             <div className="infoboxHero">
@@ -110,20 +119,6 @@ export default async function Home() {
             </dl>
           </aside>
         </div>
-
-        <nav className="toc" aria-label="Contents">
-          <div className="tocHeader">Contents <span>⌄</span></div>
-          <ol>
-            {document.sections.map((section, index) => {
-              const level = Math.max(1, section.heading_level - 1);
-              return (
-                <li key={section.id} className={`tocLevel${level}`}>
-                  <a href={`#${section.section_key}`}><span>{numbers[index]}.</span> {section.heading}</a>
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
 
         {document.sections.map((section, index) => (
           <section key={section.id}>
