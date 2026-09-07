@@ -1,5 +1,5 @@
 import React from "react";
-import type { NamuInline, NamuRawCell, NamuRawNode } from "../../lib/namuRawParser";
+import type { NamuInline, NamuRawCell, NamuRawNode, NamuRawTableMeta } from "../../lib/namuRawParser";
 import styles from "./NamuRawRenderer.module.css";
 
 type AssetMap = Record<string, string>;
@@ -92,7 +92,7 @@ function Inline({ nodes, assets, footnotes }: { nodes: NamuInline[]; assets: Ass
   </>;
 }
 
-function cellStyle(cell: NamuRawCell): React.CSSProperties {
+function cellStyle(cell: NamuRawCell, tableMeta?: NamuRawTableMeta): React.CSSProperties {
   return {
     background: cell.background,
     color: cell.color,
@@ -100,7 +100,40 @@ function cellStyle(cell: NamuRawCell): React.CSSProperties {
     width: cell.width,
     padding: cell.nopad ? 0 : undefined,
     verticalAlign: "middle",
+    borderColor: tableMeta?.borderColor,
   };
+}
+
+function tableStyle(meta?: NamuRawTableMeta): React.CSSProperties {
+  const style: React.CSSProperties = {
+    width: meta?.width,
+    background: meta?.background,
+    color: meta?.color,
+    borderColor: meta?.borderColor,
+  };
+
+  if (meta?.align === "center") {
+    style.marginLeft = "auto";
+    style.marginRight = "auto";
+  } else if (meta?.align === "right") {
+    style.marginLeft = "auto";
+    style.marginRight = 0;
+  } else if (meta?.align === "left") {
+    style.marginLeft = 0;
+    style.marginRight = "auto";
+  }
+
+  if (meta?.borderColor) style.border = `2px solid ${meta.borderColor}`;
+  return style;
+}
+
+function sourceTableClass(meta?: NamuRawTableMeta) {
+  if (!meta?.className) return undefined;
+  const tokens = meta.className
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => /^[a-z0-9_-]+$/i.test(token));
+  return tokens.length ? tokens.join(" ") : undefined;
 }
 
 const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
@@ -169,9 +202,15 @@ function NodeList({ nodes, assets, footnotes }: { nodes: NamuRawNode[]; assets: 
       }
       if (node.type === "tab") return <span key={index} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 38, padding: "7px 14px", border: "1px solid #cfd5dd", borderBottom: "2px solid var(--accent, #fc6fcf)", background: "#fff", fontSize: 14, fontWeight: 700, lineHeight: 1.2 }}>{node.label}</span>;
       if (node.type === "paragraph") return <p key={index} className="wikiParagraph"><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></p>;
-      if (node.type === "table") return <div key={index} className={styles.tableWrap}><table className={`wikiTable ${styles.table}`}><tbody>
-        {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell)}><Inline nodes={cell.children} assets={assets} footnotes={footnotes} /></td>)}</tr>)}
-      </tbody></table></div>;
+      if (node.type === "table") {
+        const rawClass = sourceTableClass(node.meta);
+        const className = [`wikiTable`, styles.table, rawClass].filter(Boolean).join(" ");
+        return <div key={index} className={styles.tableWrap}>
+          <table className={className} data-namu-table-class={rawClass} style={tableStyle(node.meta)}><tbody>
+            {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell, node.meta)}><Inline nodes={cell.children} assets={assets} footnotes={footnotes} /></td>)}</tr>)}
+          </tbody></table>
+        </div>;
+      }
       if (node.type === "list") {
         const ListTag = node.ordered ? "ol" : "ul";
         return <ListTag key={index} className={styles.list}>{node.items.map((item, itemIndex) => <li key={itemIndex} style={{ marginLeft: `${item.depth * 18}px` }}><Inline nodes={item.children} assets={assets} footnotes={footnotes} /></li>)}</ListTag>;
