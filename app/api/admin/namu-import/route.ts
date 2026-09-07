@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { fetchMirrorDocument, shouldCrawlTitle, type RelationCandidate } from "../../../../lib/namuMirror";
+import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v5-canonical-on-import";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -33,6 +35,9 @@ type ResultRow = {
   videos: number;
   externalLinks: number;
   autoRelations: number;
+  rawBlocks: number;
+  rawCoverage: number;
+  queuedImages: number;
   relationReason?: string;
 };
 
@@ -40,6 +45,53 @@ function enqueueCandidate(queue: QueueItem[], queued: Set<string>, seen: Set<str
   if (seen.has(candidate.title) || queued.has(candidate.title)) return;
   queued.add(candidate.title);
   queue.push({ title: candidate.title, depth, relationScore: candidate.score, relationReason: candidate.reason });
+}
+
+function rawImageRef(file: string) {
+  return `파일:${file.trim()}`;
+}
+
+async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourceTitle: string, bundle: ReturnType<typeof extractMirrorRawBundle>) {
+  const existing = await db(
+    `source_asset_queue?source_document_id=eq.${sourceDocumentId}&asset_type=eq.image&select=source_ref`,
+  ) as { source_ref: string }[];
+  const existingRefs = new Set(existing.map((asset) => asset.source_ref));
+  const allFiles = [...new Set([...bundle.fileRefs, ...Object.keys(bundle.renderedFileMap)])];
+  const imageRows = allFiles
+    .map((file) => ({
+      file,
+      source_ref: rawImageRef(file),
+      directUrl: bundle.renderedFileMap[file] || null,
+      linkedTarget: bundle.fileTargetMap[file] || null,
+    }))
+    .filter((asset) => !existingRefs.has(asset.source_ref))
+    .map((asset) => ({
+      source_document_id: sourceDocumentId,
+      root_title: rootTitle,
+      source_title: sourceTitle,
+      asset_type: "image",
+      source_ref: asset.source_ref,
+      label: asset.file,
+      provider: "namu_file",
+      role: "inline",
+      metadata: {
+        filename: asset.file,
+        origin: bundle.fileRefs.includes(asset.file) ? "raw" : "rendered",
+        extraction_version: EXTRACTION_VERSION,
+        ...(asset.directUrl ? { enrichment_url: asset.directUrl, enrichment_confidence: 1, resolved_from_hint: "mirror-img-alt" } : {}),
+        ...(asset.linkedTarget ? { linked_target: asset.linkedTarget, resolved_from_hint: asset.directUrl ? "mirror-img-alt" : "linked-document" } : {}),
+      },
+    }));
+
+  if (imageRows.length) {
+    await db("source_asset_queue", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(imageRows),
+    });
+  }
+
+  return imageRows.length;
 }
 
 export async function POST(request: Request) {
@@ -92,9 +144,11 @@ export async function POST(request: Request) {
 
       try {
         const snapshot = await fetchMirrorDocument(current.title, undefined, rootTitle);
-        await db("source_documents?on_conflict=source,source_title", {
+        const rawBundle = extractMirrorRawBundle(snapshot.html);
+        const extractedAt = new Date().toISOString();
+        const stored = await db("source_documents?on_conflict=source,source_title&select=id", {
           method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          headers: { Prefer: "resolution=merge-duplicates,return=representation" },
           body: JSON.stringify({
             source: "namu_mirror",
             source_title: snapshot.title,
@@ -109,10 +163,18 @@ export async function POST(request: Request) {
             discovered_videos: snapshot.videos,
             discovered_external_links: snapshot.externalLinks,
             discovered_relations: snapshot.relationCandidates,
-            fetched_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            source_wikitext: rawBundle.sourceWikitext || null,
+            source_raw_segments: rawBundle.segments,
+            source_format: EXTRACTION_VERSION,
+            source_extraction_version: EXTRACTION_VERSION,
+            raw_extracted_at: extractedAt,
+            fetched_at: extractedAt,
+            updated_at: extractedAt,
           }),
-        });
+        }) as { id: string }[];
+        const sourceDocumentId = stored[0]?.id;
+        if (!sourceDocumentId) throw new Error(`Failed to persist source document id for ${snapshot.title}`);
+        const queuedImages = await queueRawAssets(sourceDocumentId, rootTitle, snapshot.title, rawBundle);
 
         results.push({
           title: current.title,
@@ -123,6 +185,9 @@ export async function POST(request: Request) {
           videos: snapshot.videos.length,
           externalLinks: snapshot.externalLinks.length,
           autoRelations: snapshot.relationCandidates.length,
+          rawBlocks: rawBundle.rawBlockCount,
+          rawCoverage: rawBundle.estimatedRawCoverage,
+          queuedImages,
           relationReason: current.relationReason,
         });
 
@@ -152,6 +217,9 @@ export async function POST(request: Request) {
           videos: 0,
           externalLinks: 0,
           autoRelations: 0,
+          rawBlocks: 0,
+          rawCoverage: 0,
+          queuedImages: 0,
           relationReason: current.relationReason,
         });
       }
@@ -169,6 +237,8 @@ export async function POST(request: Request) {
           documents: results,
           auto_relation_discovery: true,
           auto_discovered_count: autoDiscoveredCount,
+          canonical_raw_on_import: true,
+          extraction_version: EXTRACTION_VERSION,
           includePrefixes,
           includeTitles,
         },
@@ -176,13 +246,17 @@ export async function POST(request: Request) {
       }),
     });
 
+    const fetchedResults = results.filter((r) => r.status === "fetched");
     return NextResponse.json({
       ok: true,
       runId,
-      fetched: results.filter((r) => r.status === "fetched").length,
+      extractionVersion: EXTRACTION_VERSION,
+      fetched: fetchedResults.length,
       errors: errorCount,
       skipped: skippedCount,
       autoDiscovered: autoDiscoveredCount,
+      rawBlocks: fetchedResults.reduce((sum, row) => sum + row.rawBlocks, 0),
+      queuedImages: fetchedResults.reduce((sum, row) => sum + row.queuedImages, 0),
       documents: results,
     });
   } catch (error) {
