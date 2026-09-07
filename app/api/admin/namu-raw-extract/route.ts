@@ -4,7 +4,7 @@ import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const EXTRACTION_VERSION = "namu-mirror-hybrid-v2-segments";
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v3-file-map";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -56,13 +56,14 @@ export async function POST(request: Request) {
       renderedCharacters: number;
       estimatedRawCoverage: number;
       fileRefs: number;
+      mappedFiles: number;
       queuedImages: number;
       internalLinks: number;
     }[] = [];
 
     for (const row of rows) {
       if (!body.force && row.source_extraction_version === EXTRACTION_VERSION && row.raw_extracted_at) {
-        results.push({ title: row.source_title, status: "unchanged", rawBlocks: 0, rawCharacters: 0, renderedCharacters: 0, estimatedRawCoverage: 0, fileRefs: 0, queuedImages: 0, internalLinks: 0 });
+        results.push({ title: row.source_title, status: "unchanged", rawBlocks: 0, rawCharacters: 0, renderedCharacters: 0, estimatedRawCoverage: 0, fileRefs: 0, mappedFiles: 0, queuedImages: 0, internalLinks: 0 });
         continue;
       }
 
@@ -84,8 +85,9 @@ export async function POST(request: Request) {
         `source_asset_queue?source_document_id=eq.${row.id}&asset_type=eq.image&select=source_ref`,
       ) as { source_ref: string }[];
       const existingRefs = new Set(existing.map((asset) => asset.source_ref));
-      const imageRows = bundle.fileRefs
-        .map((file) => ({ file, source_ref: rawImageRef(file) }))
+      const allFiles = [...new Set([...bundle.fileRefs, ...Object.keys(bundle.renderedFileMap)])];
+      const imageRows = allFiles
+        .map((file) => ({ file, source_ref: rawImageRef(file), directUrl: bundle.renderedFileMap[file] || null }))
         .filter((asset) => !existingRefs.has(asset.source_ref))
         .map((asset) => ({
           source_document_id: row.id,
@@ -96,7 +98,12 @@ export async function POST(request: Request) {
           label: asset.file,
           provider: "namu_file",
           role: "inline",
-          metadata: { filename: asset.file, origin: "raw", extraction_version: EXTRACTION_VERSION },
+          metadata: {
+            filename: asset.file,
+            origin: bundle.fileRefs.includes(asset.file) ? "raw" : "rendered",
+            extraction_version: EXTRACTION_VERSION,
+            ...(asset.directUrl ? { enrichment_url: asset.directUrl, enrichment_confidence: 1, resolved_from_hint: "mirror-img-alt" } : {}),
+          },
         }));
 
       if (imageRows.length) {
@@ -115,6 +122,7 @@ export async function POST(request: Request) {
         renderedCharacters: bundle.renderedCharacters,
         estimatedRawCoverage: bundle.estimatedRawCoverage,
         fileRefs: bundle.fileRefs.length,
+        mappedFiles: Object.keys(bundle.renderedFileMap).length,
         queuedImages: imageRows.length,
         internalLinks: bundle.internalLinks.length,
       });
@@ -134,6 +142,7 @@ export async function POST(request: Request) {
       unchanged: results.filter((result) => result.status === "unchanged").length,
       rawBlocks: extracted.reduce((sum, result) => sum + result.rawBlocks, 0),
       fileRefs: extracted.reduce((sum, result) => sum + result.fileRefs, 0),
+      mappedFiles: extracted.reduce((sum, result) => sum + result.mappedFiles, 0),
       queuedImages: extracted.reduce((sum, result) => sum + result.queuedImages, 0),
       internalLinks: extracted.reduce((sum, result) => sum + result.internalLinks, 0),
       estimatedRawCoverage: denominator ? Math.round((weightedRaw / denominator) * 1000) / 10 : 0,
