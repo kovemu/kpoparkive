@@ -37,8 +37,12 @@ const relatedDocumentSlugs: Record<string, string> = {
   "RESCENE / Discography": "rescene-discography",
   "RESCENE / Member chemistry": "rescene-member-chemistry",
   "RESCENE / Activities": "rescene-activities",
+  "RESCENE / Content": "rescene-content",
+  "RESCENE / Performances & events": "rescene-performances-events",
+  "RESCENE / Music shows": "rescene-music-shows",
   "RESCENE / YouTube": "rescene-youtube",
   "RESCENE / Live broadcasts": "rescene-live",
+  "RESCENE / Advertising & pictorials": "rescene-advertising-pictorials",
   "RESCENE / Awards": "rescene-awards",
   "RESCENE / Trivia": "rescene-trivia",
   "RESCENE / Music videos": "rescene-music-videos",
@@ -47,6 +51,8 @@ const relatedDocumentSlugs: Record<string, string> = {
   "RESCENE / Fan chants": "rescene-fan-chants",
   "RESCENE / Goods": "rescene-goods",
   "RESCENE / Karaoke catalog": "rescene-karaoke",
+  REMINE: "remine",
+  remini: "remini",
 };
 
 function flagFor(nationality: string) {
@@ -98,7 +104,7 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
         if (block.type === "table") {
           const isReleaseTable = block.columns[0] === "Release";
           return (
-            <div className="simpleTable" key={index}>
+            <div className="simpleTable" key={index} style={{ "--table-columns": block.columns.length } as React.CSSProperties}>
               <div className="tableHead">{block.columns.map((column) => <span key={column}>{column}</span>)}</div>
               {block.rows.map((row, rowIndex) => (
                 <div key={rowIndex}>
