@@ -4,7 +4,7 @@ import { parseNamuHtml, type ParsedBlock } from "../../../../lib/namuParser";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const PARSE_VERSION = "namu-html-v2";
+const PARSE_VERSION = "namu-html-v3";
 
 type AssetQueueRow = {
   source_document_id: string;
@@ -66,6 +66,8 @@ export async function POST(request: Request) {
 
         await db(`source_documents?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ parsed_sections: sections, parse_version: PARSE_VERSION, parsed_at: new Date().toISOString(), translation_status: "ready", updated_at: new Date().toISOString() }) });
 
+        // Rebuild this document's queue so parser improvements do not leave stale/duplicate refs behind.
+        await db(`source_asset_queue?source_document_id=eq.${row.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
         if (assets.length) {
           await db("source_asset_queue?on_conflict=source_document_id,asset_type,source_ref", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(assets) });
         }
