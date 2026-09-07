@@ -70,10 +70,26 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
   const mirrorHtml = normalizeNamuMirrorHtml(source.raw_html || "");
 
-  const assetRows = await db<AssetRow[]>(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
-  );
-  const assets: Record<string, string> = { ...bundle.renderedFileMap };
+  const [assetRows, clusterDocs] = await Promise.all([
+    db<AssetRow[]>(
+      `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
+    ),
+    db<{ raw_html: string }[]>(
+      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(source.root_title)}&select=raw_html&limit=80`,
+    ),
+  ]);
+
+  // A template may reference an image that is only rendered concretely on a
+  // sibling document (album/member/detail page). Reuse those mirror <img alt>
+  // mappings across the imported group cluster before falling back to queue data.
+  const assets: Record<string, string> = {};
+  for (const clusterDoc of clusterDocs) {
+    const map = extractMirrorRawBundle(clusterDoc.raw_html || "").renderedFileMap;
+    for (const [key, url] of Object.entries(map)) {
+      if (!assets[fileKey(key)]) assets[fileKey(key)] = url;
+    }
+  }
+  for (const [key, url] of Object.entries(bundle.renderedFileMap)) assets[fileKey(key)] = url;
   for (const row of assetRows) {
     const url = usableAssetUrl(row);
     if (url) assets[fileKey(row.source_ref)] = url;
@@ -84,7 +100,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU SOURCE MIRROR · v4 DOM</div>
+        <div className="draftBadge">NAMU SOURCE MIRROR · v5 HYBRID</div>
       </header>
       <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
@@ -94,7 +110,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
             <p>
               {completeRaw
                 ? "A complete Namu raw document is available, so this preview renders the preserved source directly."
-                : "The stored mirror DOM is preserved as the layout skeleton, and unsupported <pre><code> Namu source blocks are rendered in place instead of flattening their parent structure."}
+                : "The stored mirror DOM is preserved as the layout skeleton, and unsupported Namu source blocks are interpreted in place instead of being printed as code."}
             </p>
           </div>
         </div>
