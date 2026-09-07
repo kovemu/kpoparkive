@@ -8,6 +8,8 @@ export type MirrorSnapshot = {
   hash: string;
   links: string[];
   images: string[];
+  videos: { provider: string; url: string; id?: string }[];
+  externalLinks: string[];
 };
 
 function decodeEntities(value: string) {
@@ -47,8 +49,40 @@ function extractLinks(html: string) {
 
 function extractImages(html: string) {
   const fileNames = [...html.matchAll(/(?:파일:|Image:\s*파일:)([^|<\]\n]+)/g)].map((m) => m[1].trim());
-  const urls = [...html.matchAll(/https?:\/\/[^"'<>\s]+\.(?:jpg|jpeg|png|webp|gif|svg)(?:\?[^"'<>\s]*)?/gi)].map((m) => m[0]);
+  const urls = [
+    ...html.matchAll(/(?:src|data-src)=["'](https?:\/\/[^"']+)["']/gi),
+    ...html.matchAll(/https?:\/\/[^"'<>\s]+\.(?:jpg|jpeg|png|webp|gif|svg)(?:\?[^"'<>\s]*)?/gi),
+  ].map((m) => m[1] || m[0]).filter((url) => /\.(?:jpg|jpeg|png|webp|gif|svg)(?:\?|$)/i.test(url));
   return unique([...fileNames, ...urls]);
+}
+
+function youtubeId(url: string) {
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
+  return match?.[1];
+}
+
+function extractVideos(html: string) {
+  const urls = [
+    ...html.matchAll(/(?:src|href)=["'](https?:\/\/[^"']*(?:youtube\.com|youtu\.be|vimeo\.com|tiktok\.com)[^"']*)["']/gi),
+    ...html.matchAll(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com|tiktok\.com)\/[^"'<>\s]+/gi),
+  ].map((m) => decodeEntities(m[1] || m[0]));
+
+  return unique(urls).map((url) => {
+    const provider = /youtu/i.test(url) ? "youtube" : /vimeo/i.test(url) ? "vimeo" : /tiktok/i.test(url) ? "tiktok" : "external";
+    return { provider, url, id: provider === "youtube" ? youtubeId(url) : undefined };
+  });
+}
+
+function extractExternalLinks(html: string) {
+  const urls = [...html.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)].map((m) => decodeEntities(m[1]));
+  return unique(urls).filter((url) => {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, "");
+      return host !== "namu.moe" && host !== "namu.wiki";
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function sha256(value: string) {
@@ -62,7 +96,7 @@ export async function fetchMirrorDocument(title: string, mirrorBase = DEFAULT_MI
   const response = await fetch(url, {
     cache: "no-store",
     headers: {
-      "User-Agent": "KpoparkiveIndexer/0.1 (+https://kpoparkive.vercel.app)",
+      "User-Agent": "KpoparkiveIndexer/0.2 (+https://kpoparkive.vercel.app)",
       Accept: "text/html,application/xhtml+xml",
     },
   });
@@ -76,6 +110,8 @@ export async function fetchMirrorDocument(title: string, mirrorBase = DEFAULT_MI
     hash: await sha256(html),
     links: extractLinks(html),
     images: extractImages(html),
+    videos: extractVideos(html),
+    externalLinks: extractExternalLinks(html),
   };
 }
 
