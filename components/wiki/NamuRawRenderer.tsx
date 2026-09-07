@@ -33,7 +33,7 @@ function Inline({ nodes, assets }: { nodes: NamuInline[]; assets: AssetMap }) {
   return <>
     {nodes.map((node, index) => {
       if (node.type === "text") return <React.Fragment key={index}>{node.text.split("\n").map((part, line) => <React.Fragment key={line}>{line > 0 && <br />}{part}</React.Fragment>)}</React.Fragment>;
-      if (node.type === "link") return <a key={index} href={internalHref(node.target)}>{node.label}</a>;
+      if (node.type === "link") return <a key={index} href={internalHref(node.target)} style={{ whiteSpace: "pre-line" }}>{node.label}</a>;
       const file = normalizeFileRef(node.file);
       const url = findAsset(assets, file);
       if (url) return <img key={index} src={url} alt={file} loading="lazy" style={imageStyle(node.width, node.height)} />;
@@ -61,6 +61,7 @@ export default function NamuRawRenderer({ nodes, assets = {} }: { nodes: NamuRaw
         if (node.level === 3) return <h3 key={index} className="sectionTitle">{node.text}</h3>;
         return <h4 key={index} className="sectionTitle">{node.text}</h4>;
       }
+      if (node.type === "tab") return <span key={index} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 38, padding: "7px 14px", border: "1px solid #cfd5dd", borderBottom: "2px solid var(--accent, #fc6fcf)", background: "#fff", fontSize: 14, fontWeight: 700, lineHeight: 1.2 }}>{node.label}</span>;
       if (node.type === "paragraph") return <p key={index} className="wikiParagraph"><Inline nodes={node.children} assets={assets} /></p>;
       if (node.type === "table") return <div key={index} style={{ overflowX: "auto", margin: "12px 0" }}><table className="wikiTable" style={{ borderCollapse: "collapse", width: "100%" }}><tbody>
         {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell)}><Inline nodes={cell.children} assets={assets} /></td>)}</tr>)}
