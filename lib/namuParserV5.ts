@@ -55,6 +55,7 @@ function cleanText(value: string) {
     .replace(/\[\[([^|\]]+)\|\s*$/g, (_, target) => displayWikiTarget(target))
     .replace(/파일:[^\n<>]{1,180}?\.(?:svg|png|jpe?g|gif|webp)/gi, " ")
     .replace(/'{2,5}/g, "")
+    .replace(/\(\s*\)/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return text;
@@ -171,18 +172,40 @@ function isEmptyCell(cell: RichWikiCell | undefined) {
   return Boolean(cell) && !cell?.text && !cell?.image_url && !cell?.link_url;
 }
 
+function modeCellCount(rows: RichWikiCell[][]) {
+  const frequencies = new Map<number, number>();
+  for (const row of rows) {
+    const count = effectiveCellCount(row);
+    if (count > 0) frequencies.set(count, (frequencies.get(count) || 0) + 1);
+  }
+  const ranked = [...frequencies.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  return ranked[0] && ranked[0][1] >= 2 ? ranked[0][0] : undefined;
+}
+
+function trimTrailingDecorativeOverflow(row: RichWikiCell[], width: number) {
+  const next = [...row];
+  while (effectiveCellCount(next) > width && next.length > 1) {
+    const last = next[next.length - 1];
+    if (!isEmptyCell(last)) break;
+    next.pop();
+  }
+  return next;
+}
+
+/**
+ * Mirrors sometimes flatten decorative cells from a nested folding/template table
+ * into the outer table. We only remove empty trailing overflow cells when a stable
+ * modal width is repeated elsewhere in the same table. Content-bearing cells are
+ * never dropped. The older leading-empty-header repair is retained separately.
+ */
 function normalizeTableRows(rows: RichWikiCell[][]) {
   if (rows.length < 3) return rows;
-  const counts = rows.slice(2).map(effectiveCellCount).filter(Boolean);
-  if (!counts.length) return rows;
-  const frequencies = new Map<number, number>();
-  for (const count of counts) frequencies.set(count, (frequencies.get(count) || 0) + 1);
-  const dominant = [...frequencies.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const dominant = modeCellCount(rows.slice(2)) || modeCellCount(rows);
   if (!dominant) return rows;
 
-  return rows.map((row, index) => {
-    if (index > 1) return row;
-    if (effectiveCellCount(row) === dominant + 1 && isEmptyCell(row[0])) return row.slice(1);
+  return rows.map((sourceRow, index) => {
+    let row = trimTrailingDecorativeOverflow(sourceRow, dominant);
+    if (index <= 1 && effectiveCellCount(row) === dominant + 1 && isEmptyCell(row[0])) row = row.slice(1);
     return row;
   });
 }
