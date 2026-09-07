@@ -1,7 +1,8 @@
 export type NamuInline =
   | { type: "text"; text: string }
   | { type: "link"; target: string; label: string }
-  | { type: "image"; file: string; width?: string; height?: string };
+  | { type: "image"; file: string; width?: string; height?: string }
+  | { type: "footnote"; id?: string; children: NamuInline[] };
 
 export type NamuRawCell = {
   children: NamuInline[];
@@ -14,11 +15,16 @@ export type NamuRawCell = {
   nopad?: boolean;
 };
 
+export type NamuDirectiveKind = "wiki" | "if" | "style" | "folding" | "html" | "unknown";
+
 export type NamuRawNode =
   | { type: "heading"; level: number; text: string }
   | { type: "paragraph"; children: NamuInline[] }
   | { type: "tab"; label: string }
   | { type: "table"; rows: NamuRawCell[][] }
+  | { type: "directive"; kind: NamuDirectiveKind; args: string; title?: string; children: NamuRawNode[]; source: string }
+  | { type: "list"; ordered: boolean; items: Array<{ depth: number; children: NamuInline[] }> }
+  | { type: "quote"; children: NamuRawNode[] }
   | { type: "raw-control"; source: string };
 
 function decodeBasic(value: string) {
@@ -115,20 +121,59 @@ function imageFromInner(inner: string): NamuInline | null {
   return { type: "image", file, width, height };
 }
 
+function findFootnoteEnd(value: string, start: number) {
+  let linkDepth = 0;
+  for (let cursor = start + 2; cursor < value.length; cursor += 1) {
+    if (value.slice(cursor, cursor + 2) === "[[") { linkDepth += 1; cursor += 1; continue; }
+    if (value.slice(cursor, cursor + 2) === "]]" && linkDepth > 0) { linkDepth -= 1; cursor += 1; continue; }
+    if (value[cursor] === "]" && linkDepth === 0) return cursor;
+  }
+  return -1;
+}
+
+function footnoteFromInner(inner: string): Extract<NamuInline, { type: "footnote" }> | null {
+  if (!inner) return null;
+  if (/^\s/.test(inner)) {
+    const body = inner.trim();
+    return body ? { type: "footnote", children: parseNamuInline(body) } : null;
+  }
+  const named = inner.match(/^([^\s]+)\s+([\s\S]+)$/);
+  if (named) return { type: "footnote", id: named[1], children: parseNamuInline(named[2]) };
+  return { type: "footnote", children: parseNamuInline(inner.trim()) };
+}
+
 export function parseNamuInline(source: string): NamuInline[] {
   const value = decodeBasic(source);
   const output: NamuInline[] = [];
   let cursor = 0;
 
   while (cursor < value.length) {
-    const start = value.indexOf("[[", cursor);
+    const linkStart = value.indexOf("[[", cursor);
+    const footnoteStart = value.indexOf("[*", cursor);
+    const starts = [linkStart, footnoteStart].filter((position) => position >= 0);
+    const start = starts.length ? Math.min(...starts) : -1;
+
     if (start < 0) {
       const text = stripFormatting(value.slice(cursor));
       if (text) output.push({ type: "text", text });
       break;
     }
+
     const before = stripFormatting(value.slice(cursor, start));
     if (before) output.push({ type: "text", text: before });
+
+    if (start === footnoteStart) {
+      const end = findFootnoteEnd(value, start);
+      if (end < 0) {
+        const text = stripFormatting(value.slice(start));
+        if (text) output.push({ type: "text", text });
+        break;
+      }
+      const footnote = footnoteFromInner(value.slice(start + 2, end));
+      if (footnote) output.push(footnote);
+      cursor = end + 1;
+      continue;
+    }
 
     let depth = 1;
     let end = start + 2;
@@ -269,7 +314,65 @@ function tabLabel(source: string) {
 
 function isStructuralStart(line: string) {
   const trimmed = line.trimStart();
-  return trimmed.startsWith("||") || /^={2,6}\s/.test(trimmed) || /^#{2,6}\s/.test(trimmed) || /^#!/.test(trimmed);
+  return trimmed.startsWith("||")
+    || /^={2,6}\s/.test(trimmed)
+    || /^#{2,6}\s/.test(trimmed)
+    || /^#!/.test(trimmed)
+    || /^\{\{\{#!/.test(trimmed)
+    || /^\s*(?:\*|\d+\.|[a-zA-Z]\.)\s+/.test(line)
+    || /^\s*>/.test(line);
+}
+
+function directiveKind(value: string): NamuDirectiveKind {
+  const kind = value.toLowerCase();
+  if (kind === "wiki" || kind === "if" || kind === "style" || kind === "folding" || kind === "html") return kind;
+  return "unknown";
+}
+
+function parseDirectiveMacro(source: string): Extract<NamuRawNode, { type: "directive" }> | null {
+  const normalized = source.trim();
+  const header = normalized.match(/^\{\{\{#!([a-z]+)\b([^\n]*)/i);
+  if (!header) return null;
+  const kind = directiveKind(header[1]);
+  const args = header[2].trim();
+  const firstBreak = normalized.indexOf("\n");
+  let body = firstBreak >= 0 ? normalized.slice(firstBreak + 1) : "";
+  if (body.endsWith("}}}")) body = body.slice(0, -3);
+  const title = kind === "folding" ? stripFormatting(args) : undefined;
+  return {
+    type: "directive",
+    kind,
+    args,
+    title,
+    children: body.trim() && kind !== "html" ? parseNamuRaw(body) : [],
+    source: normalized,
+  };
+}
+
+function bareDirective(line: string): Extract<NamuRawNode, { type: "directive" }> | null {
+  const match = line.trim().match(/^#!([a-z]+)\b(.*)$/i);
+  if (!match) return null;
+  const kind = directiveKind(match[1]);
+  const args = match[2].trim();
+  return {
+    type: "directive",
+    kind,
+    args,
+    title: kind === "folding" ? stripFormatting(args) : undefined,
+    children: [],
+    source: line.trim(),
+  };
+}
+
+function listLine(line: string) {
+  const match = line.match(/^(\s+)(\*|\d+\.|[a-zA-Z]\.)\s+([\s\S]+)$/);
+  if (!match) return null;
+  const indent = match[1].replace(/\t/g, "  ").length;
+  return {
+    ordered: match[2] !== "*",
+    depth: Math.min(8, Math.max(0, indent - 1)),
+    content: match[3],
+  };
 }
 
 export function parseNamuRaw(source: string): NamuRawNode[] {
@@ -278,7 +381,6 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
   let paragraph: string[] = [];
   let table: string[] = [];
   let tableOpen = false;
-  let skipStyle = false;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -305,11 +407,6 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
     const line = rawLine.trimEnd();
     const trimmed = line.trimStart();
 
-    if (skipStyle) {
-      if (!isStructuralStart(line)) continue;
-      skipStyle = false;
-    }
-
     if (table.length) {
       if (trimmed.startsWith("||") || tableOpen) {
         table.push(line);
@@ -318,6 +415,30 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
         continue;
       }
       flushTable();
+    }
+
+    const macroStart = trimmed.match(/^\{\{\{#!([a-z]+)\b/i);
+    if (macroStart) {
+      flushParagraph();
+      const macroLines = [line];
+      let balance = syntaxBalance(line);
+      let cursor = index;
+      while (balance.open && cursor + 1 < lines.length) {
+        cursor += 1;
+        macroLines.push(lines[cursor].trimEnd());
+        balance = syntaxBalance(macroLines.join("\n"));
+      }
+      if (!balance.open) {
+        const directive = parseDirectiveMacro(macroLines.join("\n"));
+        if (directive) nodes.push(directive);
+        else nodes.push({ type: "raw-control", source: macroLines.join("\n") });
+        index = cursor;
+      } else {
+        const directive = bareDirective(trimmed.replace(/^\{\{\{/, ""));
+        if (directive) nodes.push(directive);
+        else nodes.push({ type: "raw-control", source: line.trim() });
+      }
+      continue;
     }
 
     if (trimmed.startsWith("||")) {
@@ -343,17 +464,50 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
       flushParagraph();
       continue;
     }
-    if (/^\s*#!style\b/i.test(line)) {
+
+    const directive = bareDirective(line);
+    if (directive) {
       flushParagraph();
-      nodes.push({ type: "raw-control", source: line.trim() });
-      skipStyle = true;
+      nodes.push(directive);
       continue;
     }
-    if (/^\s*#!if\b/i.test(line) || /^\s*\/\*/.test(line)) {
+
+    const list = listLine(line);
+    if (list) {
+      flushParagraph();
+      const items: Array<{ depth: number; children: NamuInline[] }> = [];
+      const ordered = list.ordered;
+      let cursor = index;
+      while (cursor < lines.length) {
+        const item = listLine(lines[cursor]);
+        if (!item || item.ordered !== ordered) break;
+        items.push({ depth: item.depth, children: parseNamuInline(item.content) });
+        cursor += 1;
+      }
+      if (items.length) nodes.push({ type: "list", ordered, items });
+      index = cursor - 1;
+      continue;
+    }
+
+    if (/^\s*>/.test(line)) {
+      flushParagraph();
+      const quoteLines: string[] = [];
+      let cursor = index;
+      while (cursor < lines.length && /^\s*>/.test(lines[cursor])) {
+        quoteLines.push(lines[cursor].replace(/^\s*>\s?/, ""));
+        cursor += 1;
+      }
+      nodes.push({ type: "quote", children: parseNamuRaw(quoteLines.join("\n")) });
+      index = cursor - 1;
+      continue;
+    }
+
+    if (/^\s*\/\*/.test(line)) {
       flushParagraph();
       nodes.push({ type: "raw-control", source: line.trim() });
       continue;
     }
+
     paragraph.push(line);
   }
   flushTable();
