@@ -32,7 +32,7 @@ export default function NamuHybridRenderer({ chunks, assets = {} }: { chunks: Na
           const Tag = headingTag(section.heading_level);
           return <section key={`${id}-${sectionIndex}`} data-hybrid-source="rendered">
             {section.heading ? <Tag id={id} className={`sectionTitle sectionLevel${section.heading_level}`}>{section.heading}</Tag> : null}
-            <WikiBlocks blocks={section.content as WikiBlock[]} />
+            <WikiBlocks blocks={section.content as WikiBlock[]} internalLinkMode="hybrid" />
           </section>;
         })}
       </React.Fragment>;
