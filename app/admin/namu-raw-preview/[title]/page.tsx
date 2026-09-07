@@ -124,9 +124,9 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
           <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "DOM + RAW"} />
           <Metric label="Import DOM artifact" value={importedDomArtifact ? "YES" : "LEGACY"} />
+          <Metric label="Template CSS" value={source.source_template_css?.trim() ? "IMPORTED" : "RUNTIME"} />
           <Metric label="Render artifact" value={source.source_render_extraction_version || "runtime"} />
           <Metric label="Mirror raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
-          <Metric label="Visible raw blocks" value={String(visible.visibleRawBlocks)} />
           <Metric label="Cluster mapped images" value={String(Object.keys(assets).length)} />
         </div>
 
@@ -134,7 +134,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
           <h2 className="sectionTitle">Document preview</h2>
           {completeRaw
             ? <NamuRawRenderer nodes={completeRawNodes} assets={assets} />
-            : <NamuMirrorDomRenderer html={mirrorHtml} assets={assets} />}
+            : <NamuMirrorDomRenderer html={mirrorHtml} assets={assets} templateCss={source.source_template_css} />}
         </section>
 
         <details style={{ marginTop: 28 }}>
