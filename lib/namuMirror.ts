@@ -86,10 +86,6 @@ function relationScore(title: string, label: string, context: string, rootTitle:
   if (title === rootTitle) return { score: 100, reason: "root" };
   if (title.startsWith(`${rootTitle}/`)) return { score: 100, reason: "root-subdocument" };
   if (title.includes(`(${rootTitle})`) || title.includes(`[${rootTitle}]`)) return { score: 95, reason: "root-qualified-title" };
-
-  // Contextual discovery is intentionally allowed only on the root group page.
-  // Following contextual links from member/subdocuments caused graph explosion into dates,
-  // cities, MBTI pages, unrelated idols, etc.
   if (sourceTitle !== rootTitle) return { score: 0, reason: "non-root-context-disabled" };
 
   const compact = `${label} ${context}`.replace(/\s+/g, " ");
@@ -98,8 +94,7 @@ function relationScore(title: string, label: string, context: string, rootTitle:
   const discographyContext = /음반|앨범|discography|album|single|싱글|미니\s*앨범|정규\s*앨범|EP|발매/i.test(compact);
   const activityContext = /활동|공연|행사|콘텐츠|유튜브|라이브|응원법|굿즈|수상|음원|직캠|music show|fancam|award|goods|live/i.test(compact);
 
-  // Root-page unqualified titles require a tight structural context, not a wide text window.
-  if (rootMention && memberContext && label.length <= 28 && !/[/:]/.test(label)) return { score: 90, reason: "root-member-row" };
+  if (rootMention && memberContext && label.length <= 12 && !/[/:]/.test(label) && !/(엔터테인먼트|소속사|회사|레이블|agency|entertainment)/i.test(label)) return { score: 90, reason: "root-member-row" };
   if (rootMention && discographyContext && label.length <= 70) return { score: 86, reason: "root-discography-row" };
   if (rootMention && activityContext && label.length <= 70) return { score: 82, reason: "root-activity-row" };
   return { score: 0, reason: "unrelated" };
@@ -121,7 +116,21 @@ function extractRelationCandidates(html: string, rootTitle: string, sourceTitle:
     if (!previous || previous.score < score) best.set(title, { title, label, score, reason });
   }
 
-  return [...best.values()]
+  const candidates = [...best.values()];
+  const qualifiedBases = new Set(
+    candidates
+      .filter((candidate) => candidate.reason === "root-qualified-title")
+      .map((candidate) => candidate.title.replace(new RegExp(`\\(${rootTitle.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\)`), "").trim()),
+  );
+
+  const genericTitles = new Set(["유튜브", "YouTube", "인스타그램", "Instagram", "트위터", "Twitter", "X", "틱톡", "TikTok", "네이버", "Naver"]);
+
+  return candidates
+    .filter((candidate) => {
+      if (candidate.reason === "root-member-row" && qualifiedBases.has(candidate.title)) return false;
+      if (candidate.reason === "root-activity-row" && genericTitles.has(candidate.title)) return false;
+      return true;
+    })
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
     .slice(0, 60);
 }
@@ -175,7 +184,7 @@ export async function fetchMirrorDocument(title: string, mirrorBase = DEFAULT_MI
   const response = await fetch(url, {
     cache: "no-store",
     headers: {
-      "User-Agent": "KpoparkiveIndexer/0.4 (+https://kpoparkive.vercel.app)",
+      "User-Agent": "KpoparkiveIndexer/0.5 (+https://kpoparkive.vercel.app)",
       Accept: "text/html,application/xhtml+xml",
     },
   });
