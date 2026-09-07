@@ -68,7 +68,7 @@ export default function NamuImportPage() {
       unresolved += Array.isArray(result.unresolved) ? result.unresolved.length : 0;
       remaining = Number(result.remaining || 0);
       batches += 1;
-      setStatus(`Resolving assets... ${totalProcessed} processed / ${totalResolved} resolved / ${totalSkipped} skipped / ${unresolved} unresolved / ${remaining} pending`);
+      setStatus(`Resolving/classifying assets... ${totalProcessed} processed / ${totalResolved} resolved / ${totalSkipped} skipped / ${unresolved} unresolved / ${remaining} pending`);
       if (result.processed === 0) break;
       if (retryUnresolved) break;
     }
@@ -83,9 +83,9 @@ export default function NamuImportPage() {
       const importResult = await crawl();
       setStatus(`Step 1/3 complete: ${importResult.fetched} documents fetched, ${importResult.autoDiscovered ?? 0} related documents auto-discovered.\nStep 2/3: rebuilding structured content and asset queue...`);
       const parseResult = await parse(true);
-      setStatus(`Step 2/3 complete: ${parseResult.totalQueuedAssets ?? 0} asset references queued.\nStep 3/3: resolving images, videos and links...`);
+      setStatus(`Step 2/3 complete: ${parseResult.totalQueuedAssets ?? 0} asset references queued.\nStep 3/3: resolving images/videos and classifying links...`);
       const assetResult = await resolveAssets(false);
-      setStatus(JSON.stringify({ import: importResult, parse: parseResult, assets: assetResult, next: "Automatic import is complete. ChatGPT can now enrich unresolved assets and localize the documents." }, null, 2));
+      setStatus(JSON.stringify({ import: importResult, parse: parseResult, assets: assetResult, next: "Automatic import is complete. ChatGPT can now enrich unresolved images, generate pending internal targets, and localize the documents." }, null, 2));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Pipeline failed");
     } finally { setBusy(false); }
@@ -109,7 +109,7 @@ export default function NamuImportPage() {
 
   async function runResolveAssets() {
     setBusy(true);
-    setStatus("Resolving queued and assistant-enriched assets...");
+    setStatus("Retrying enriched images and classifying unresolved internal links...");
     try { setStatus(JSON.stringify(await resolveAssets(true), null, 2)); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Asset resolution failed"); }
     finally { setBusy(false); }
@@ -119,7 +119,7 @@ export default function NamuImportPage() {
     <main className="adminShell">
       <section className="adminPanel">
         <h1>Namu mirror importer</h1>
-        <p className="adminIntro">Enter only the root group document. The importer discovers closely related documents, rebuilds a rich document AST, and automatically resolves available images, embedded videos, and links. ChatGPT can attach web-search replacements to unresolved assets, then this page retries and stores them automatically.</p>
+        <p className="adminIntro">Enter only the root group document. The importer discovers closely related documents, rebuilds a rich document AST, resolves available media, and classifies Namu internal links so generic/date/background links do not expand the Kpoparkive graph. ChatGPT can attach web-search replacements to unresolved images.</p>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" /><small>Saved only in this browser after you enter it once.</small></label>
           <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
@@ -129,7 +129,7 @@ export default function NamuImportPage() {
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : "Run full import pipeline"}</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>Crawl only</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>Re-parse + rebuild asset queue</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>Retry unresolved + enriched assets</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>Retry enrichment + classify links</button>
         </div>
         <pre className="adminStatus">{status}</pre>
       </section>
