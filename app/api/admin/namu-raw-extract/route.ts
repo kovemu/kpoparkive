@@ -4,7 +4,7 @@ import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const EXTRACTION_VERSION = "namu-mirror-hybrid-v4-linked-file-targets";
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v5-canonical-on-import";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -26,6 +26,10 @@ function rawImageRef(file: string) {
   return `파일:${file.trim()}`;
 }
 
+function hasCanonicalSegments(value: unknown) {
+  return Array.isArray(value) && value.length > 0;
+}
+
 export async function POST(request: Request) {
   if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -37,13 +41,14 @@ export async function POST(request: Request) {
     if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
 
     const rows = await db(
-      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&select=id,source_title,raw_html,source_extraction_version,raw_extracted_at&order=crawl_depth.asc,source_title.asc`,
+      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&select=id,source_title,raw_html,source_extraction_version,raw_extracted_at,source_raw_segments&order=crawl_depth.asc,source_title.asc`,
     ) as {
       id: string;
       source_title: string;
       raw_html: string;
       source_extraction_version: string | null;
       raw_extracted_at: string | null;
+      source_raw_segments: unknown;
     }[];
 
     if (!rows.length) return NextResponse.json({ error: `No source documents found for ${rootTitle}` }, { status: 404 });
@@ -63,7 +68,12 @@ export async function POST(request: Request) {
     }[] = [];
 
     for (const row of rows) {
-      if (!body.force && row.source_extraction_version === EXTRACTION_VERSION && row.raw_extracted_at) {
+      if (
+        !body.force
+        && row.source_extraction_version === EXTRACTION_VERSION
+        && row.raw_extracted_at
+        && hasCanonicalSegments(row.source_raw_segments)
+      ) {
         results.push({ title: row.source_title, status: "unchanged", rawBlocks: 0, rawCharacters: 0, renderedCharacters: 0, estimatedRawCoverage: 0, fileRefs: 0, mappedFiles: 0, linkedFileTargets: 0, queuedImages: 0, internalLinks: 0 });
         continue;
       }
