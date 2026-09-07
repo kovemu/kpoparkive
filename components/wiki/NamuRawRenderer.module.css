@@ -11,9 +11,22 @@
 }
 
 .table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
   table-layout: auto;
+}
+
+/* These are source-level Namu template classes, not document-specific rules. */
+.table[data-namu-table-class~="albums"],
+.table[data-namu-table-class~="documents"],
+.table[data-namu-table-class~="list"],
+.table[data-namu-table-class~="profileHistory"] {
+  width: 100%;
+}
+
+.table[data-namu-table-class~="albums"] {
+  table-layout: fixed;
 }
 
 .table td,
