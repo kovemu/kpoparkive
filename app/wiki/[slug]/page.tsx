@@ -2,6 +2,17 @@ import { notFound } from "next/navigation";
 import WikiBlocks from "../../../components/wiki/WikiBlocks";
 import { getStoragePublicUrl, getWikiDocument, getWikiMedia } from "../../../lib/wiki";
 
+const albumCoverBySlug: Record<string, string> = {
+  "re-scene": "rescene/albums/re-scene.jpg",
+  scenedrome: "rescene/albums/scenedrome.jpg",
+  "glow-up": "rescene/albums/glow-up.jpg",
+  dearest: "rescene/albums/dearest.jpg",
+  "heart-drop": "rescene/albums/heart-drop.jpg",
+  "lip-bomb": "rescene/albums/lip-bomb.jpg",
+  runaway: "rescene/albums/runaway.jpg",
+  "pretty-girl": "rescene/albums/pretty-girl.jpg",
+};
+
 function numberSections(sections: { heading_level: number }[]) {
   let major = 0;
   let minor = 0;
@@ -31,6 +42,9 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
 
   const media = await getWikiMedia(document.id);
   const infoboxImage = [...media].reverse().find((item) => item.role === "infobox");
+  const albumCover = albumCoverBySlug[slug];
+  const leadImage = infoboxImage ? getStoragePublicUrl(infoboxImage.storage_path) : albumCover ? getStoragePublicUrl(albumCover) : null;
+  const leadCaption = infoboxImage?.caption ?? (albumCover ? `${document.title} — official release artwork` : null);
   const numbers = numberSections(document.sections);
 
   return (
@@ -46,21 +60,21 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
       <main id="top" className="articleShell" style={{ "--accent": document.accent_color ?? "#8d7cff" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
-            <div className="breadcrumbs">Kpoparkive › RESCENE › {document.title}</div>
+            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › <a href="/">RESCENE</a> › {document.title}</div>
             <h1>{document.title}</h1>
             {document.summary && <p>{document.summary}</p>}
           </div>
         </div>
 
-        {infoboxImage && (
+        {leadImage && (
           <div className="memberLead">
             <figure className="memberLeadPhotoWrap">
               <img
                 className="memberLeadPhoto"
-                src={getStoragePublicUrl(infoboxImage.storage_path)}
-                alt={infoboxImage.alt_text ?? `${document.title} of RESCENE`}
+                src={leadImage}
+                alt={infoboxImage?.alt_text ?? `${document.title} artwork`}
               />
-              {infoboxImage.caption && <figcaption>{infoboxImage.caption}</figcaption>}
+              {leadCaption && <figcaption>{leadCaption}</figcaption>}
             </figure>
           </div>
         )}
