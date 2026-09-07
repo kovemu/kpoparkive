@@ -66,10 +66,24 @@ function cellHref(url: string) {
   return target ? `/admin/drafts/${mirrorSlug(target)}` : url;
 }
 
+function normalizedCellText(value: string) {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+function shouldRenderWholeCellText(fallback: string, label?: string, hasImage = false) {
+  const text = normalizedCellText(fallback || "");
+  const linkLabel = normalizedCellText(label || "");
+  if (!text || hasImage) return false;
+  if (!linkLabel) return true;
+  return text !== linkLabel;
+}
+
 function renderCellLink(url: string | undefined, label: string | undefined, fallback: string, hasImage = false) {
   if (!url) return fallback;
   const target = namuTarget(url);
   const rawText = label || fallback;
+  const separatorOnly = /^[\s|｜·ㆍ멤버]*$/.test(rawText || "");
+  if (hasImage && separatorOnly) return null;
   const text = rawText && !/^https?:\/\//i.test(rawText) && !/^<img\b/i.test(rawText) ? rawText : "";
   if (target) {
     if (!text && hasImage) return null;
@@ -133,9 +147,10 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
               const hasImage = Boolean(cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || ""));
               const image = hasImage ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null;
               const linkedImage = image && cell.link_url ? <a href={cellHref(cell.link_url)} target={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "_blank" : undefined} rel={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "noreferrer" : undefined}>{image}</a> : image;
+              const preserveText = shouldRenderWholeCellText(cell.text, cell.link_label, hasImage);
               return <Tag key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={style}>
                 {linkedImage}
-                {cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage) : cell.text}
+                {preserveText ? cell.text : cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage) : cell.text}
               </Tag>;
             })}</tr>)}
           </tbody></table></div>;
