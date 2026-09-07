@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import WikiBlocks from "../../../../components/wiki/WikiBlocks";
 
 type Section = {
@@ -47,15 +47,18 @@ function numberSections(sections: { heading_level: number }[]) {
 export default function AdminDraftPreviewPage({ params }: { params: Promise<{ slug: string }> }) {
   const [adminKey, setAdminKey] = useState("");
   const [document, setDocument] = useState<DraftDocument | null>(null);
-  const [status, setStatus] = useState("Enter the admin key to load this draft.");
+  const [slug, setSlug] = useState("");
+  const [status, setStatus] = useState("Loading preview...");
   const [busy, setBusy] = useState(false);
 
-  async function loadDraft() {
+  async function loadDraft(key = adminKey, targetSlug = slug) {
+    if (!targetSlug) return;
     setBusy(true);
     try {
-      const { slug } = await params;
-      const response = await fetch(`/api/admin/draft-preview?slug=${encodeURIComponent(slug)}`, {
-        headers: { "x-admin-key": adminKey },
+      const headers: Record<string, string> = {};
+      if (key) headers["x-admin-key"] = key;
+      const response = await fetch(`/api/admin/draft-preview?slug=${encodeURIComponent(targetSlug)}`, {
+        headers,
         cache: "no-store",
       });
       const result = await response.json();
@@ -69,16 +72,40 @@ export default function AdminDraftPreviewPage({ params }: { params: Promise<{ sl
     }
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    params.then(({ slug: resolvedSlug }) => {
+      if (cancelled) return;
+      setSlug(resolvedSlug);
+      if (resolvedSlug.startsWith("mirror-")) {
+        void loadDraft("", resolvedSlug);
+      } else {
+        setStatus("Enter the admin key to load this draft.");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [params]);
+
   if (!document) {
+    const isMirror = slug.startsWith("mirror-");
     return (
       <main className="adminShell">
+        <meta name="robots" content="noindex,nofollow,noarchive" />
         <section className="adminPanel">
           <h1>Draft preview</h1>
-          <p className="adminIntro">This route reads draft documents with the service role and is protected by the Kpoparkive admin key.</p>
-          <div className="adminForm">
-            <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} /></label>
-            <button type="button" disabled={busy || !adminKey} onClick={loadDraft}>{busy ? "Loading..." : "Open draft"}</button>
-          </div>
+          <p className="adminIntro">
+            {isMirror
+              ? "Read-only mirror draft preview. This page is intentionally noindex and can be inspected without the admin key during development."
+              : "This route is protected by the Kpoparkive admin key."}
+          </p>
+          {!isMirror && (
+            <div className="adminForm">
+              <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} /></label>
+              <button type="button" disabled={busy || !adminKey} onClick={() => loadDraft()}>{busy ? "Loading..." : "Open draft"}</button>
+            </div>
+          )}
           <pre className="adminStatus">{status}</pre>
         </section>
       </main>
@@ -89,15 +116,16 @@ export default function AdminDraftPreviewPage({ params }: { params: Promise<{ sl
 
   return (
     <>
+      <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">ADMIN DRAFT · {document.status}</div>
+        <div className="draftBadge">READ-ONLY DRAFT · {document.status}</div>
       </header>
 
       <main id="top" className="articleShell" style={{ "--accent": document.accent_color ?? "#8d7cff" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
-            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Admin draft › {document.title}</div>
+            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Draft preview › {document.title}</div>
             <h1>{document.title}</h1>
             {document.summary && <p>{document.summary}</p>}
           </div>
