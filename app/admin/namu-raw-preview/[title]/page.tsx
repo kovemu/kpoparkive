@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
-import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
-import { parseNamuRaw } from "../../../../lib/namuRawParser";
+import { extractMirrorRawBundle, type RawSourceSegment } from "../../../../lib/namuRawSource";
+import { parseVisibleNamuRawSegments } from "../../../../lib/namuRawSegments";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -21,10 +21,18 @@ type AssetRow = {
   source_ref: string;
   status: string;
   resolved_url: string | null;
+  storage_path: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 function fileKey(ref: string) {
   return ref.trim().replace(/^(?:파일|File):/i, "");
+}
+
+function usableAssetUrl(row: AssetRow) {
+  if (row.resolved_url) return row.resolved_url;
+  const candidate = row.metadata?.enrichment_url;
+  return typeof candidate === "string" && /^https?:\/\//i.test(candidate) ? candidate : null;
 }
 
 export default async function NamuRawPreviewPage({ params }: { params: Promise<{ title: string }> }) {
@@ -35,50 +43,56 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
     source_title: string;
     raw_html: string;
     source_wikitext: string | null;
+    source_raw_segments: RawSourceSegment[] | null;
     source_format: string | null;
     raw_extracted_at: string | null;
   }[]>(
-    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,raw_html,source_wikitext,source_format,raw_extracted_at&limit=1`,
+    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,raw_html,source_wikitext,source_raw_segments,source_format,raw_extracted_at&limit=1`,
   );
   const source = docs[0];
   if (!source) notFound();
 
   const bundle = extractMirrorRawBundle(source.raw_html || "");
+  const segments = source.source_raw_segments?.length ? source.source_raw_segments : bundle.segments;
   const raw = source.source_wikitext || bundle.sourceWikitext;
-  const nodes = parseNamuRaw(raw || "");
+  const visible = parseVisibleNamuRawSegments(segments);
   const assetRows = await db<AssetRow[]>(
-    `source_asset_queue?source_document_id=eq.${source.id}&asset_type=eq.image&status=eq.resolved&select=asset_type,source_ref,status,resolved_url`,
+    `source_asset_queue?source_document_id=eq.${source.id}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
   );
-  const assets = Object.fromEntries(assetRows.filter((row) => row.resolved_url).map((row) => [fileKey(row.source_ref), row.resolved_url as string]));
+  const assets: Record<string, string> = { ...bundle.renderedFileMap };
+  for (const row of assetRows) {
+    const url = usableAssetUrl(row);
+    if (url) assets[fileKey(row.source_ref)] = url;
+  }
 
   return (
     <>
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU RAW RENDERER · v1</div>
+        <div className="draftBadge">NAMU RAW RENDERER · v2</div>
       </header>
       <main className="articleShell" style={{ maxWidth: 1180 }}>
         <div className="articleHeader">
           <div>
             <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Raw renderer › {source.source_title}</div>
             <h1>{source.source_title}</h1>
-            <p>Recovered Namu syntax is rendered directly. HTML fallback remains available until direct source replaces it.</p>
+            <p>Original Namu syntax is rendered directly. Template control branches stay preserved in storage but are excluded from visible article content.</p>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0" }}>
           <Metric label="Raw blocks" value={String(bundle.rawBlockCount)} />
-          <Metric label="Raw characters" value={bundle.rawCharacters.toLocaleString()} />
-          <Metric label="Rendered fallback chars" value={bundle.renderedCharacters.toLocaleString()} />
+          <Metric label="Visible raw blocks" value={String(visible.visibleRawBlocks)} />
+          <Metric label="Skipped control blocks" value={String(visible.skippedControlBlocks)} />
           <Metric label="Estimated raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
-          <Metric label="Parsed raw nodes" value={String(nodes.length)} />
-          <Metric label="File refs in raw" value={String(bundle.fileRefs.length)} />
+          <Metric label="Parsed raw nodes" value={String(visible.nodes.length)} />
+          <Metric label="Mapped images" value={String(Object.keys(assets).length)} />
         </div>
 
         <section>
           <h2 className="sectionTitle">Direct raw rendering</h2>
-          <NamuRawRenderer nodes={nodes} assets={assets} />
+          <NamuRawRenderer nodes={visible.nodes} assets={assets} />
         </section>
 
         <details style={{ marginTop: 28 }}>
