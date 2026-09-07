@@ -18,7 +18,13 @@ async function db(path: string, init: RequestInit = {}) {
 }
 
 function safePart(value: string) {
-  return value.normalize("NFKC").toLowerCase().replace(/[^a-z0-9가-힣._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "asset";
+  const ascii = value
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return ascii || "asset";
 }
 
 async function shortHash(value: string) {
@@ -86,15 +92,15 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.3", Referer: "https://www.namu.moe/" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.4", Referer: "https://www.namu.moe/" }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
   const bytes = await response.arrayBuffer();
   if (bytes.byteLength > 8 * 1024 * 1024) throw new Error("image exceeds 8 MB");
   const ext = extensionFor(contentType, url);
-  const hash = await shortHash(url);
-  const path = `imports/${safePart(rootTitle)}/${safePart(sourceTitle)}/${hash}.${ext}`;
+  const hash = await shortHash(`${rootTitle}|${sourceTitle}|${url}`);
+  const path = `imports/${safePart(rootTitle)}/${safePart(sourceTitle)}-${hash}.${ext}`;
   const upload = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, apikey: SERVICE_ROLE_KEY, "Content-Type": contentType, "x-upsert": "true" },
