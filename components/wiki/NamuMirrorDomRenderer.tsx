@@ -2,6 +2,7 @@ import React from "react";
 import { HTMLElement, parse, type Node } from "node-html-parser";
 import { parseNamuRaw } from "../../lib/namuRawParser";
 import NamuRawRenderer from "./NamuRawRenderer";
+import { NamuTabContent, NamuTabControl, NamuTabProvider } from "./NamuTabContext";
 import styles from "./NamuMirrorDomRenderer.module.css";
 
 type AssetMap = Record<string, string>;
@@ -240,22 +241,28 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
   const tabKey = sourceClass.split(/\s+/).find((token) => /^tab-[a-z](?:-\d+)?$/i.test(token)) || null;
 
   if (tag === "a" && tabKey) {
-    const active = /^tab-a$/i.test(tabKey) || /-1$/i.test(tabKey);
-    const isSubtab = /-\d+$/i.test(tabKey);
     const label = (body.match(/^\[\s*([\s\S]*?)\s*\]$/)?.[1] || body).replace(/'''|''/g, "").trim();
-    return <span
+    return <NamuTabControl
       key={key}
+      tabKey={tabKey}
+      label={label}
       className={[styles.tabButton, sourceClass].filter(Boolean).join(" ")}
-      data-namu-tab-control={tabKey}
-      data-namu-tab-active={active ? "true" : "false"}
-      style={{ flex: isSubtab ? "1 1 38%" : "1 1 20%", ...sourceStyle }}
-    >{label}</span>;
+      style={sourceStyle}
+    />;
   }
 
   const nodes = body.trim() ? parseNamuRaw(body) : [];
   if (!nodes.length) return null;
   const isPanel = Boolean(tabKey) || /(?:^|\s)subtab(?:\s|$)/.test(sourceClass);
-  return <div key={key} className={[styles.rawEmbed, isPanel ? styles.rawPanel : "", sourceClass].filter(Boolean).join(" ")} style={sourceStyle} data-namu-directive={kind} data-namu-tab-content={tabKey || undefined}>
+  const className = [styles.rawEmbed, isPanel ? styles.rawPanel : "", sourceClass].filter(Boolean).join(" ");
+
+  if (tabKey) {
+    return <NamuTabContent key={key} tabKey={tabKey} className={className} style={sourceStyle}>
+      <NamuRawRenderer nodes={nodes} assets={assets} />
+    </NamuTabContent>;
+  }
+
+  return <div key={key} className={className} style={sourceStyle} data-namu-directive={kind}>
     <NamuRawRenderer nodes={nodes} assets={assets} />
   </div>;
 }
@@ -352,7 +359,7 @@ export default function NamuMirrorDomRenderer({ html, assets = {} }: { html: str
   const root = parse(html || "");
   const article = root.querySelector("article") || root;
   const themeStyle = { "--namu-theme-bg": theme.background, "--namu-theme-fg": theme.foreground } as React.CSSProperties;
-  return <div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v1">
+  return <NamuTabProvider><div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v2-tabs">
     {article.childNodes.map((node, index) => renderNode(node, assets, theme, `mirror-${index}`))}
-  </div>;
+  </div></NamuTabProvider>;
 }
