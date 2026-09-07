@@ -36,6 +36,13 @@ export type NamuRawNode =
   | { type: "quote"; children: NamuRawNode[] }
   | { type: "raw-control"; source: string };
 
+type ScopedCellStyle = {
+  background?: string;
+  color?: string;
+  align?: "left" | "center" | "right";
+  width?: string;
+};
+
 function decodeBasic(value: string) {
   return value
     .replace(/\\n/g, "\n")
@@ -229,6 +236,13 @@ function safeTableColor(value: string) {
   return undefined;
 }
 
+function mergeScopedStyle(target: ScopedCellStyle, incoming: ScopedCellStyle) {
+  if (incoming.background !== undefined) target.background = incoming.background;
+  if (incoming.color !== undefined) target.color = incoming.color;
+  if (incoming.align !== undefined) target.align = incoming.align;
+  if (incoming.width !== undefined) target.width = incoming.width;
+}
+
 function parseCellDirectives(source: string) {
   let rest = source.trim();
   const directives: string[] = [];
@@ -241,6 +255,9 @@ function parseCellDirectives(source: string) {
 
   const meta: Omit<NamuRawCell, "children"> = {};
   const tableMeta: NamuRawTableMeta = {};
+  const rowMeta: ScopedCellStyle = {};
+  const columnMeta: ScopedCellStyle = {};
+
   for (const directive of directives) {
     if (/^nopad$/i.test(directive)) meta.nopad = true;
 
@@ -257,9 +274,25 @@ function parseCellDirectives(source: string) {
     const tableBorder = directive.match(/^tablebordercolor=(.+)$/i)?.[1];
     if (tableBorder) tableMeta.borderColor = safeTableColor(tableBorder);
 
-    const bg = directive.match(/^(?:bgcolor|colbgcolor)=([^,>]+)/i)?.[1];
+    const rowBg = directive.match(/^rowbgcolor=(.+)$/i)?.[1];
+    if (rowBg) rowMeta.background = safeTableColor(rowBg);
+    const rowColor = directive.match(/^rowcolor=(.+)$/i)?.[1];
+    if (rowColor) rowMeta.color = safeTableColor(rowColor);
+    const rowAlign = directive.match(/^rowalign=(left|center|right)$/i)?.[1]?.toLowerCase();
+    if (rowAlign === "left" || rowAlign === "center" || rowAlign === "right") rowMeta.align = rowAlign;
+
+    const colBg = directive.match(/^colbgcolor=(.+)$/i)?.[1];
+    if (colBg) columnMeta.background = safeTableColor(colBg);
+    const colColor = directive.match(/^colcolor=(.+)$/i)?.[1];
+    if (colColor) columnMeta.color = safeTableColor(colColor);
+    const colAlign = directive.match(/^colalign=(left|center|right)$/i)?.[1]?.toLowerCase();
+    if (colAlign === "left" || colAlign === "center" || colAlign === "right") columnMeta.align = colAlign;
+    const colWidth = directive.match(/^colwidth=(.+)$/i)?.[1]?.trim();
+    if (colWidth) columnMeta.width = normalizeDimension(colWidth);
+
+    const bg = directive.match(/^bgcolor=([^,>]+)/i)?.[1];
     if (bg && /^#[0-9a-f]{3,8}$/i.test(bg.trim())) meta.background = bg.trim();
-    const color = directive.match(/^(?:color|colcolor)=([^,>]+)/i)?.[1];
+    const color = directive.match(/^color=([^,>]+)/i)?.[1];
     if (color && /^#[0-9a-f]{3,8}$/i.test(color.trim())) meta.color = color.trim();
     const width = directive.match(/^width=([^>]+)/i)?.[1];
     if (width) meta.width = normalizeDimension(width);
@@ -271,12 +304,17 @@ function parseCellDirectives(source: string) {
     if (/^\(/.test(directive)) meta.align = "left";
     if (/^\)/.test(directive)) meta.align = "right";
   }
-  return { rest, meta, tableMeta };
+  return { rest, meta, tableMeta, rowMeta, columnMeta };
 }
 
 function makeCell(source: string) {
-  const { rest, meta, tableMeta } = parseCellDirectives(source);
-  return { cell: { ...meta, children: parseNamuInline(rest) } as NamuRawCell, tableMeta };
+  const { rest, meta, tableMeta, rowMeta, columnMeta } = parseCellDirectives(source);
+  return {
+    cell: { ...meta, children: parseNamuInline(rest) } as NamuRawCell,
+    tableMeta,
+    rowMeta,
+    columnMeta,
+  };
 }
 
 function mergeTableMeta(target: NamuRawTableMeta, incoming: NamuRawTableMeta) {
@@ -288,22 +326,40 @@ function mergeTableMeta(target: NamuRawTableMeta, incoming: NamuRawTableMeta) {
   if (incoming.borderColor !== undefined) target.borderColor = incoming.borderColor;
 }
 
+function applyInheritedCellStyle(cell: NamuRawCell, rowStyle: ScopedCellStyle, columnStyle?: ScopedCellStyle) {
+  const inherited = columnStyle || {};
+  if (cell.background === undefined) cell.background = rowStyle.background ?? inherited.background;
+  if (cell.color === undefined) cell.color = rowStyle.color ?? inherited.color;
+  if (cell.align === undefined) cell.align = rowStyle.align ?? inherited.align;
+  if (cell.width === undefined) cell.width = inherited.width;
+}
+
 /**
  * Namu tables are logical streams, not physical lines. A cell may contain
  * multiline [[links]] / {{{wiki blocks}}}, and a bare `||` closes the row.
- * Table-level directives are collected separately so table geometry survives
- * instead of leaking into the first cell.
+ * Table, row, and column directives are preserved with Namu-style inheritance:
+ * explicit cell style > row style > column style > table style.
  */
 function parseTableChunk(lines: string[]) {
   const rows: NamuRawCell[][] = [];
   const tableMeta: NamuRawTableMeta = {};
-  let row: NamuRawCell[] = [];
+  const columnDefaults = new Map<number, ScopedCellStyle>();
+  let row: Array<{ cell: NamuRawCell; columnIndex: number }> = [];
+  let rowMeta: ScopedCellStyle = {};
   let pending = "";
+  let logicalColumn = 0;
 
   const appendCell = (source: string) => {
     const parsed = makeCell(source);
     mergeTableMeta(tableMeta, parsed.tableMeta);
-    row.push(parsed.cell);
+    mergeScopedStyle(rowMeta, parsed.rowMeta);
+    if (Object.keys(parsed.columnMeta).length) {
+      const columnStyle = columnDefaults.get(logicalColumn) || {};
+      mergeScopedStyle(columnStyle, parsed.columnMeta);
+      columnDefaults.set(logicalColumn, columnStyle);
+    }
+    row.push({ cell: parsed.cell, columnIndex: logicalColumn });
+    logicalColumn += parsed.cell.colspan || 1;
   };
   const pushPending = () => {
     if (!pending.trim()) { pending = ""; return; }
@@ -312,8 +368,14 @@ function parseTableChunk(lines: string[]) {
   };
   const pushRow = () => {
     pushPending();
-    if (row.some((cell) => cell.children.length || cell.background || cell.color || cell.width || cell.rowspan || cell.colspan || cell.nopad)) rows.push(row);
+    const cells = row.map(({ cell, columnIndex }) => {
+      applyInheritedCellStyle(cell, rowMeta, columnDefaults.get(columnIndex));
+      return cell;
+    });
+    if (cells.some((cell) => cell.children.length || cell.background || cell.color || cell.width || cell.rowspan || cell.colspan || cell.nopad)) rows.push(cells);
     row = [];
+    rowMeta = {};
+    logicalColumn = 0;
   };
 
   for (const rawLine of lines) {
