@@ -88,23 +88,46 @@ function extractExternalLinks(fragment: string): ParsedBlock[] {
   return links.filter((item) => !seen.has(item.url) && seen.add(item.url)).slice(0, 30).map((item) => ({ type: "external-link" as const, ...item }));
 }
 
+function normalizeImageUrl(src: string) {
+  const decoded = decodeEntities(src.trim());
+  if (decoded.startsWith("//")) return `https:${decoded}`;
+  if (decoded.startsWith("/")) return `https://www.namu.moe${decoded}`;
+  return decoded;
+}
+
+function cleanFileName(value: string) {
+  return value
+    .split(/[\n\r]/)[0]
+    .replace(/["'][\s\S]*$/, "")
+    .replace(/\s+(?:width|height|src|data-original|data-src)=.*$/i, "")
+    .trim();
+}
+
 function extractImages(fragment: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
   const seen = new Set<string>();
+
   for (const m of fragment.matchAll(/<img\b([^>]+)>/gi)) {
     const attrs = m[1];
-    const src = attrs.match(/(?:src|data-src)=["']([^"']+)["']/i)?.[1];
+    const rawSrc = attrs.match(/(?:data-original|data-src|src)=["']([^"']+)["']/i)?.[1];
     const alt = attrs.match(/alt=["']([^"']*)["']/i)?.[1];
-    if (!src || seen.has(src)) continue;
+    if (!rawSrc) continue;
+    const src = normalizeImageUrl(rawSrc);
+    if (!/^https?:\/\//i.test(src) || seen.has(src)) continue;
+    if (/\/images\/cc-by-nc-sa-2\.0-88x31\.png(?:\?|$)/i.test(src)) continue;
     seen.add(src);
-    blocks.push({ type: "image", source_ref: src, url: decodeEntities(src), alt: alt ? decodeEntities(alt) : undefined });
+    blocks.push({ type: "image", source_ref: src, url: src, alt: alt ? decodeEntities(alt) : undefined });
   }
-  for (const m of fragment.matchAll(/(?:파일:|Image:\s*파일:)([^|<\]\n]+)/g)) {
-    const ref = `파일:${m[1].trim()}`;
+
+  for (const m of fragment.matchAll(/(?:\[\[)?파일:([^|\]\n<]+)/gi)) {
+    const name = cleanFileName(m[1]);
+    if (!name || name.length > 180) continue;
+    const ref = `파일:${name}`;
     if (seen.has(ref)) continue;
     seen.add(ref);
-    blocks.push({ type: "image", source_ref: ref, alt: m[1].trim() });
+    blocks.push({ type: "image", source_ref: ref, alt: name });
   }
+
   return blocks.slice(0, 80);
 }
 
