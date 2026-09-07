@@ -47,15 +47,31 @@ function mirrorSlug(target: string) {
   return `mirror-${target.normalize("NFKC").toLowerCase().replace(/\([^)]*\)/g, "").replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "")}`;
 }
 
-function renderCellLink(url: string | undefined, label: string | undefined, fallback: string) {
-  if (!url) return fallback;
-  const text = label || fallback || url;
-  if (url.startsWith("/w/")) {
-    let target = url.slice(3).split(/[?#]/)[0];
-    try { target = decodeURIComponent(target); } catch {}
-    return <a href={`/admin/drafts/${mirrorSlug(target)}`}>{text}</a>;
+function namuTarget(url: string) {
+  let raw = "";
+  if (url.startsWith("/w/")) raw = url.slice(3);
+  else {
+    try {
+      const parsed = new URL(url);
+      if (/^(?:www\.)?namu\.moe$/i.test(parsed.hostname) && parsed.pathname.startsWith("/w/")) raw = parsed.pathname.slice(3);
+    } catch {}
   }
-  return <a href={url} target={/^https?:\/\//.test(url) ? "_blank" : undefined} rel={/^https?:\/\//.test(url) ? "noreferrer" : undefined}>{text}</a>;
+  if (!raw) return null;
+  raw = raw.split(/[?#]/)[0];
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
+function renderCellLink(url: string | undefined, label: string | undefined, fallback: string, hasImage = false) {
+  if (!url) return fallback;
+  const target = namuTarget(url);
+  const rawText = label || fallback;
+  const text = rawText && !/^https?:\/\//i.test(rawText) ? rawText : "";
+  if (target) {
+    if (!text && hasImage) return null;
+    return <a href={`/admin/drafts/${mirrorSlug(target)}`}>{text || target}</a>;
+  }
+  if (!text && hasImage) return null;
+  return <a href={url} target={/^https?:\/\//.test(url) ? "_blank" : undefined} rel={/^https?:\/\//.test(url) ? "noreferrer" : undefined}>{text || url}</a>;
 }
 
 export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
@@ -108,14 +124,11 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
           return <div className="namuTableWrap" key={index}><table className="namuTable"><tbody>
             {block.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => {
               const Tag = cell.header ? "th" : "td";
-              const style: React.CSSProperties = {
-                background: cell.background,
-                color: cell.color,
-                textAlign: cell.align,
-              };
+              const style: React.CSSProperties = { background: cell.background, color: cell.color, textAlign: cell.align };
+              const hasImage = Boolean(cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || ""));
               return <Tag key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={style}>
-                {cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || "") ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null}
-                {cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text) : cell.text}
+                {hasImage ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null}
+                {cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage) : cell.text}
               </Tag>;
             })}</tr>)}
           </tbody></table></div>;
