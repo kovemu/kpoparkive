@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import WikiBlocks from "../../../../components/wiki/WikiBlocks";
 import type { RichWikiCell, WikiBlock } from "../../../../lib/wiki";
-import { parseNamuHtmlV4 } from "../../../../lib/namuParserV4";
+import { parseNamuHtmlV5 } from "../../../../lib/namuParserV5";
 import styles from "./namuPreview.module.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
@@ -68,9 +68,12 @@ function cleanControlText(input: string) {
 }
 
 function sanitizeCell(cell: RichWikiCell): RichWikiCell {
-  const text = cleanControlText(cell.text || "");
+  let text = cleanControlText(cell.text || "");
   const linkLabel = cell.link_label ? cleanControlText(cell.link_label) : cell.link_label;
   const fileLink = /^파일:/i.test(linkLabel || "") || /\/w\/%?ED%8C%8C%EC%9D%BC/i.test(cell.link_url || "");
+  if (!cell.image_url && /^파일:[^\n]+\.(?:svg|png|jpe?g|gif|webp)(?:\s|$)/i.test(text)) {
+    text = text.replace(/^파일:[^\n]+?\.(?:svg|png|jpe?g|gif|webp)\s*/i, "").trim();
+  }
   return {
     ...cell,
     text,
@@ -94,7 +97,7 @@ function sanitizeBlocks(blocks: WikiBlock[]): WikiBlock[] {
       if (isControlNoise(block.text)) continue;
       const text = cleanControlText(block.text);
       if (!text || /^문서 를 의 .*부분을 참고하십시오/.test(text)) continue;
-      if (/\]\]\s*\[|^\|\s*<|^\{\s*padding:/.test(text)) continue;
+      if (/\]\]\s*\[|^\|\s*<|^\{\s*padding:|\]\]\s*$/.test(text)) continue;
       output.push({ ...block, text });
       continue;
     }
@@ -124,8 +127,7 @@ function isMainInfobox(block: WikiBlock) {
 function cleanLead(blocks: WikiBlock[]) {
   const mainInfoboxIndex = blocks.findIndex(isMainInfobox);
   if (mainInfoboxIndex < 0) return blocks.filter((block) => block.type !== "paragraph");
-  const main = blocks[mainInfoboxIndex];
-  return [main];
+  return [blocks[mainInfoboxIndex]];
 }
 
 function numberSections(sections: { heading_level: number; heading: string }[]) {
@@ -149,16 +151,13 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
   const source = docs[0];
   if (!source) notFound();
 
-  const sections = parseNamuHtmlV4(source.raw_html || "");
+  const sections = parseNamuHtmlV5(source.raw_html || "");
   const assets = await db<AssetRow[]>(
     `source_asset_queue?source_document_id=eq.${source.id}&select=asset_type,source_ref,resolved_url,storage_path,status`,
   );
   const hydrated = sections.map((section) => {
     const sanitized = sanitizeBlocks(hydrate(section.content as WikiBlock[], assets));
-    return {
-      ...section,
-      content: section.heading ? sanitized : cleanLead(sanitized),
-    };
+    return { ...section, content: section.heading ? sanitized : cleanLead(sanitized) };
   });
   const visibleSections = hydrated.filter((section) => section.heading);
   const numbers = numberSections(hydrated);
@@ -168,7 +167,7 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMUWIKI STRUCTURAL MIRROR · v4</div>
+        <div className="draftBadge">NAMUWIKI STRUCTURAL MIRROR · v5</div>
       </header>
       <main id="top" className={`articleShell ${styles.preview}`} style={{ "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
