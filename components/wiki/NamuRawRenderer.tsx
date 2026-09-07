@@ -5,12 +5,12 @@ type AssetMap = Record<string, string>;
 
 function internalHref(target: string) {
   const [title, anchor] = target.split("#", 2);
-  const base = `/admin/namu-raw-preview/${encodeURIComponent(title || target)}`;
+  const base = `/admin/namu-hybrid-preview/${encodeURIComponent(title || target)}`;
   return anchor ? `${base}#${encodeURIComponent(anchor)}` : base;
 }
 
 function normalizeFileRef(file: string) {
-  return file.trim().replace(/^(?:파일|File):/i, "");
+  return file.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
 function imageStyle(width?: string, height?: string): React.CSSProperties {
@@ -20,13 +20,22 @@ function imageStyle(width?: string, height?: string): React.CSSProperties {
   return style;
 }
 
+function findAsset(assets: AssetMap, file: string) {
+  const normalized = normalizeFileRef(file);
+  if (assets[normalized]) return assets[normalized];
+  for (const [key, url] of Object.entries(assets)) {
+    if (normalizeFileRef(key) === normalized) return url;
+  }
+  return undefined;
+}
+
 function Inline({ nodes, assets }: { nodes: NamuInline[]; assets: AssetMap }) {
   return <>
     {nodes.map((node, index) => {
       if (node.type === "text") return <React.Fragment key={index}>{node.text.split("\n").map((part, line) => <React.Fragment key={line}>{line > 0 && <br />}{part}</React.Fragment>)}</React.Fragment>;
       if (node.type === "link") return <a key={index} href={internalHref(node.target)}>{node.label}</a>;
       const file = normalizeFileRef(node.file);
-      const url = assets[file] || assets[`파일:${file}`] || assets[`File:${file}`];
+      const url = findAsset(assets, file);
       if (url) return <img key={index} src={url} alt={file} loading="lazy" style={imageStyle(node.width, node.height)} />;
       return <span key={index} title={`Unresolved image: ${file}`} style={{ display: "inline-block", padding: "4px 7px", border: "1px dashed #c7ccd4", color: "#667085", fontSize: 12 }}>[{file}]</span>;
     })}
