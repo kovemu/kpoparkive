@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import WikiBlocks from "../../../../components/wiki/WikiBlocks";
-import type { WikiBlock } from "../../../../lib/wiki";
+import type { RichWikiCell, WikiBlock } from "../../../../lib/wiki";
 import { parseNamuHtmlV4 } from "../../../../lib/namuParserV4";
+import styles from "./namuPreview.module.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -36,6 +37,77 @@ function hydrate(blocks: WikiBlock[], assets: AssetRow[]) {
   });
 }
 
+function validColor(value?: string) {
+  if (!value) return undefined;
+  const color = value.trim();
+  if (/^#[0-9a-f]{3,8}$/i.test(color) || /^rgba?\([^)]*\)$/i.test(color)) return color;
+  if (/^(?:black|white|transparent|gray|grey|red|blue|green|pink|purple|orange|yellow)$/i.test(color)) return color;
+  return undefined;
+}
+
+function cleanControlText(input: string) {
+  let text = input;
+  if (/대한민국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "대한민국";
+  if (/일본/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "일본";
+  if (/미국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "미국";
+  if (/중국/.test(text) && /(행정구|속령|#!wiki|\{\{\{)/.test(text)) return "중국";
+  text = text
+    .replace(/#!(?:wiki|if|folding|style|html)\b[^{}]*/gi, " ")
+    .replace(/\{\{\{(?:[-+]\d+)?/g, " ")
+    .replace(/\}\}\}/g, " ")
+    .replace(/<(?:tableclass|nopad|rowkeepall|colkeepall|keepall|thead|sortable)[^>]*>/gi, " ")
+    .replace(/\[dday\([^\]]+\)\]/gi, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text;
+}
+
+function sanitizeCell(cell: RichWikiCell): RichWikiCell {
+  const text = cleanControlText(cell.text || "");
+  return {
+    ...cell,
+    text,
+    background: validColor(cell.background),
+    color: validColor(cell.color),
+    link_label: cell.link_label ? cleanControlText(cell.link_label) : cell.link_label,
+  };
+}
+
+function isControlNoise(text: string) {
+  const markers = ["#!wiki", "#!style", "onclick=", "tableclass=", "div.tab", "{{{#!", "remove-class,", "toggle-class,"];
+  const hits = markers.filter((marker) => text.includes(marker)).length;
+  return hits >= 2 || text.length > 900 && hits >= 1;
+}
+
+function sanitizeBlocks(blocks: WikiBlock[]): WikiBlock[] {
+  const output: WikiBlock[] = [];
+  for (const block of blocks) {
+    if (block.type === "paragraph") {
+      if (isControlNoise(block.text)) continue;
+      const text = cleanControlText(block.text);
+      if (!text || /^문서 를 의 .*부분을 참고하십시오/.test(text)) continue;
+      if (text.startsWith("#!style")) continue;
+      output.push({ ...block, text });
+      continue;
+    }
+    if (block.type === "list") {
+      const items = block.items.map(cleanControlText).filter(Boolean);
+      if (items.length) output.push({ ...block, items });
+      continue;
+    }
+    if (block.type === "rich-table") {
+      const rows = block.rows
+        .map((row) => row.map(sanitizeCell))
+        .filter((row) => row.some((cell) => cell.text || cell.image_url || cell.link_url));
+      if (rows.length) output.push({ ...block, rows });
+      continue;
+    }
+    output.push(block);
+  }
+  return output;
+}
+
 function numberSections(sections: { heading_level: number; heading: string }[]) {
   let major = 0;
   let minor = 0;
@@ -61,7 +133,10 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
   const assets = await db<AssetRow[]>(
     `source_asset_queue?source_document_id=eq.${source.id}&select=asset_type,source_ref,resolved_url,storage_path,status`,
   );
-  const hydrated = sections.map((section) => ({ ...section, content: hydrate(section.content as WikiBlock[], assets) }));
+  const hydrated = sections.map((section) => ({
+    ...section,
+    content: sanitizeBlocks(hydrate(section.content as WikiBlock[], assets)),
+  }));
   const visibleSections = hydrated.filter((section) => section.heading);
   const numbers = numberSections(hydrated);
 
@@ -70,18 +145,18 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMUWIKI SOURCE-ORDER PREVIEW · v4</div>
+        <div className="draftBadge">NAMUWIKI STRUCTURAL MIRROR · v4</div>
       </header>
-      <main id="top" className="articleShell" style={{ "--accent": "#fc6fcf" } as React.CSSProperties}>
+      <main id="top" className={`articleShell ${styles.preview}`} style={{ "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
             <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Namu mirror › {source.source_title}</div>
             <h1>{source.source_title}</h1>
-            <p>Live structural preview from the saved Namu mirror snapshot. Text is intentionally still Korean; translation comes after structural fidelity.</p>
+            <p>Structural mirror preview. Korean source text is kept until the document layout matches the source.</p>
           </div>
         </div>
 
-        {hydrated.filter((section) => !section.heading).map((section) => (
+        {hydrated.filter((section) => !section.heading && section.content.length).map((section) => (
           <section key={section.section_key} className="namuLead"><WikiBlocks blocks={section.content as WikiBlock[]} /></section>
         ))}
 
@@ -97,7 +172,7 @@ export default async function NamuPreviewPage({ params }: { params: Promise<{ ti
           </ol>
         </nav>
 
-        {hydrated.filter((section) => section.heading).map((section) => {
+        {visibleSections.map((section) => {
           const index = hydrated.indexOf(section);
           const Tag = section.heading_level >= 4 ? "h4" : section.heading_level === 3 ? "h3" : "h2";
           return <section key={section.section_key}>
