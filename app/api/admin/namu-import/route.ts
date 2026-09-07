@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { fetchMirrorDocument, shouldCrawlTitle, type RelationCandidate } from "../../../../lib/namuMirror";
-import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
+import { buildNamuMirrorImportArtifact, NAMU_RENDER_ARTIFACT_VERSION } from "../../../../lib/namuMirrorImportArtifact";
+import type { MirrorRawBundle, RenderedFileMap } from "../../../../lib/namuRawSource";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const EXTRACTION_VERSION = "namu-mirror-hybrid-v5-canonical-on-import";
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v6-dom-artifacts-on-import";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -38,6 +39,12 @@ type ResultRow = {
   rawBlocks: number;
   rawCoverage: number;
   queuedImages: number;
+  templateStyles: number;
+  tables: number;
+  floatRightTables: number;
+  renderedFiles: number;
+  unresolvedRawFiles: number;
+  hasToc: boolean;
   relationReason?: string;
 };
 
@@ -71,7 +78,18 @@ function rawImageRef(file: string) {
   return `파일:${file.trim()}`;
 }
 
-async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourceTitle: string, bundle: ReturnType<typeof extractMirrorRawBundle>) {
+function normalizeFileKey(value: string) {
+  return value.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
+}
+
+function mergeRenderedFileMap(target: RenderedFileMap, incoming: RenderedFileMap) {
+  for (const [file, url] of Object.entries(incoming)) {
+    const key = normalizeFileKey(file);
+    if (key && url && !target[key]) target[key] = url;
+  }
+}
+
+async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourceTitle: string, bundle: MirrorRawBundle) {
   const existing = await db(
     `source_asset_queue?source_document_id=eq.${sourceDocumentId}&asset_type=eq.image&select=source_ref`,
   ) as { source_ref: string }[];
@@ -98,6 +116,7 @@ async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourc
         filename: asset.file,
         origin: bundle.fileRefs.includes(asset.file) ? "raw" : "rendered",
         extraction_version: EXTRACTION_VERSION,
+        render_artifact_version: NAMU_RENDER_ARTIFACT_VERSION,
         ...(asset.directUrl ? { enrichment_url: asset.directUrl, enrichment_confidence: 1, resolved_from_hint: "mirror-img-alt" } : {}),
         ...(asset.linkedTarget ? { linked_target: asset.linkedTarget, resolved_from_hint: asset.directUrl ? "mirror-img-alt" : "linked-document" } : {}),
       },
@@ -112,6 +131,39 @@ async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourc
   }
 
   return imageRows.length;
+}
+
+async function hydrateClusterAssetHints(rootTitle: string, renderedFileMap: RenderedFileMap) {
+  if (!Object.keys(renderedFileMap).length) return 0;
+  const rows = await db(
+    `source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&asset_type=eq.image&status=in.(pending,unresolved)&select=id,source_ref,status,metadata&limit=2000`,
+  ) as Array<{ id: string; source_ref: string; status: string; metadata: Record<string, unknown> | null }>;
+
+  let updated = 0;
+  for (const row of rows) {
+    const file = normalizeFileKey(row.source_ref);
+    const url = renderedFileMap[file];
+    if (!url) continue;
+    const metadata = row.metadata || {};
+    if (metadata.enrichment_url === url && row.status === "pending") continue;
+    await db(`source_asset_queue?id=eq.${row.id}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "pending",
+        metadata: {
+          ...metadata,
+          enrichment_url: url,
+          enrichment_confidence: 1,
+          resolved_from_hint: "cluster-rendered-file-map",
+          render_artifact_version: NAMU_RENDER_ARTIFACT_VERSION,
+        },
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    updated += 1;
+  }
+  return updated;
 }
 
 export async function POST(request: Request) {
@@ -144,6 +196,7 @@ export async function POST(request: Request) {
     const queued = new Set<string>([rootTitle]);
     const seen = new Set<string>();
     const results: ResultRow[] = [];
+    const clusterRenderedFileMap: RenderedFileMap = {};
     let errorCount = 0;
     let skippedCount = 0;
     let autoDiscoveredCount = 0;
@@ -165,7 +218,9 @@ export async function POST(request: Request) {
 
       try {
         const snapshot = await fetchMirrorDocument(current.title, undefined, rootTitle);
-        const rawBundle = extractMirrorRawBundle(snapshot.html);
+        const renderArtifact = buildNamuMirrorImportArtifact(snapshot.html);
+        const rawBundle = renderArtifact.rawBundle;
+        mergeRenderedFileMap(clusterRenderedFileMap, renderArtifact.renderedFileMap);
         const extractedAt = new Date().toISOString();
         const stored = await db("source_documents?on_conflict=source,source_title&select=id", {
           method: "POST",
@@ -177,6 +232,11 @@ export async function POST(request: Request) {
             root_title: rootTitle,
             crawl_depth: current.depth,
             raw_html: snapshot.html,
+            source_article_html: renderArtifact.articleHtml,
+            source_template_css: renderArtifact.templateCss || null,
+            source_render_manifest: renderArtifact.manifest,
+            source_render_extraction_version: NAMU_RENDER_ARTIFACT_VERSION,
+            source_render_extracted_at: extractedAt,
             extracted_text: snapshot.text,
             source_hash: snapshot.hash,
             discovered_links: snapshot.links,
@@ -209,6 +269,12 @@ export async function POST(request: Request) {
           rawBlocks: rawBundle.rawBlockCount,
           rawCoverage: rawBundle.estimatedRawCoverage,
           queuedImages,
+          templateStyles: renderArtifact.manifest.styleBlockCount,
+          tables: renderArtifact.manifest.tableCount,
+          floatRightTables: renderArtifact.manifest.floatRightTableCount,
+          renderedFiles: renderArtifact.manifest.renderedFileCount,
+          unresolvedRawFiles: renderArtifact.manifest.unresolvedRawFileCount,
+          hasToc: renderArtifact.manifest.hasToc,
           relationReason: current.relationReason,
         });
 
@@ -220,9 +286,6 @@ export async function POST(request: Request) {
             }
           }
 
-          // The root navigation often wraps an exact file reference in a link to
-          // the album/member document that renders that file. Fetch those targets
-          // early so the same import run can populate the cluster asset map.
           if (current.depth === 0) {
             rawImageTargetCount += enqueueRawFileTargets(queue, queued, seen, rawBundle.fileTargetMap, rootTitle, current.depth + 1);
           }
@@ -248,9 +311,23 @@ export async function POST(request: Request) {
           rawBlocks: 0,
           rawCoverage: 0,
           queuedImages: 0,
+          templateStyles: 0,
+          tables: 0,
+          floatRightTables: 0,
+          renderedFiles: 0,
+          unresolvedRawFiles: 0,
+          hasToc: false,
           relationReason: current.relationReason,
         });
       }
+    }
+
+    let clusterAssetHints = 0;
+    let clusterAssetHintError: string | null = null;
+    try {
+      clusterAssetHints = await hydrateClusterAssetHints(rootTitle, clusterRenderedFileMap);
+    } catch (error) {
+      clusterAssetHintError = error instanceof Error ? error.message : "cluster asset hint hydration failed";
     }
 
     await db(`import_runs?id=eq.${runId}`, {
@@ -268,7 +345,15 @@ export async function POST(request: Request) {
           raw_image_target_discovery: true,
           raw_image_target_count: rawImageTargetCount,
           canonical_raw_on_import: true,
+          dom_skeleton_on_import: true,
+          template_css_on_import: true,
+          render_manifest_on_import: true,
+          cluster_asset_hinting: true,
+          cluster_asset_hints: clusterAssetHints,
+          cluster_asset_hint_error: clusterAssetHintError,
+          cluster_rendered_file_count: Object.keys(clusterRenderedFileMap).length,
           extraction_version: EXTRACTION_VERSION,
+          render_artifact_version: NAMU_RENDER_ARTIFACT_VERSION,
           includePrefixes,
           includeTitles,
         },
@@ -281,12 +366,17 @@ export async function POST(request: Request) {
       ok: true,
       runId,
       extractionVersion: EXTRACTION_VERSION,
+      renderArtifactVersion: NAMU_RENDER_ARTIFACT_VERSION,
       fetched: fetchedResults.length,
       errors: errorCount,
       skipped: skippedCount,
       autoDiscovered: autoDiscoveredCount,
       rawImageTargets: rawImageTargetCount,
       rawBlocks: fetchedResults.reduce((sum, row) => sum + row.rawBlocks, 0),
+      templateStyles: fetchedResults.reduce((sum, row) => sum + row.templateStyles, 0),
+      renderedFiles: Object.keys(clusterRenderedFileMap).length,
+      clusterAssetHints,
+      clusterAssetHintError,
       queuedImages: fetchedResults.reduce((sum, row) => sum + row.queuedImages, 0),
       documents: results,
     });
