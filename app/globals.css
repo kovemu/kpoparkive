@@ -206,7 +206,7 @@ button, input, select { font: inherit; }
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: end;
+  justify-content: flex-end;
   gap: 2px;
   padding: 18px;
   border: 1px solid #c9d1d9;
@@ -265,12 +265,17 @@ button, input, select { font: inherit; }
 .wikiList { padding-left: 25px; }
 .wikiList li { margin: 6px 0; }
 
-.simpleTable { border: 1px solid var(--line); }
-.simpleTable > div { display: grid; grid-template-columns: 1.4fr 1fr 1fr; border-bottom: 1px solid var(--line); }
+.simpleTable { border: 1px solid var(--line); overflow-x: auto; }
+.simpleTable > div {
+  display: grid;
+  grid-template-columns: repeat(var(--table-columns, 3), minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
 .simpleTable > div:last-child { border-bottom: 0; }
-.simpleTable span, .simpleTable strong { padding: 9px 12px; border-right: 1px solid var(--line); }
+.simpleTable span, .simpleTable strong { min-width: 0; padding: 9px 12px; border-right: 1px solid var(--line); overflow-wrap: anywhere; }
 .simpleTable span:last-child { border-right: 0; }
 .simpleTable .tableHead { background: var(--accent); color: white; font-weight: 700; }
+.namuLead .simpleTable { margin: 0 auto 14px; width: min(720px, 100%); }
 .profileHistory {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -336,7 +341,7 @@ button, input, select { font: inherit; }
   .flag { font-size: 16px; }
   .accentQuote, .accentBox { border-left-width: 12px; padding: 13px 14px; }
   .simpleTable { font-size: 12px; overflow-x: auto; }
-  .simpleTable > div { min-width: 500px; }
+  .simpleTable > div { min-width: max(500px, calc(var(--table-columns, 3) * 120px)); }
   .profileHistory { grid-template-columns: repeat(2, 1fr); }
   .profileHistory div { min-height: 110px; }
   .floatingNav { right: 15px; bottom: 18px; }
