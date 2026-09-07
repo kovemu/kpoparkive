@@ -163,6 +163,16 @@ button, input, select { font: inherit; }
 .pill { display: inline-block; border-radius: 4px; padding: 1px 6px; border: 1px solid currentColor; }
 .pill.pink { color: #d52e83; background: #fff6fa; }
 
+.memberLead { display: flex; justify-content: flex-end; margin: 0 0 24px; }
+.memberLeadPhotoWrap {
+  width: min(360px, 100%);
+  margin: 0;
+  border: 2px solid var(--accent);
+  background: #f7f7f8;
+}
+.memberLeadPhoto { display: block; width: 100%; max-height: 540px; object-fit: cover; }
+.memberLeadPhotoWrap figcaption { padding: 7px 10px; color: var(--muted); font-size: 12px; border-top: 1px solid #e2e5e9; }
+
 .toc {
   width: 310px;
   max-width: 100%;
@@ -218,11 +228,13 @@ button, input, select { font: inherit; }
   aspect-ratio: .78;
   display: grid;
   place-items: center;
+  overflow: hidden;
   background: linear-gradient(145deg, #efe4ed, #f9f0f6 45%, #ded7de);
   color: #66515f;
   font-size: clamp(28px, 5vw, 54px);
   font-weight: 800;
 }
+.memberPortrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .memberName {
   display: block;
   background: var(--accent);
@@ -313,6 +325,8 @@ button, input, select { font: inherit; }
   .leadCopy { order: 2; }
   .infobox { order: 1; width: min(100%, 410px); margin: 0 auto; }
   .facts > div { grid-template-columns: 90px 1fr; }
+  .memberLead { justify-content: center; }
+  .memberLeadPhotoWrap { width: min(100%, 360px); }
   .toc { margin-top: 22px; }
   .sectionTitle { font-size: 24px; padding-right: 57px; margin-top: 28px; }
   .editLink { font-size: 11px; }
