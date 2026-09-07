@@ -2,6 +2,7 @@ export type ParsedBlockV4 =
   | { type: "paragraph"; text: string }
   | { type: "list"; items: string[] }
   | { type: "table"; columns: string[]; rows: string[][] }
+  | { type: "related"; label: string; target: string }
   | { type: "image"; source_ref: string; url?: string; alt?: string; role?: string }
   | { type: "video"; provider: string; url: string; video_id?: string; label?: string }
   | { type: "internal-link"; target: string; label: string }
@@ -28,18 +29,36 @@ function decodeEntities(value: string) {
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
-function stripTags(value: string) {
-  return decodeEntities(value)
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
+function cleanWikiSyntax(value: string) {
+  let text = decodeEntities(value);
+  text = text
     .replace(/\[age\([^\]]+\)\](?:세)?/gi, "")
+    .replace(/\[dday\([^\]]+\)\]/gi, "")
+    .replace(/\[br\]/gi, " ")
     .replace(/\[\[파일:[^\]]+\]\]/gi, " ")
     .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/\{\{\{#!if\s+출력\s*==\s*null\s+([^{}]+)\}\}\}/gi, "$1")
+    .replace(/#!if\s+[^\n{}]+/gi, " ")
+    .replace(/\{\{\{#!wiki\s+(?:style|class|tag)=(?:"[^"]*"|'[^']*'|[^\s{}]+)\s*/gi, " ")
+    .replace(/\{\{\{#!folding\s+[^\n{}]*\s*/gi, " ")
+    .replace(/\{\{\{\+\d+\s*/g, " ")
+    .replace(/\}\}\}/g, " ")
+    .replace(/'{2,5}/g, "")
+    .replace(/\s*\|\|\s*/g, " | ")
     .replace(/\s+/g, " ")
     .trim();
+  return text;
+}
+
+function stripTags(value: string) {
+  return cleanWikiSyntax(
+    value
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  );
 }
 
 function cleanHeading(value: string) {
@@ -116,8 +135,9 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
     const alt = candidate.html.match(/alt=["']([^"']*)["']/i)?.[1];
     if (!src) return null;
     const url = normalizeImageUrl(src);
-    if (!/^https?:\/\//i.test(url) || /cc-by-nc-sa-2\.0-88x31\.png/i.test(url)) return null;
-    return { type: "image", source_ref: url, url, alt: alt ? decodeEntities(alt) : undefined };
+    const cleanAlt = alt ? decodeEntities(alt) : undefined;
+    if (!/^https?:\/\//i.test(url) || /cc-by-nc-sa-2\.0-88x31\.png/i.test(url) || /상세 내용 아이콘/i.test(cleanAlt || "")) return null;
+    return { type: "image", source_ref: url, url, alt: cleanAlt };
   }
   if (candidate.kind === "iframe") {
     const src = candidate.html.match(/src=["']([^"']+)["']/i)?.[1];
@@ -133,7 +153,11 @@ function parseCandidate(candidate: Candidate): ParsedBlockV4 | null {
     const raw = href.replace(/^https?:\/\/(?:www\.)?namu\.moe\/w\//i, "").replace(/^\/w\//, "").split(/[?#]/)[0];
     let target = raw;
     try { target = decodeURIComponent(raw); } catch {}
+    if (target === "@문서명@" && label.includes("/")) target = label;
     if (!target || target.startsWith("파일:") || target.startsWith("분류:")) return null;
+    if (/^자세한 내용은|문서 참고/.test(label) || (label.includes("/") && /상세 내용 아이콘/.test(candidate.html))) {
+      return { type: "related", label: "Detailed article", target };
+    }
     return { type: "internal-link", target, label };
   }
   if (/^https?:\/\//i.test(href)) return { type: "external-link", url: decodeEntities(href), label };
@@ -147,7 +171,7 @@ function textBetween(fragment: string, start: number, end: number) {
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
   const text = stripTags(raw);
   if (!text || text.length < 12) return null;
-  if (/^(#!wiki|#!if|\{\{\{|\}\}\})/.test(text)) return null;
+  if (/^(#!wiki|#!if|\{\{\{|\}\}\})/.test(text) || /^문서 참고하십시오/.test(text)) return null;
   return { type: "paragraph" as const, text };
 }
 
@@ -180,28 +204,46 @@ function articleHtml(html: string) {
   return html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] || html;
 }
 
+function fallbackFileImages(fragment: string, existing: ParsedBlockV4[]) {
+  const hasVisualImage = existing.some((block) => block.type === "image");
+  if (hasVisualImage) return existing;
+  const seen = new Set<string>();
+  const fileBlocks: ParsedBlockV4[] = [];
+  for (const match of fragment.matchAll(/(?:\[\[)?파일:([^|\]\n<]+)/gi)) {
+    const name = cleanWikiSyntax(match[1]).replace(/["'][\s\S]*$/, "").trim();
+    if (!name || name.length > 180 || /상세 내용 아이콘|국기\.svg|유튜브 아이콘|틱톡 아이콘/i.test(name)) continue;
+    const ref = `파일:${name}`;
+    if (seen.has(ref)) continue;
+    seen.add(ref);
+    fileBlocks.push({ type: "image", source_ref: ref, alt: name });
+  }
+  return fileBlocks.length ? [...existing, ...fileBlocks] : existing;
+}
+
 export function parseNamuHtmlV4(html: string): ParsedSectionV4[] {
   const article = articleHtml(html);
   const headings = [...article.matchAll(/<h([2-4])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
   const sections: ParsedSectionV4[] = [];
 
   const firstHeadingStart = headings[0]?.index ?? article.length;
-  const lead = parseOrderedBlocks(article.slice(0, firstHeadingStart));
+  const leadFragment = article.slice(0, firstHeadingStart);
+  const lead = fallbackFileImages(leadFragment, parseOrderedBlocks(leadFragment));
   if (lead.length) sections.push({ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: lead });
 
   headings.forEach((match, index) => {
     const start = (match.index ?? 0) + match[0].length;
     const end = index + 1 < headings.length ? (headings[index + 1].index ?? article.length) : article.length;
     const heading = cleanHeading(match[2]) || `Section ${index + 1}`;
+    const fragment = article.slice(start, end);
     sections.push({
       section_key: slugifyHeading(heading, index + 1),
       heading,
       heading_level: Number(match[1]),
       sort_order: (index + 1) * 10,
-      content: parseOrderedBlocks(article.slice(start, end)),
+      content: fallbackFileImages(fragment, parseOrderedBlocks(fragment)),
     });
   });
 
-  if (!sections.length) return [{ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: parseOrderedBlocks(article) }];
+  if (!sections.length) return [{ section_key: "lead", heading: "", heading_level: 1, sort_order: 0, content: fallbackFileImages(article, parseOrderedBlocks(article)) }];
   return sections;
 }
