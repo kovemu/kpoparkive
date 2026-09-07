@@ -43,6 +43,29 @@ export default function NamuImportPage() {
     return result;
   }
 
+  async function localizeBatch(force = false) {
+    const response = await fetch("/api/admin/namu-localize", {
+      method: "POST",
+      headers: commonHeaders,
+      body: JSON.stringify({ rootTitle, batchSize: 4, force }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Localization failed");
+    return result;
+  }
+
+  async function localizeAll() {
+    const batches = [];
+    for (let i = 0; i < 60; i += 1) {
+      setStatus(`Localizing batch ${i + 1}...`);
+      const result = await localizeBatch(false);
+      batches.push(result);
+      if (result.errors?.length) throw new Error(result.errors.map((item: { title: string; error: string }) => `${item.title}: ${item.error}`).join("\n"));
+      if (!result.remaining) return { batches, final: result };
+    }
+    throw new Error("Localization stopped after 60 batches to avoid an accidental infinite loop.");
+  }
+
   async function runImport() {
     setBusy(true);
     setStatus("Crawling mirror document graph...");
@@ -69,14 +92,29 @@ export default function NamuImportPage() {
     }
   }
 
+  async function runLocalize() {
+    setBusy(true);
+    setStatus("Translating parsed documents and generating Kpoparkive drafts...");
+    try {
+      const result = await localizeAll();
+      setStatus(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Localization failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runAll() {
     setBusy(true);
     try {
-      setStatus("Step 1/2: crawling document graph...");
+      setStatus("Step 1/3: crawling document graph...");
       const importResult = await crawl();
-      setStatus(`Step 1/2 complete: ${importResult.fetched} documents fetched.\nStep 2/2: parsing structure...`);
+      setStatus(`Step 1/3 complete: ${importResult.fetched} documents fetched.\nStep 2/3: parsing structure...`);
       const parseResult = await parse(true);
-      setStatus(JSON.stringify({ import: importResult, parse: parseResult }, null, 2));
+      setStatus(`Step 2/3 complete: ${parseResult.parsed} documents parsed.\nStep 3/3: translating and generating drafts...`);
+      const localizeResult = await localizeAll();
+      setStatus(JSON.stringify({ import: importResult, parse: parseResult, localize: localizeResult }, null, 2));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Pipeline failed");
     } finally {
@@ -88,16 +126,17 @@ export default function NamuImportPage() {
     <main className="adminShell">
       <section className="adminPanel">
         <h1>Namu mirror importer</h1>
-        <p className="adminIntro">Crawl a group document graph, preserve the source snapshots, then convert them into structured sections for translation and Kpoparkive rendering.</p>
+        <p className="adminIntro">Crawl a group document graph, preserve the source, parse the wiki structure, translate it to English, and generate reviewable Kpoparkive draft documents.</p>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} /></label>
           <label>Root document<input value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} /></label>
           <label>Max depth<input type="number" min={0} max={4} value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
           <label>Max documents<input type="number" min={1} max={200} value={maxDocuments} onChange={(e) => setMaxDocuments(Number(e.target.value))} /></label>
           <label>Extra exact titles (one per line)<textarea rows={7} value={includeTitles} onChange={(e) => setIncludeTitles(e.target.value)} /></label>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runAll}>{busy ? "Working..." : "Import + parse document graph"}</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runAll}>{busy ? "Working..." : "Full pipeline: crawl → parse → English drafts"}</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>Crawl only</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>Re-parse stored snapshots</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runLocalize}>Translate + generate drafts</button>
         </div>
         <pre className="adminStatus">{status}</pre>
       </section>
