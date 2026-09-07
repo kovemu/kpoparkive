@@ -8,7 +8,7 @@ import {
 } from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v5-image-alt-normalized";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v6-layout-semantics";
 
 export type NamuRenderManifest = {
   version: string;
@@ -31,6 +31,7 @@ export type NamuRenderManifest = {
     renderNormalizedCodeBlocks: number;
     expandedIncludeResiduesRepaired: number;
     bareImageAltsNormalized: number;
+    floatClassesAnnotated: number;
   };
 };
 
@@ -107,6 +108,35 @@ function normalizeBareImageAltsForRender(html: string) {
   return { html: output, repaired };
 }
 
+function withSemanticClass(tag: string, className: string) {
+  if (/\bclass\s*=\s*(["'])/i.test(tag)) {
+    return tag.replace(/\bclass\s*=\s*(["'])([\s\S]*?)\1/i, (_match, quote: string, classes: string) => {
+      const tokens = classes.split(/\s+/).filter(Boolean);
+      if (!tokens.includes(className)) tokens.push(className);
+      return `class=${quote}${tokens.join(" ")}${quote}`;
+    });
+  }
+  return tag.replace(/>$/, ` class="${className}">`);
+}
+
+/**
+ * The DOM renderer intentionally sanitizes inline styles and does not pass the
+ * CSS float property through React. Preserve the source layout intent as a safe
+ * semantic class in the derived artifact instead. This restores Namu infoboxes
+ * and other floated side tables without relaxing the renderer's style policy.
+ */
+function annotateFloatClassesForRender(html: string) {
+  let repaired = 0;
+  const output = String(html || "").replace(/<[a-z][a-z0-9-]*\b[^>]*>/gi, (tag) => {
+    const style = tag.match(/\bstyle\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
+    const direction = style.match(/(?:^|;)\s*float\s*:\s*(left|right)\b/i)?.[1]?.toLowerCase();
+    if (direction !== "left" && direction !== "right") return tag;
+    repaired += 1;
+    return withSemanticClass(tag, `namu-float-${direction}`);
+  });
+  return { html: output, repaired };
+}
+
 export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArtifact {
   const rawArticleHtml = extractExactArticleHtml(html || "");
   const rawBundle = extractMirrorRawBundle(html || "");
@@ -126,10 +156,14 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   const includeNormalized = repairExpandedIncludeResiduesForRender(renderNormalized.html);
 
   // Phase 4: make bare mirror image alts canonical Namu file references in the
-  // derived artifact. This is importer-wide and lets pending/enriched assets be
-  // displayed immediately instead of falling through to broken namu.moe URLs.
+  // derived artifact. This is importer-wide and lets enriched assets participate
+  // in the exact same filename resolution path as canonical Namu file links.
   const imageAltNormalized = normalizeBareImageAltsForRender(includeNormalized.html);
-  const articleHtml = imageAltNormalized.html;
+
+  // Phase 5: retain layout semantics that the renderer deliberately removes from
+  // raw inline CSS. The class is safe, importer-owned, and reusable across groups.
+  const floatAnnotated = annotateFloatClassesForRender(imageAltNormalized.html);
+  const articleHtml = floatAnnotated.html;
 
   const rawAnalyses = rawBundle.segments
     .filter((segment) => segment.type === "raw")
@@ -139,6 +173,7 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
     renderNormalizedCodeBlocks: renderNormalized.normalizedBlocks,
     expandedIncludeResiduesRepaired: includeNormalized.repaired,
     bareImageAltsNormalized: imageAltNormalized.repaired,
+    floatClassesAnnotated: floatAnnotated.repaired,
   };
 
   const root = parse(articleHtml);
