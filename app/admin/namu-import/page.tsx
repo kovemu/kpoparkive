@@ -76,6 +76,17 @@ export default function NamuImportPage() {
     return { batches, processed: totalProcessed, resolved: totalResolved, skipped: totalSkipped, unresolved, remaining };
   }
 
+  async function hydrateDrafts() {
+    const response = await fetch("/api/admin/namu-hydrate", {
+      method: "POST",
+      headers: commonHeaders,
+      body: JSON.stringify({ rootTitle }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Draft hydration failed");
+    return result;
+  }
+
   async function runImportAndParse() {
     setBusy(true);
     try {
@@ -115,11 +126,19 @@ export default function NamuImportPage() {
     finally { setBusy(false); }
   }
 
+  async function runHydrateDrafts() {
+    setBusy(true);
+    setStatus("Applying resolved media and links to translated draft pages...");
+    try { setStatus(JSON.stringify(await hydrateDrafts(), null, 2)); }
+    catch (error) { setStatus(error instanceof Error ? error.message : "Draft hydration failed"); }
+    finally { setBusy(false); }
+  }
+
   return (
     <main className="adminShell">
       <section className="adminPanel">
         <h1>Namu mirror importer</h1>
-        <p className="adminIntro">Enter only the root group document. The importer discovers closely related documents, rebuilds a rich document AST, resolves available media, and classifies Namu internal links so generic/date/background links do not expand the Kpoparkive graph. ChatGPT can attach web-search replacements to unresolved images.</p>
+        <p className="adminIntro">Enter only the root group document. The importer discovers closely related documents, rebuilds a rich document AST, resolves available media, and classifies Namu internal links so generic/date/background links do not expand the Kpoparkive graph. Resolved media is applied to translated drafts automatically during localization, or can be refreshed below.</p>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" /><small>Saved only in this browser after you enter it once.</small></label>
           <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
@@ -130,6 +149,7 @@ export default function NamuImportPage() {
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>Crawl only</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>Re-parse + rebuild asset queue</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>Retry enrichment + classify links</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runHydrateDrafts}>Apply resolved assets to drafts</button>
         </div>
         <pre className="adminStatus">{status}</pre>
       </section>
