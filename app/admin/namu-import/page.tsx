@@ -25,7 +25,7 @@ export default function NamuImportPage() {
   }, [adminKey]);
 
   const commonHeaders = { "Content-Type": "application/json", "x-admin-key": adminKey };
-  const hybridPreviewHref = `/admin/namu-hybrid-preview/${encodeURIComponent(rootTitle)}`;
+  const rawPreviewHref = `/admin/namu-raw-preview/${encodeURIComponent(rootTitle)}`;
 
   function forgetAdminKey() {
     try { window.localStorage.removeItem(ADMIN_KEY_STORAGE); } catch {}
@@ -54,7 +54,7 @@ export default function NamuImportPage() {
       body: JSON.stringify({ rootTitle, force }),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "RAW/Hybrid extraction failed");
+    if (!response.ok) throw new Error(result.error || "DOM/RAW render artifact extraction failed");
     return result;
   }
 
@@ -102,28 +102,28 @@ export default function NamuImportPage() {
   async function runImportAndParse() {
     setBusy(true);
     try {
-      setStatus("Step 1/4: crawling and auto-discovering the K-pop document graph...");
+      setStatus("Step 1/4: crawling graph and capturing raw_html + article DOM skeleton + RAW fragments + template CSS + rendered media map...");
       const importResult = await crawl();
 
-      setStatus(`Step 1/4 complete: ${importResult.fetched} documents fetched, ${importResult.autoDiscovered ?? 0} related documents auto-discovered.\nStep 2/4: rebuilding compatibility AST and baseline asset queue...`);
+      setStatus(`Step 1/4 complete: ${importResult.fetched} documents fetched, ${importResult.templateStyles ?? 0} template style blocks captured, ${importResult.renderedFiles ?? 0} rendered files mapped, ${importResult.clusterAssetHints ?? 0} cluster asset hints connected.\nStep 2/4: rebuilding the compatibility/localization AST without deleting importer artifacts...`);
       const parseResult = await parse(true);
 
-      // RAW recovery intentionally runs AFTER the compatibility parser because
-      // namu-process rebuilds the asset queue. This lets raw-only image refs and
-      // linked-document hints augment the queue instead of being deleted by it.
-      setStatus(`Step 2/4 complete: ${parseResult.totalQueuedAssets ?? 0} baseline asset references queued.\nStep 3/4: recovering source-order RAW/Hybrid Namu syntax...`);
-      const rawResult = await extractRaw(true);
+      // Newly imported documents already contain canonical DOM/RAW artifacts.
+      // This pass is intentionally non-forced: it upgrades legacy rows from old
+      // imports while leaving current v6 artifacts untouched.
+      setStatus(`Step 2/4 complete: ${parseResult.totalQueuedAssets ?? 0} missing compatibility references added without replacing importer assets.\nStep 3/4: backfilling legacy DOM/RAW render artifacts where needed...`);
+      const rawResult = await extractRaw(false);
 
-      setStatus(`Step 3/4 complete: ${rawResult.rawBlocks ?? 0} raw blocks recovered, ${rawResult.queuedImages ?? 0} raw-only images added, estimated RAW coverage ${rawResult.estimatedRawCoverage ?? 0}%.\nStep 4/4: resolving images/videos and classifying links...`);
+      setStatus(`Step 3/4 complete: ${rawResult.extracted ?? 0} legacy documents upgraded, ${rawResult.rawBlocks ?? 0} raw blocks recovered, ${rawResult.styleBlocks ?? 0} style blocks captured, ${rawResult.clusterAssetHints ?? 0} cluster media hints connected.\nStep 4/4: resolving images/videos and classifying links...`);
       const assetResult = await resolveAssets(false);
 
       setStatus(JSON.stringify({
         import: importResult,
         compatibilityParse: parseResult,
-        rawHybrid: rawResult,
+        domRawBackfill: rawResult,
         assets: assetResult,
-        preview: hybridPreviewHref,
-        next: "Reusable import complete. Hybrid RAW is canonical for visual reconstruction; compatibility AST remains only for the current localization/draft path.",
+        preview: rawPreviewHref,
+        next: "Reusable import complete. Rendered DOM is the layout skeleton; RAW Namu fragments provide unresolved semantics; template CSS and cluster media mappings are captured by the importer.",
       }, null, 2));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Pipeline failed");
@@ -132,7 +132,7 @@ export default function NamuImportPage() {
 
   async function runImport() {
     setBusy(true);
-    setStatus("Crawling mirror document graph with automatic relation discovery...");
+    setStatus("Crawling mirror graph and capturing DOM skeleton + RAW + template CSS + media maps...");
     try { setStatus(JSON.stringify(await crawl(), null, 2)); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Import failed"); }
     finally { setBusy(false); }
@@ -140,7 +140,7 @@ export default function NamuImportPage() {
 
   async function runParse() {
     setBusy(true);
-    setStatus("Rebuilding compatibility AST and baseline asset queue...");
+    setStatus("Rebuilding compatibility/localization AST without replacing importer-owned assets...");
     try { setStatus(JSON.stringify(await parse(true), null, 2)); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Parse failed"); }
     finally { setBusy(false); }
@@ -148,9 +148,9 @@ export default function NamuImportPage() {
 
   async function runRawExtract() {
     setBusy(true);
-    setStatus("Recovering source-order RAW/Hybrid syntax and augmenting raw-only image references...");
+    setStatus("Rebuilding DOM skeleton + RAW fragments + template CSS + render manifest for this imported cluster...");
     try { setStatus(JSON.stringify(await extractRaw(true), null, 2)); }
-    catch (error) { setStatus(error instanceof Error ? error.message : "RAW/Hybrid extraction failed"); }
+    catch (error) { setStatus(error instanceof Error ? error.message : "DOM/RAW artifact extraction failed"); }
     finally { setBusy(false); }
   }
 
@@ -174,18 +174,18 @@ export default function NamuImportPage() {
     <main className="adminShell">
       <section className="adminPanel">
         <h1>Namu mirror importer</h1>
-        <p className="adminIntro">This is the reusable document pipeline, not a RESCENE-only tool. Enter a root K-pop document and the importer crawls its bounded relation graph, rebuilds the legacy compatibility AST, recovers the source-order RAW/Hybrid representation, augments raw-only media references, and resolves assets. The Hybrid RAW representation is now the canonical input for Namu-faithful rendering.</p>
+        <p className="adminIntro">Reusable K-pop mirror pipeline. A root document import now preserves the untouched snapshot, rendered article DOM skeleton, unsupported RAW Namu fragments, template CSS, table/TOC/float diagnostics, and rendered filename mappings. Media hints are shared across the imported group cluster. The old DOM parser remains only as a non-destructive compatibility/localization AST.</p>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" /><small>Saved only in this browser after you enter it once.</small></label>
           <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
           <label>Root document<input value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} /></label>
           <label>Max depth<input type="number" min={0} max={4} value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
           <label>Max documents<input type="number" min={1} max={200} value={maxDocuments} onChange={(e) => setMaxDocuments(Number(e.target.value))} /></label>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : "Run reusable RAW/Hybrid import pipeline"}</button>
-          <a href={hybridPreviewHref} target="_blank" rel="noreferrer">Open Hybrid preview</a>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>1. Crawl only</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : "Run DOM + RAW mirror import pipeline"}</button>
+          <a href={rawPreviewHref} target="_blank" rel="noreferrer">Open DOM/RAW preview</a>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>1. Crawl + capture render artifacts</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>2. Rebuild compatibility AST</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runRawExtract}>3. Rebuild RAW/Hybrid source</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runRawExtract}>3. Force rebuild DOM/RAW artifacts</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>4. Retry asset resolution</button>
           <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runHydrateDrafts}>Apply resolved assets to translated drafts</button>
         </div>
