@@ -47,6 +47,26 @@ function enqueueCandidate(queue: QueueItem[], queued: Set<string>, seen: Set<str
   queue.push({ title: candidate.title, depth, relationScore: candidate.score, relationReason: candidate.reason });
 }
 
+function usefulRawTarget(value: string, rootTitle: string) {
+  const title = value.normalize("NFKC").replace(/#.*$/, "").trim();
+  if (!title || title === rootTitle) return "";
+  if (/^(?:틀|Template|파일|File|분류|Category):/i.test(title)) return "";
+  if (/^https?:\/\//i.test(title)) return "";
+  return title;
+}
+
+function enqueueRawFileTargets(queue: QueueItem[], queued: Set<string>, seen: Set<string>, fileTargetMap: Record<string, string>, rootTitle: string, depth: number) {
+  let added = 0;
+  for (const targetValue of new Set(Object.values(fileTargetMap))) {
+    const title = usefulRawTarget(targetValue, rootTitle);
+    if (!title || seen.has(title) || queued.has(title)) continue;
+    queued.add(title);
+    queue.push({ title, depth, relationScore: 96, relationReason: "raw-image-link-target" });
+    added += 1;
+  }
+  return added;
+}
+
 function rawImageRef(file: string) {
   return `파일:${file.trim()}`;
 }
@@ -127,6 +147,7 @@ export async function POST(request: Request) {
     let errorCount = 0;
     let skippedCount = 0;
     let autoDiscoveredCount = 0;
+    let rawImageTargetCount = 0;
 
     while (queue.length && seen.size < maxDocuments) {
       queue.sort((a, b) => b.relationScore - a.relationScore || a.depth - b.depth);
@@ -199,6 +220,13 @@ export async function POST(request: Request) {
             }
           }
 
+          // The root navigation often wraps an exact file reference in a link to
+          // the album/member document that renders that file. Fetch those targets
+          // early so the same import run can populate the cluster asset map.
+          if (current.depth === 0) {
+            rawImageTargetCount += enqueueRawFileTargets(queue, queued, seen, rawBundle.fileTargetMap, rootTitle, current.depth + 1);
+          }
+
           for (const candidate of snapshot.relationCandidates) {
             if (candidate.title === rootTitle) continue;
             const wasKnown = seen.has(candidate.title) || queued.has(candidate.title);
@@ -237,6 +265,8 @@ export async function POST(request: Request) {
           documents: results,
           auto_relation_discovery: true,
           auto_discovered_count: autoDiscoveredCount,
+          raw_image_target_discovery: true,
+          raw_image_target_count: rawImageTargetCount,
           canonical_raw_on_import: true,
           extraction_version: EXTRACTION_VERSION,
           includePrefixes,
@@ -255,6 +285,7 @@ export async function POST(request: Request) {
       errors: errorCount,
       skipped: skippedCount,
       autoDiscovered: autoDiscoveredCount,
+      rawImageTargets: rawImageTargetCount,
       rawBlocks: fetchedResults.reduce((sum, row) => sum + row.rawBlocks, 0),
       queuedImages: fetchedResults.reduce((sum, row) => sum + row.queuedImages, 0),
       documents: results,
