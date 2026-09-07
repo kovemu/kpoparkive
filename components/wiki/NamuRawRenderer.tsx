@@ -42,6 +42,11 @@ function findAsset(assets: AssetMap, file: string) {
   return undefined;
 }
 
+function nestedInlineChildren(node: NamuInline): NamuInline[] | undefined {
+  if (node.type === "link" || node.type === "footnote" || node.type === "strong" || node.type === "em" || node.type === "size" || node.type === "color" || node.type === "span") return node.children;
+  return undefined;
+}
+
 function collectFootnotes(nodes: NamuRawNode[]): FootnoteRegistry {
   const numbers = new Map<NamuInline, number>();
   const entries: FootnoteEntry[] = [];
@@ -49,15 +54,17 @@ function collectFootnotes(nodes: NamuRawNode[]): FootnoteRegistry {
 
   const visitInline = (inlineNodes: NamuInline[]) => {
     for (const node of inlineNodes) {
-      if (node.type !== "footnote") continue;
-      let number = node.id ? named.get(node.id) : undefined;
-      if (!number) {
-        number = entries.length + 1;
-        entries.push({ number, id: node.id, children: node.children });
-        if (node.id) named.set(node.id, number);
+      if (node.type === "footnote") {
+        let number = node.id ? named.get(node.id) : undefined;
+        if (!number) {
+          number = entries.length + 1;
+          entries.push({ number, id: node.id, children: node.children });
+          if (node.id) named.set(node.id, number);
+        }
+        numbers.set(node, number);
       }
-      numbers.set(node, number);
-      visitInline(node.children);
+      const children = nestedInlineChildren(node);
+      if (children?.length) visitInline(children);
     }
   };
 
@@ -74,16 +81,113 @@ function collectFootnotes(nodes: NamuRawNode[]): FootnoteRegistry {
   return { numbers, entries };
 }
 
+const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
+  "display": "display",
+  "justify-content": "justifyContent",
+  "align-items": "alignItems",
+  "gap": "gap",
+  "text-align": "textAlign",
+  "background": "background",
+  "background-color": "backgroundColor",
+  "color": "color",
+  "width": "width",
+  "max-width": "maxWidth",
+  "min-width": "minWidth",
+  "height": "height",
+  "min-height": "minHeight",
+  "margin": "margin",
+  "margin-left": "marginLeft",
+  "margin-right": "marginRight",
+  "margin-top": "marginTop",
+  "margin-bottom": "marginBottom",
+  "padding": "padding",
+  "padding-left": "paddingLeft",
+  "padding-right": "paddingRight",
+  "padding-top": "paddingTop",
+  "padding-bottom": "paddingBottom",
+  "border": "border",
+  "border-left": "borderLeft",
+  "border-right": "borderRight",
+  "border-top": "borderTop",
+  "border-bottom": "borderBottom",
+  "border-radius": "borderRadius",
+  "font": "font",
+  "font-family": "fontFamily",
+  "font-size": "fontSize",
+  "font-weight": "fontWeight",
+  "line-height": "lineHeight",
+  "white-space": "whiteSpace",
+  "word-break": "wordBreak",
+  "overflow": "overflow",
+};
+
+function safeWikiStyle(args: string): React.CSSProperties | undefined {
+  const styleSource = args.match(/\bstyle\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bstyle\s*=\s*'([^']*)'/i)?.[1];
+  if (!styleSource) return undefined;
+  const output: Record<string, string> = {};
+  for (const declaration of styleSource.split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const reactProperty = SAFE_STYLE_PROPERTIES[property];
+    if (!reactProperty) continue;
+    const value = declaration.slice(separator + 1).trim();
+    if (!value || /url\s*\(|expression\s*\(|javascript:|[<>]/i.test(value)) continue;
+    output[String(reactProperty)] = value;
+  }
+  return Object.keys(output).length ? output as React.CSSProperties : undefined;
+}
+
+function directiveClass(args: string) {
+  const value = args.match(/\bclass\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bclass\s*=\s*'([^']*)'/i)?.[1];
+  if (!value || !/^[a-z0-9_ -]+$/i.test(value)) return undefined;
+  return value.trim() || undefined;
+}
+
+function safeInlineColor(value: string) {
+  if (/^#[0-9a-f]{3,8}$/i.test(value)) return value;
+  if (/^[a-z][a-z0-9-]{1,30}$/i.test(value)) return value;
+  return undefined;
+}
+
+function sizeStyle(level: number): React.CSSProperties {
+  const scale: Record<number, string> = {
+    [-5]: "0.5em",
+    [-4]: "0.6em",
+    [-3]: "0.7em",
+    [-2]: "0.8em",
+    [-1]: "0.9em",
+    [0]: "1em",
+    [1]: "1.2em",
+    [2]: "1.4em",
+    [3]: "1.6em",
+    [4]: "1.8em",
+    [5]: "2em",
+  };
+  return { fontSize: scale[Math.max(-5, Math.min(5, level))] || "1em", lineHeight: 1.35 };
+}
+
 function Inline({ nodes, assets, footnotes }: { nodes: NamuInline[]; assets: AssetMap; footnotes: FootnoteRegistry }) {
   return <>
     {nodes.map((node, index) => {
       if (node.type === "text") return <React.Fragment key={index}>{node.text.split("\n").map((part, line) => <React.Fragment key={line}>{line > 0 && <br />}{part}</React.Fragment>)}</React.Fragment>;
-      if (node.type === "link") return <a key={index} href={internalHref(node.target)} style={{ whiteSpace: "pre-line" }}>{node.label}</a>;
+      if (node.type === "linebreak") return <br key={index} />;
+      if (node.type === "link") return <a key={index} href={internalHref(node.target)} style={{ whiteSpace: "pre-line" }}>{node.children?.length ? <Inline nodes={node.children} assets={assets} footnotes={footnotes} /> : node.label}</a>;
       if (node.type === "footnote") {
         const number = footnotes.numbers.get(node);
         if (!number) return null;
         return <sup key={index} id={`fnref-${number}`} className={styles.footnoteRef}><a href={`#fn-${number}`}>[{number}]</a></sup>;
       }
+      if (node.type === "strong") return <strong key={index}><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></strong>;
+      if (node.type === "em") return <em key={index}><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></em>;
+      if (node.type === "size") return <span key={index} style={sizeStyle(node.level)}><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></span>;
+      if (node.type === "color") return <span key={index} style={{ color: safeInlineColor(node.color) }}><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></span>;
+      if (node.type === "span") {
+        const sourceClass = directiveClass(node.args);
+        return <span key={index} className={sourceClass} style={safeWikiStyle(node.args)}><Inline nodes={node.children} assets={assets} footnotes={footnotes} /></span>;
+      }
+      if (node.type === "code") return <code key={index}>{node.text}</code>;
+
       const file = normalizeFileRef(node.file);
       const url = findAsset(assets, file);
       if (url) return <img key={index} src={url} alt={file} loading="lazy" style={imageStyle(node.width, node.height)} />;
@@ -134,62 +238,6 @@ function sourceTableClass(meta?: NamuRawTableMeta) {
     .map((token) => token.trim())
     .filter((token) => /^[a-z0-9_-]+$/i.test(token));
   return tokens.length ? tokens.join(" ") : undefined;
-}
-
-const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
-  "text-align": "textAlign",
-  "background": "background",
-  "background-color": "backgroundColor",
-  "color": "color",
-  "width": "width",
-  "max-width": "maxWidth",
-  "min-width": "minWidth",
-  "height": "height",
-  "min-height": "minHeight",
-  "margin": "margin",
-  "margin-left": "marginLeft",
-  "margin-right": "marginRight",
-  "margin-top": "marginTop",
-  "margin-bottom": "marginBottom",
-  "padding": "padding",
-  "padding-left": "paddingLeft",
-  "padding-right": "paddingRight",
-  "padding-top": "paddingTop",
-  "padding-bottom": "paddingBottom",
-  "border": "border",
-  "border-left": "borderLeft",
-  "border-right": "borderRight",
-  "border-top": "borderTop",
-  "border-bottom": "borderBottom",
-  "font-size": "fontSize",
-  "font-weight": "fontWeight",
-  "line-height": "lineHeight",
-  "white-space": "whiteSpace",
-  "word-break": "wordBreak",
-  "overflow": "overflow",
-};
-
-function safeWikiStyle(args: string): React.CSSProperties | undefined {
-  const styleSource = args.match(/\bstyle\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bstyle\s*=\s*'([^']*)'/i)?.[1];
-  if (!styleSource) return undefined;
-  const output: Record<string, string> = {};
-  for (const declaration of styleSource.split(";")) {
-    const separator = declaration.indexOf(":");
-    if (separator < 0) continue;
-    const property = declaration.slice(0, separator).trim().toLowerCase();
-    const reactProperty = SAFE_STYLE_PROPERTIES[property];
-    if (!reactProperty) continue;
-    const value = declaration.slice(separator + 1).trim();
-    if (!value || /url\s*\(|expression\s*\(|javascript:|[<>]/i.test(value)) continue;
-    output[String(reactProperty)] = value;
-  }
-  return Object.keys(output).length ? output as React.CSSProperties : undefined;
-}
-
-function directiveClass(args: string) {
-  const value = args.match(/\bclass\s*=\s*"([^"]*)"/i)?.[1] ?? args.match(/\bclass\s*=\s*'([^']*)'/i)?.[1];
-  if (!value || !/^[a-z0-9_ -]+$/i.test(value)) return undefined;
-  return value.trim() || undefined;
 }
 
 function NodeList({ nodes, assets, footnotes }: { nodes: NamuRawNode[]; assets: AssetMap; footnotes: FootnoteRegistry }) {

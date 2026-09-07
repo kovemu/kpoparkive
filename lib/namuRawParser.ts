@@ -1,8 +1,15 @@
 export type NamuInline =
   | { type: "text"; text: string }
-  | { type: "link"; target: string; label: string }
+  | { type: "link"; target: string; label: string; children?: NamuInline[] }
   | { type: "image"; file: string; width?: string; height?: string }
-  | { type: "footnote"; id?: string; children: NamuInline[] };
+  | { type: "footnote"; id?: string; children: NamuInline[] }
+  | { type: "strong"; children: NamuInline[] }
+  | { type: "em"; children: NamuInline[] }
+  | { type: "size"; level: number; children: NamuInline[] }
+  | { type: "color"; color: string; children: NamuInline[] }
+  | { type: "span"; args: string; children: NamuInline[] }
+  | { type: "linebreak" }
+  | { type: "code"; text: string };
 
 export type NamuRawCell = {
   children: NamuInline[];
@@ -145,6 +152,19 @@ function findFootnoteEnd(value: string, start: number) {
   return -1;
 }
 
+function findTripleMacroEnd(value: string, start: number) {
+  let depth = 1;
+  for (let cursor = start + 3; cursor < value.length - 2; cursor += 1) {
+    if (value.slice(cursor, cursor + 3) === "{{{") { depth += 1; cursor += 2; continue; }
+    if (value.slice(cursor, cursor + 3) === "}}}") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+      cursor += 2;
+    }
+  }
+  return -1;
+}
+
 function footnoteFromInner(inner: string): Extract<NamuInline, { type: "footnote" }> | null {
   if (!inner) return null;
   if (/^\s/.test(inner)) {
@@ -156,6 +176,37 @@ function footnoteFromInner(inner: string): Extract<NamuInline, { type: "footnote
   return { type: "footnote", children: parseNamuInline(inner.trim()) };
 }
 
+function inlineMacroFromInner(inner: string): NamuInline[] {
+  const size = inner.match(/^([+-]\d+)\s+([\s\S]*)$/);
+  if (size) {
+    const level = Math.max(-5, Math.min(5, Number(size[1])));
+    return [{ type: "size", level, children: parseNamuInline(size[2]) }];
+  }
+
+  const color = inner.match(/^(#[0-9a-f]{3,8}|[a-z][a-z0-9-]*)\s+([\s\S]*)$/i);
+  if (color) return [{ type: "color", color: color[1], children: parseNamuInline(color[2]) }];
+
+  const directive = inner.match(/^#!([a-z]+)\b([^\n]*)(?:\n([\s\S]*))?$/i);
+  if (directive) {
+    const kind = directive[1].toLowerCase();
+    const args = directive[2].trim();
+    const body = directive[3] || "";
+    if (kind === "html") return [];
+    if (kind === "wiki" || kind === "style") return [{ type: "span", args, children: parseNamuInline(body) }];
+    if (body) return parseNamuInline(body);
+    return [];
+  }
+
+  return [{ type: "code", text: inner }];
+}
+
+function pushInlineText(output: NamuInline[], text: string) {
+  if (!text) return;
+  const previous = output[output.length - 1];
+  if (previous?.type === "text") previous.text += text;
+  else output.push({ type: "text", text });
+}
+
 export function parseNamuInline(source: string): NamuInline[] {
   const value = decodeBasic(source);
   const output: NamuInline[] = [];
@@ -164,23 +215,51 @@ export function parseNamuInline(source: string): NamuInline[] {
   while (cursor < value.length) {
     const linkStart = value.indexOf("[[", cursor);
     const footnoteStart = value.indexOf("[*", cursor);
-    const starts = [linkStart, footnoteStart].filter((position) => position >= 0);
+    const macroStart = value.indexOf("{{{", cursor);
+    const boldStart = value.indexOf("'''", cursor);
+    const italicStart = value.indexOf("''", cursor);
+    const brStart = value.toLowerCase().indexOf("[br]", cursor);
+    const starts = [linkStart, footnoteStart, macroStart, boldStart, italicStart, brStart].filter((position) => position >= 0);
     const start = starts.length ? Math.min(...starts) : -1;
 
     if (start < 0) {
-      const text = stripFormatting(value.slice(cursor));
-      if (text) output.push({ type: "text", text });
+      pushInlineText(output, value.slice(cursor));
       break;
     }
 
-    const before = stripFormatting(value.slice(cursor, start));
-    if (before) output.push({ type: "text", text: before });
+    pushInlineText(output, value.slice(cursor, start));
+
+    if (start === linkStart) {
+      let depth = 1;
+      let end = start + 2;
+      while (end < value.length && depth > 0) {
+        if (value.slice(end, end + 2) === "[[") { depth += 1; end += 2; continue; }
+        if (value.slice(end, end + 2) === "]]" ) { depth -= 1; if (depth === 0) break; end += 2; continue; }
+        end += 1;
+      }
+      if (depth !== 0) {
+        pushInlineText(output, value.slice(start));
+        break;
+      }
+
+      const inner = value.slice(start + 2, end);
+      const image = imageFromInner(inner);
+      if (image) {
+        output.push(image);
+      } else {
+        const pipe = splitTopLevelPipe(inner);
+        const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
+        const labelSource = pipe >= 0 ? inner.slice(pipe + 1) : target;
+        if (target) output.push({ type: "link", target, label: stripFormatting(labelSource) || target, children: parseNamuInline(labelSource) });
+      }
+      cursor = end + 2;
+      continue;
+    }
 
     if (start === footnoteStart) {
       const end = findFootnoteEnd(value, start);
       if (end < 0) {
-        const text = stripFormatting(value.slice(start));
-        if (text) output.push({ type: "text", text });
+        pushInlineText(output, value.slice(start));
         break;
       }
       const footnote = footnoteFromInner(value.slice(start + 2, end));
@@ -189,32 +268,43 @@ export function parseNamuInline(source: string): NamuInline[] {
       continue;
     }
 
-    let depth = 1;
-    let end = start + 2;
-    while (end < value.length && depth > 0) {
-      if (value.slice(end, end + 2) === "[[") { depth += 1; end += 2; continue; }
-      if (value.slice(end, end + 2) === "]]" ) { depth -= 1; if (depth === 0) break; end += 2; continue; }
-      end += 1;
-    }
-    if (depth !== 0) {
-      const text = stripFormatting(value.slice(start));
-      if (text) output.push({ type: "text", text });
-      break;
+    if (start === macroStart) {
+      const end = findTripleMacroEnd(value, start);
+      if (end < 0) {
+        pushInlineText(output, value.slice(start));
+        break;
+      }
+      output.push(...inlineMacroFromInner(value.slice(start + 3, end)));
+      cursor = end + 3;
+      continue;
     }
 
-    const inner = value.slice(start + 2, end);
-    const image = imageFromInner(inner);
-    if (image) {
-      output.push(image);
-    } else {
-      const pipe = splitTopLevelPipe(inner);
-      const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
-      const labelSource = pipe >= 0 ? inner.slice(pipe + 1) : target;
-      const nested = parseNamuInline(labelSource);
-      if (nested.some((node) => node.type === "image")) output.push(...nested);
-      else if (target) output.push({ type: "link", target, label: stripFormatting(labelSource) || target });
+    if (start === boldStart) {
+      const end = value.indexOf("'''", start + 3);
+      if (end >= 0) {
+        output.push({ type: "strong", children: parseNamuInline(value.slice(start + 3, end)) });
+        cursor = end + 3;
+        continue;
+      }
+      pushInlineText(output, "'''");
+      cursor = start + 3;
+      continue;
     }
-    cursor = end + 2;
+
+    if (start === italicStart) {
+      const end = value.indexOf("''", start + 2);
+      if (end >= 0) {
+        output.push({ type: "em", children: parseNamuInline(value.slice(start + 2, end)) });
+        cursor = end + 2;
+        continue;
+      }
+      pushInlineText(output, "''");
+      cursor = start + 2;
+      continue;
+    }
+
+    output.push({ type: "linebreak" });
+    cursor = start + 4;
   }
 
   return output;
