@@ -63,14 +63,14 @@ export default async function NamuHybridPreviewPage({ params }: { params: Promis
     <meta name="robots" content="noindex,nofollow,noarchive" />
     <header className="siteHeader">
       <a className="brand" href="/">Kpoparkive</a>
-      <div className="draftBadge">NAMU HYBRID MIRROR · v1</div>
+      <div className="draftBadge">NAMU HYBRID MIRROR · v2</div>
     </header>
     <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
       <div className="articleHeader">
         <div>
           <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Hybrid mirror › {source.source_title}</div>
           <h1>{source.source_title}</h1>
-          <p>Raw Namu syntax and rendered mirror HTML are parsed in their original source order. Control-only template branches stay stored but are not painted into the article.</p>
+          <p>Raw Namu syntax and rendered mirror HTML stay in source order. Safe template fallbacks and mirror-blank values are recovered only when the same stored document proves a unique match; ambiguous values remain blank.</p>
         </div>
       </div>
 
@@ -79,6 +79,7 @@ export default async function NamuHybridPreviewPage({ params }: { params: Promis
         <Metric label="Raw chunks" value={String(hybrid.rawChunks)} />
         <Metric label="Rendered chunks" value={String(hybrid.renderedChunks)} />
         <Metric label="Skipped controls" value={String(hybrid.skippedControlChunks)} />
+        <Metric label="Recovered values" value={String(hybrid.recoveredValues)} />
         <Metric label="Raw nodes" value={String(hybrid.rawNodes)} />
         <Metric label="Rendered sections" value={String(hybrid.renderedSections)} />
         <Metric label="Mapped images" value={String(Object.keys(assets).length)} />
