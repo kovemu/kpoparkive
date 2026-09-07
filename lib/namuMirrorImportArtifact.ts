@@ -4,10 +4,11 @@ import {
   analyzeNamuRawGrammar,
   mergeNamuRawGrammarAnalyses,
   normalizeNamuRawCodeBlocksForRender,
+  repairExpandedIncludeResiduesForRender,
 } from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v3-grammar-aware";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v4-grammar-aware";
 
 export type NamuRenderManifest = {
   version: string;
@@ -28,6 +29,7 @@ export type NamuRenderManifest = {
   syntaxRepair: NamuMirrorSyntaxRepairReport;
   rawGrammar: ReturnType<typeof mergeNamuRawGrammarAnalyses> & {
     renderNormalizedCodeBlocks: number;
+    expandedIncludeResiduesRepaired: number;
   };
 };
 
@@ -94,7 +96,12 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   // structural boundaries inside its raw code blocks so renderer and importer
   // parse exactly the same Namu grammar. source_wikitext/raw_html remain intact.
   const renderNormalized = normalizeNamuRawCodeBlocksForRender(mirrorNormalized.html);
-  const articleHtml = renderNormalized.html;
+
+  // Phase 3: [include(...)] is Namu control syntax. A partial mirror can leave
+  // the invocation in front of the HTML it already expanded. Remove only that
+  // duplicated control token when a block-level expansion is immediately next.
+  const includeNormalized = repairExpandedIncludeResiduesForRender(renderNormalized.html);
+  const articleHtml = includeNormalized.html;
 
   const rawAnalyses = rawBundle.segments
     .filter((segment) => segment.type === "raw")
@@ -102,6 +109,7 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   const rawGrammar = {
     ...mergeNamuRawGrammarAnalyses(rawAnalyses),
     renderNormalizedCodeBlocks: renderNormalized.normalizedBlocks,
+    expandedIncludeResiduesRepaired: includeNormalized.repaired,
   };
 
   const root = parse(articleHtml);
