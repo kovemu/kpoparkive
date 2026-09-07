@@ -21,7 +21,7 @@ body {
 }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .siteHeader {
   position: sticky;
@@ -104,6 +104,7 @@ button, input { font: inherit; }
   align-items: start;
 }
 .leadCopy p { margin-top: 0; font-size: 16px; }
+.dbBadge { color: var(--muted); font-size: 12px !important; }
 
 .infobox {
   width: 100%;
@@ -141,6 +142,9 @@ button, input { font: inherit; }
   font-weight: 800;
   letter-spacing: 7px;
 }
+.infoboxPhotoWrap { margin: 0; border-bottom: 1px solid var(--accent); background: #f6f6f6; }
+.infoboxPhoto { display: block; width: 100%; height: auto; max-height: 460px; object-fit: cover; }
+.infoboxPhotoWrap figcaption { padding: 7px 10px; color: var(--muted); font-size: 12px; border-top: 1px solid #e2e5e9; }
 .facts { margin: 0; }
 .facts > div { display: grid; grid-template-columns: 110px 1fr; border-bottom: 1px solid #e3e6ea; }
 .facts > div:last-child { border-bottom: 0; }
@@ -285,6 +289,17 @@ button, input { font: inherit; }
 .floatingNav a { display: grid; place-items: center; width: 38px; height: 38px; color: #7b828b; font-size: 20px; }
 .floatingNav a + a { border-top: 1px solid #e1e4e8; }
 
+.adminShell { min-height: 100vh; padding: 40px 18px; }
+.adminPanel { width: min(720px, 100%); margin: 0 auto; padding: 28px; background: white; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 30px rgba(30,40,60,.08); }
+.adminPanel h1 { margin: 4px 0 8px; }
+.adminIntro { margin-top: 0; color: var(--muted); }
+.adminForm { display: grid; gap: 14px; margin-top: 24px; }
+.adminForm label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+.adminForm input, .adminForm select { width: 100%; padding: 10px 11px; border: 1px solid #c7ced8; border-radius: 6px; background: white; color: var(--ink); }
+.adminForm button { margin-top: 4px; padding: 11px 14px; border: 0; border-radius: 6px; background: #222; color: white; font-weight: 700; cursor: pointer; }
+.adminForm button:disabled { opacity: .6; cursor: wait; }
+.adminStatus { margin: 18px 0 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+
 @media (max-width: 800px) {
   .siteHeader { padding: 8px 12px; gap: 12px; }
   .brand { font-size: 19px; }
@@ -311,6 +326,7 @@ button, input { font: inherit; }
   .profileHistory { grid-template-columns: repeat(2, 1fr); }
   .profileHistory div { min-height: 110px; }
   .floatingNav { right: 15px; bottom: 18px; }
+  .adminPanel { padding: 20px; }
 }
 
 @media (max-width: 420px) {
