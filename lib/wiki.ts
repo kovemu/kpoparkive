@@ -42,11 +42,12 @@ export type WikiMedia = {
   sort_order: number;
 };
 
-const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://hukrrzhltiyirtkxmotj.supabase.co";
+const DEFAULT_SUPABASE_URL = "https://hukrrzhltiyirtkxmotj.supabase.co";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_WPR5wzzAKuEaxkiPI7lUjQ_lHzNYq3l";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || DEFAULT_SUPABASE_URL;
 const SUPABASE_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-  "sb_publishable_WPR5wzzAKuEaxkiPI7lUjQ_lHzNYq3l";
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() || DEFAULT_SUPABASE_KEY;
 
 async function supabaseGet<T>(path: string): Promise<T> {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
