@@ -9,6 +9,17 @@ const memberPhotoPaths: Record<string, string> = {
   Zena: "rescene/members/zena/runaway-b.jpg",
 };
 
+const albumCoverPaths: Record<string, string> = {
+  "Re:Scene": "rescene/albums/re-scene.jpg",
+  SCENEDROME: "rescene/albums/scenedrome.jpg",
+  "Glow Up": "rescene/albums/glow-up.jpg",
+  Dearest: "rescene/albums/dearest.jpg",
+  "Heart Drop": "rescene/albums/heart-drop.jpg",
+  "lip bomb": "rescene/albums/lip-bomb.jpg",
+  Runaway: "rescene/albums/runaway.jpg",
+  "Pretty Girl": "rescene/albums/pretty-girl.jpg",
+};
+
 function flagFor(nationality: string) {
   if (nationality === "South Korea") return "🇰🇷";
   if (nationality === "Japan") return "🇯🇵";
@@ -78,6 +89,7 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
         }
 
         if (block.type === "table") {
+          const isReleaseTable = block.columns[0] === "Release";
           return (
             <div className="simpleTable" key={index}>
               <div className="tableHead">
@@ -85,9 +97,26 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
               </div>
               {block.rows.map((row, rowIndex) => (
                 <div key={rowIndex}>
-                  {row.map((cell, cellIndex) => cellIndex === 0
-                    ? <strong key={cellIndex}>{cell}</strong>
-                    : <span key={cellIndex}>{cell}</span>)}
+                  {row.map((cell, cellIndex) => {
+                    if (cellIndex === 0) {
+                      const coverPath = isReleaseTable ? albumCoverPaths[cell] : undefined;
+                      return (
+                        <strong key={cellIndex} style={coverPath ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>
+                          {coverPath && (
+                            <img
+                              src={getStoragePublicUrl(coverPath)}
+                              alt={`${cell} cover`}
+                              width={54}
+                              height={54}
+                              style={{ width: 54, height: 54, objectFit: "cover", flex: "0 0 auto", border: "1px solid #d7dde5" }}
+                            />
+                          )}
+                          <span>{cell}</span>
+                        </strong>
+                      );
+                    }
+                    return <span key={cellIndex}>{cell}</span>;
+                  })}
                 </div>
               ))}
             </div>
