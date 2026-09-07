@@ -4,7 +4,7 @@ import { extractMirrorRawBundle } from "../../../../lib/namuRawSource";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const EXTRACTION_VERSION = "namu-mirror-hybrid-v1";
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v2-segments";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -20,6 +20,10 @@ async function db(path: string, init: RequestInit = {}) {
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+function rawImageRef(file: string) {
+  return `파일:${file.trim()}`;
 }
 
 export async function POST(request: Request) {
@@ -52,12 +56,13 @@ export async function POST(request: Request) {
       renderedCharacters: number;
       estimatedRawCoverage: number;
       fileRefs: number;
+      queuedImages: number;
       internalLinks: number;
     }[] = [];
 
     for (const row of rows) {
       if (!body.force && row.source_extraction_version === EXTRACTION_VERSION && row.raw_extracted_at) {
-        results.push({ title: row.source_title, status: "unchanged", rawBlocks: 0, rawCharacters: 0, renderedCharacters: 0, estimatedRawCoverage: 0, fileRefs: 0, internalLinks: 0 });
+        results.push({ title: row.source_title, status: "unchanged", rawBlocks: 0, rawCharacters: 0, renderedCharacters: 0, estimatedRawCoverage: 0, fileRefs: 0, queuedImages: 0, internalLinks: 0 });
         continue;
       }
 
@@ -67,12 +72,40 @@ export async function POST(request: Request) {
         headers: { Prefer: "return=minimal" },
         body: JSON.stringify({
           source_wikitext: bundle.sourceWikitext || null,
+          source_raw_segments: bundle.segments,
           source_format: EXTRACTION_VERSION,
           source_extraction_version: EXTRACTION_VERSION,
           raw_extracted_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }),
       });
+
+      const existing = await db(
+        `source_asset_queue?source_document_id=eq.${row.id}&asset_type=eq.image&select=source_ref`,
+      ) as { source_ref: string }[];
+      const existingRefs = new Set(existing.map((asset) => asset.source_ref));
+      const imageRows = bundle.fileRefs
+        .map((file) => ({ file, source_ref: rawImageRef(file) }))
+        .filter((asset) => !existingRefs.has(asset.source_ref))
+        .map((asset) => ({
+          source_document_id: row.id,
+          root_title: rootTitle,
+          source_title: row.source_title,
+          asset_type: "image",
+          source_ref: asset.source_ref,
+          label: asset.file,
+          provider: "namu_file",
+          role: "inline",
+          metadata: { filename: asset.file, origin: "raw", extraction_version: EXTRACTION_VERSION },
+        }));
+
+      if (imageRows.length) {
+        await db("source_asset_queue", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(imageRows),
+        });
+      }
 
       results.push({
         title: row.source_title,
@@ -82,6 +115,7 @@ export async function POST(request: Request) {
         renderedCharacters: bundle.renderedCharacters,
         estimatedRawCoverage: bundle.estimatedRawCoverage,
         fileRefs: bundle.fileRefs.length,
+        queuedImages: imageRows.length,
         internalLinks: bundle.internalLinks.length,
       });
     }
@@ -100,6 +134,7 @@ export async function POST(request: Request) {
       unchanged: results.filter((result) => result.status === "unchanged").length,
       rawBlocks: extracted.reduce((sum, result) => sum + result.rawBlocks, 0),
       fileRefs: extracted.reduce((sum, result) => sum + result.fileRefs, 0),
+      queuedImages: extracted.reduce((sum, result) => sum + result.queuedImages, 0),
       internalLinks: extracted.reduce((sum, result) => sum + result.internalLinks, 0),
       estimatedRawCoverage: denominator ? Math.round((weightedRaw / denominator) * 1000) / 10 : 0,
       results,
