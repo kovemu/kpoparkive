@@ -37,6 +37,8 @@ const relatedDocumentSlugs: Record<string, string> = {
   REMINE: "remine", remini: "remini",
 };
 
+type InternalLinkMode = "draft" | "hybrid";
+
 function flagFor(nationality: string) {
   if (nationality === "South Korea") return "🇰🇷";
   if (nationality === "Japan") return "🇯🇵";
@@ -45,6 +47,11 @@ function flagFor(nationality: string) {
 
 function mirrorSlug(target: string) {
   return `mirror-${target.normalize("NFKC").toLowerCase().replace(/\([^)]*\)/g, "").replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "")}`;
+}
+
+function internalDocumentHref(target: string, mode: InternalLinkMode, draftSlug?: string) {
+  if (mode === "hybrid") return `/admin/namu-hybrid-preview/${encodeURIComponent(target)}`;
+  return `/admin/drafts/${draftSlug || mirrorSlug(target)}`;
 }
 
 function namuTarget(url: string) {
@@ -61,9 +68,9 @@ function namuTarget(url: string) {
   try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
-function cellHref(url: string) {
+function cellHref(url: string, mode: InternalLinkMode) {
   const target = namuTarget(url);
-  return target ? `/admin/drafts/${mirrorSlug(target)}` : url;
+  return target ? internalDocumentHref(target, mode) : url;
 }
 
 function normalizedCellText(value: string) {
@@ -78,7 +85,7 @@ function shouldRenderWholeCellText(fallback: string, label?: string, hasImage = 
   return text !== linkLabel;
 }
 
-function renderCellLink(url: string | undefined, label: string | undefined, fallback: string, hasImage = false) {
+function renderCellLink(url: string | undefined, label: string | undefined, fallback: string, hasImage = false, mode: InternalLinkMode = "draft") {
   if (!url) return fallback;
   const target = namuTarget(url);
   const rawText = label || fallback;
@@ -87,13 +94,13 @@ function renderCellLink(url: string | undefined, label: string | undefined, fall
   const text = rawText && !/^https?:\/\//i.test(rawText) && !/^<img\b/i.test(rawText) ? rawText : "";
   if (target) {
     if (!text && hasImage) return null;
-    return <a href={`/admin/drafts/${mirrorSlug(target)}`}>{text || target}</a>;
+    return <a href={internalDocumentHref(target, mode)}>{text || target}</a>;
   }
   if (!text && hasImage) return null;
   return <a href={url} target={/^https?:\/\//.test(url) ? "_blank" : undefined} rel={/^https?:\/\//.test(url) ? "noreferrer" : undefined}>{text || url}</a>;
 }
 
-export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
+export default function WikiBlocks({ blocks, internalLinkMode = "draft" }: { blocks: WikiBlock[]; internalLinkMode?: InternalLinkMode }) {
   return (
     <>
       {blocks.map((block, index) => {
@@ -112,12 +119,13 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
 
         if (block.type === "related") {
           const slug = relatedDocumentSlugs[block.target] || (block.target.includes("/") ? mirrorSlug(block.target) : undefined);
-          return <div className="subdocNotice" key={index}>{block.label}: {slug ? <a href={`/admin/drafts/${slug}`}>{block.target}</a> : <span className="pendingLink">{block.target}</span>}</div>;
+          const href = internalLinkMode === "hybrid" ? internalDocumentHref(block.target, internalLinkMode) : slug ? internalDocumentHref(block.target, internalLinkMode, slug) : undefined;
+          return <div className="subdocNotice" key={index}>{block.label}: {href ? <a href={href}>{block.target}</a> : <span className="pendingLink">{block.target}</span>}</div>;
         }
 
         if (block.type === "internal-link") {
           const slug = block.slug || relatedDocumentSlugs[block.label] || mirrorSlug(block.target);
-          return <p className="wikiLinkRow" key={index}><a href={`/admin/drafts/${slug}`}>{block.label}</a></p>;
+          return <p className="wikiLinkRow" key={index}><a href={internalDocumentHref(block.target, internalLinkMode, slug)}>{block.label}</a></p>;
         }
 
         if (block.type === "external-link") return <p className="wikiLinkRow" key={index}><a href={block.url} target="_blank" rel="noreferrer">{block.label || block.url}</a></p>;
@@ -146,11 +154,11 @@ export default function WikiBlocks({ blocks }: { blocks: WikiBlock[] }) {
               const style: React.CSSProperties = { background: cell.background, color: cell.color, textAlign: cell.align };
               const hasImage = Boolean(cell.image_url && !/상세 내용 아이콘|cc-by-nc-sa/i.test(cell.image_alt || ""));
               const image = hasImage ? <img className="namuCellImage" src={cell.image_url} alt={cell.image_alt || ""} loading="lazy" /> : null;
-              const linkedImage = image && cell.link_url ? <a href={cellHref(cell.link_url)} target={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "_blank" : undefined} rel={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "noreferrer" : undefined}>{image}</a> : image;
+              const linkedImage = image && cell.link_url ? <a href={cellHref(cell.link_url, internalLinkMode)} target={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "_blank" : undefined} rel={!namuTarget(cell.link_url) && /^https?:\/\//.test(cell.link_url) ? "noreferrer" : undefined}>{image}</a> : image;
               const preserveText = shouldRenderWholeCellText(cell.text, cell.link_label, hasImage);
               return <Tag key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={style}>
                 {linkedImage}
-                {preserveText ? cell.text : cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage) : cell.text}
+                {preserveText ? cell.text : cell.link_url ? renderCellLink(cell.link_url, cell.link_label, cell.text, hasImage, internalLinkMode) : cell.text}
               </Tag>;
             })}</tr>)}
           </tbody></table></div>;
