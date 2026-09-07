@@ -30,16 +30,28 @@ function decodeEntities(value: string) {
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
+function displayWikiTarget(target: string) {
+  const trimmed = target.trim();
+  const hash = trimmed.lastIndexOf("#");
+  const value = hash >= 0 ? trimmed.slice(hash + 1) : trimmed;
+  return value.replace(/\([^)]*\)$/g, "").trim();
+}
+
 function cleanText(value: string) {
   let text = decodeEntities(value || "");
   text = text
+    .replace(/<img\b[^>]*>/gi, " ")
+    .replace(/<(?:colbgcolor|colcolor|rowcolor|tablewidth|tablebgcolor|tableclass|nopad|rowkeepall|colkeepall|keepall|thead|sortable)[^>]*>/gi, " ")
     .replace(/\[age\([^\]]+\)\](?:세)?/gi, "")
     .replace(/\[dday\([^\]]+\)\]/gi, "")
     .replace(/\[br\]/gi, " ")
     .replace(/#!(?:wiki|if|folding|style|html)\b[^{}\n]*/gi, " ")
     .replace(/\{\{\{(?:[-+]\d+)?/g, " ")
     .replace(/\}\}\}/g, " ")
-    .replace(/<(?:tableclass|nopad|rowkeepall|colkeepall|keepall|thead|sortable)[^>]*>/gi, " ")
+    .replace(/\[\[([^|\]]+)\|([^\]]*)\]\]/g, (_, target, label) => cleanText(label) || displayWikiTarget(target))
+    .replace(/\[\[([^|\]]+)\]\]/g, (_, target) => displayWikiTarget(target))
+    .replace(/\[\[([^|\]]+)\|\s*$/g, (_, target) => displayWikiTarget(target))
+    .replace(/파일:[^\n<>]{1,180}?\.(?:svg|png|jpe?g|gif|webp)/gi, " ")
     .replace(/'{2,5}/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -105,6 +117,13 @@ function extractStyle(node: HTMLElement) {
   return { background, color, align };
 }
 
+function preserveCountryAndDate(text: string) {
+  const country = ["대한민국", "일본", "미국", "중국"].find((name) => text.includes(name));
+  if (!country || !/(행정구|속령)/.test(text)) return text;
+  const date = text.match(/\b\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?/);
+  return date ? `${date[0].replace(/\s+/g, " ")} ${country}` : country;
+}
+
 function parseCell(cell: HTMLElement): RichWikiCell {
   const { background, color, align } = extractStyle(cell);
   const images = cell.querySelectorAll("img").filter((img) => !nearestTag(img, "table") || nearestTag(img, "table") === nearestTag(cell, "table"));
@@ -116,12 +135,7 @@ function parseCell(cell: HTMLElement): RichWikiCell {
     return href && !href.startsWith("#fn-") && !/^파일:/.test(label);
   });
 
-  let text = cleanText(cell.textContent || "");
-  if (/대한민국/.test(text) && /(행정구|속령)/.test(text)) text = text.replace(/.*?(대한민국).*/, "$1");
-  if (/일본/.test(text) && /(행정구|속령)/.test(text)) text = text.replace(/.*?(일본).*/, "$1");
-  if (/미국/.test(text) && /(행정구|속령)/.test(text)) text = text.replace(/.*?(미국).*/, "$1");
-  if (/중국/.test(text) && /(행정구|속령)/.test(text)) text = text.replace(/.*?(중국).*/, "$1");
-
+  let text = preserveCountryAndDate(cleanText(cell.textContent || ""));
   const imgSrc = image?.getAttribute("data-original") || image?.getAttribute("data-src") || image?.getAttribute("src") || undefined;
   const href = meaningfulAnchor?.getAttribute("href") || undefined;
   let linkLabel = meaningfulAnchor ? cleanText(meaningfulAnchor.textContent || "") : undefined;
@@ -129,6 +143,7 @@ function parseCell(cell: HTMLElement): RichWikiCell {
     const raw = href.replace(/^https?:\/\/(?:www\.)?namu\.moe\/w\//i, "").replace(/^\/w\//, "").split(/[?#]/)[0];
     try { linkLabel = decodeURIComponent(raw); } catch { linkLabel = raw; }
   }
+  if (image && meaningfulAnchor && !cleanText(meaningfulAnchor.textContent || "")) linkLabel = undefined;
 
   return {
     text,
@@ -156,11 +171,13 @@ function parseLink(anchor: HTMLElement): ParsedBlockV5 | null {
   const href = anchor.getAttribute("href") || "";
   if (!href) return null;
   let label = cleanText(anchor.textContent || "");
+  if (!label && anchor.querySelector("img")) return null;
   const isNamu = href.startsWith("/w/") || /^(?:https?:\/\/)?(?:www\.)?namu\.moe\/w\//i.test(href);
   if (isNamu) {
     const raw = href.replace(/^https?:\/\/(?:www\.)?namu\.moe\/w\//i, "").replace(/^\/w\//, "").split(/[?#]/)[0];
     let target = raw;
     try { target = decodeURIComponent(raw); } catch {}
+    if (target === "@문서명@" && label.includes("/")) target = label;
     if (!target || target.startsWith("파일:") || target.startsWith("분류:")) return null;
     if (!label || label.startsWith("/w/") || /^https?:\/\//i.test(label)) label = target;
     return { type: "internal-link", target, label };
@@ -210,6 +227,20 @@ function parseNode(node: HTMLElement): ParsedBlockV5 | null {
   return null;
 }
 
+function dedupeBlocks(blocks: ParsedBlockV5[]) {
+  const output: ParsedBlockV5[] = [];
+  const seenLinks = new Set<string>();
+  for (const block of blocks) {
+    if (block.type === "internal-link") {
+      const key = `${block.target}|${block.label}`;
+      if (seenLinks.has(key)) continue;
+      seenLinks.add(key);
+    }
+    output.push(block);
+  }
+  return output;
+}
+
 export function parseNamuHtmlV5(html: string): ParsedSectionV5[] {
   const root = parse(html, { lowerCaseTagName: false, comment: false });
   const article = root.querySelector("article") || root;
@@ -220,6 +251,7 @@ export function parseNamuHtmlV5(html: string): ParsedSectionV5[] {
 
   for (const node of nodes) {
     if (["H2", "H3", "H4"].includes(node.tagName)) {
+      current.content = dedupeBlocks(current.content);
       sectionIndex += 1;
       const heading = cleanHeading(node.textContent || "") || `Section ${sectionIndex}`;
       current = {
@@ -235,6 +267,7 @@ export function parseNamuHtmlV5(html: string): ParsedSectionV5[] {
     const block = parseNode(node);
     if (block) current.content.push(block);
   }
+  current.content = dedupeBlocks(current.content);
 
   return sections.filter((section) => section.heading || section.content.length);
 }
