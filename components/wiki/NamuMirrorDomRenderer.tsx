@@ -12,6 +12,8 @@ type Theme = {
   foreground: string;
 };
 
+const RENDERER_SCOPE = '[data-namu-renderer="mirror-dom-v3-hybrid"]';
+
 const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   display: "display",
   color: "color",
@@ -75,6 +77,20 @@ const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   bottom: "bottom",
   left: "left",
 };
+
+const SAFE_DYNAMIC_CSS_PROPERTIES = new Set([
+  "display", "color", "background", "background-color", "background-origin",
+  "width", "min-width", "max-width", "height", "min-height", "max-height",
+  "margin", "margin-left", "margin-right", "margin-top", "margin-bottom",
+  "padding", "padding-left", "padding-right", "padding-top", "padding-bottom",
+  "border", "border-left", "border-right", "border-top", "border-bottom",
+  "border-color", "border-width", "border-style", "border-radius", "box-sizing",
+  "text-align", "vertical-align", "white-space", "word-break", "overflow",
+  "overflow-x", "overflow-y", "font-size", "font-weight", "font-family", "font",
+  "line-height", "letter-spacing", "text-decoration", "cursor", "flex", "flex-grow",
+  "flex-shrink", "flex-basis", "flex-direction", "flex-wrap", "justify-content",
+  "align-items", "align-content", "gap", "row-gap", "column-gap",
+]);
 
 function decodeEntities(value: string) {
   return value
@@ -184,6 +200,14 @@ function looksLikeNamuRaw(value: string) {
   return /^#![a-z]+\b/i.test(source) || /^\|\|/m.test(source) || /\[\[[^\]]+\]\]/.test(source) || /\{\{\{/.test(source);
 }
 
+function looksLikeControlResidue(value: string) {
+  const source = decodeEntities(value);
+  return /#!(?:if|wiki|style|folding|html)\b/i.test(source)
+    || /\{\{\{#!/.test(source)
+    || /<(?:table|row|col)(?:class|width|bgcolor|color|align)=/i.test(source)
+    || /^\s*\}{3,}/m.test(source);
+}
+
 function youtubeEmbed(value: string | undefined) {
   const src = normalizeMediaUrl(value);
   if (!src) return undefined;
@@ -221,6 +245,72 @@ function cleanRawSource(source: string) {
     .trim();
 }
 
+function extractPreCodeSource(node: HTMLElement) {
+  const direct = node.querySelector("code");
+  if (direct) return direct.textContent || "";
+
+  // node-html-parser may keep PRE contents as one raw text node. In that case
+  // `childNodes.find(<code>)` never succeeds and React prints literal <code>
+  // tags. Recover the code payload from either serialized form instead.
+  for (const candidate of [node.innerHTML, node.textContent]) {
+    const match = String(candidate || "").match(/^\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*$/i);
+    if (match) return decodeEntities(match[1]);
+  }
+  return "";
+}
+
+function extractNamuStyleBlocks(html: string) {
+  const blocks: string[] = [];
+  const pattern = /<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html))) {
+    const source = cleanRawSource(match[1]);
+    const style = source.match(/^#!style\b[^\n]*(?:\n([\s\S]*))?$/i)?.[1];
+    if (style?.trim()) blocks.push(style.trim());
+  }
+  return blocks;
+}
+
+function sanitizeDynamicCssValue(value: string) {
+  const clean = value.trim();
+  if (!clean || /url\s*\(|expression\s*\(|javascript:|@import|behavior\s*:|[<>]/i.test(clean)) return null;
+  return clean;
+}
+
+function scopedDocumentCss(html: string) {
+  const output: string[] = [];
+  for (const block of extractNamuStyleBlocks(html)) {
+    const css = block.replace(/\/\*[\s\S]*?\*\//g, "");
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    let rule: RegExpExecArray | null;
+    while ((rule = rulePattern.exec(css))) {
+      const selectorSource = rule[1].trim();
+      if (!selectorSource || selectorSource.startsWith("@")) continue;
+      // React owns tab visibility/state. Do not allow recovered CSS to fight it.
+      if (/(?:^|[\s,.>+~])(?:div|a)?\.(?:tab|subtab|selected)\b/i.test(selectorSource)) continue;
+
+      const selectors = selectorSource
+        .split(",")
+        .map((selector) => selector.trim())
+        .filter((selector) => selector && /^[a-z0-9_.*#:\-\s>+~()\[\]="']+$/i.test(selector))
+        .map((selector) => `${RENDERER_SCOPE} ${selector}`);
+      if (!selectors.length) continue;
+
+      const declarations: string[] = [];
+      for (const declaration of rule[2].split(";")) {
+        const separator = declaration.indexOf(":");
+        if (separator < 0) continue;
+        const property = declaration.slice(0, separator).trim().toLowerCase();
+        if (!SAFE_DYNAMIC_CSS_PROPERTIES.has(property)) continue;
+        const value = sanitizeDynamicCssValue(declaration.slice(separator + 1));
+        if (value) declarations.push(`${property}:${value}`);
+      }
+      if (declarations.length) output.push(`${selectors.join(",")}{${declarations.join(";")}}`);
+    }
+  }
+  return output.join("\n");
+}
+
 function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: string): React.ReactNode {
   const normalized = cleanRawSource(source);
   if (!normalized) return null;
@@ -233,7 +323,11 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
   const kind = bare[1].toLowerCase();
   const args = bare[2].trim();
   const body = bare[3] || "";
-  if (kind === "html" || kind === "if" || kind === "style") return null;
+  if (kind === "html" || kind === "style") return null;
+  // Mirror pages often emit every unresolved conditional branch. Rendering all
+  // of them is worse than hiding the unevaluated template control. Concrete
+  // rendered siblings remain in the DOM, so suppress raw #!if residue here.
+  if (kind === "if") return null;
 
   const sourceClass = directiveClass(args);
   const sourceStyle = directiveStyle(args, theme);
@@ -274,14 +368,20 @@ function renderChildren(element: HTMLElement, assets: AssetMap, theme: Theme, ke
 function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): React.ReactNode {
   if (!(node instanceof HTMLElement)) {
     const text = decodeEntities(node.textContent || "");
-    return text ? <React.Fragment key={key}>{text}</React.Fragment> : null;
+    if (!text) return null;
+    if (looksLikeControlResidue(text)) {
+      if (/#!if\b/i.test(text)) return null;
+      const nodes = parseNamuRaw(text);
+      const useful = nodes.some((entry) => entry.type !== "raw-control");
+      return useful ? <NamuRawRenderer key={key} nodes={nodes} assets={assets} /> : null;
+    }
+    return <React.Fragment key={key}>{text}</React.Fragment>;
   }
   const tag = node.tagName.toLowerCase();
   if (tag === "script" || tag === "style" || tag === "noscript" || tag === "meta" || tag === "link") return null;
   if (tag === "pre") {
-    const code = node.childNodes.find((child) => child instanceof HTMLElement && child.tagName.toLowerCase() === "code") as HTMLElement | undefined;
-    const raw = code?.textContent || "";
-    if (code && looksLikeNamuRaw(raw)) return renderRawCode(raw, assets, theme, key);
+    const raw = extractPreCodeSource(node);
+    if (raw && looksLikeNamuRaw(raw)) return renderRawCode(raw, assets, theme, key);
   }
 
   const styleSource = node.getAttribute("style");
@@ -358,8 +458,14 @@ export default function NamuMirrorDomRenderer({ html, assets = {} }: { html: str
   const theme = deriveTheme(html);
   const root = parse(html || "");
   const article = root.querySelector("article") || root;
-  const themeStyle = { "--namu-theme-bg": theme.background, "--namu-theme-fg": theme.foreground } as React.CSSProperties;
-  return <NamuTabProvider><div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v2-tabs">
+  const documentCss = scopedDocumentCss(html);
+  const themeStyle = {
+    "--namu-theme-bg": theme.background,
+    "--namu-theme-fg": theme.foreground,
+    "--article-background-color": "#fff",
+  } as React.CSSProperties;
+  return <NamuTabProvider><div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v3-hybrid">
+    {documentCss ? <style>{documentCss}</style> : null}
     {article.childNodes.map((node, index) => renderNode(node, assets, theme, `mirror-${index}`))}
   </div></NamuTabProvider>;
 }
