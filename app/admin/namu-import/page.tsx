@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const ADMIN_KEY_STORAGE = "kpoparkive:namu-admin-key";
 
 export default function NamuImportPage() {
   const [adminKey, setAdminKey] = useState("");
@@ -10,7 +12,35 @@ export default function NamuImportPage() {
   const [status, setStatus] = useState("Ready.");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(ADMIN_KEY_STORAGE);
+      if (saved) setAdminKey(saved);
+    } catch {
+      // Storage can be unavailable in private/restricted browser contexts.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!adminKey) return;
+    try {
+      window.localStorage.setItem(ADMIN_KEY_STORAGE, adminKey);
+    } catch {
+      // Ignore storage failures; the current session still works.
+    }
+  }, [adminKey]);
+
   const commonHeaders = { "Content-Type": "application/json", "x-admin-key": adminKey };
+
+  function forgetAdminKey() {
+    try {
+      window.localStorage.removeItem(ADMIN_KEY_STORAGE);
+    } catch {
+      // Ignore storage failures.
+    }
+    setAdminKey("");
+    setStatus("Saved admin key cleared from this browser.");
+  }
 
   async function crawl() {
     const response = await fetch("/api/admin/namu-import", {
@@ -125,7 +155,12 @@ export default function NamuImportPage() {
         <h1>Namu mirror importer</h1>
         <p className="adminIntro">Enter only the root group document. The importer discovers closely related documents, rebuilds a rich document AST, and automatically resolves available images, embedded videos, and links. Only unresolved assets remain for web enrichment.</p>
         <div className="adminForm">
-          <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} /></label>
+          <label>
+            Admin key
+            <input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" />
+            <small>Saved only in this browser after you enter it once.</small>
+          </label>
+          <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
           <label>Root document<input value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} /></label>
           <label>Max depth<input type="number" min={0} max={4} value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
           <label>Max documents<input type="number" min={1} max={200} value={maxDocuments} onChange={(e) => setMaxDocuments(Number(e.target.value))} /></label>
