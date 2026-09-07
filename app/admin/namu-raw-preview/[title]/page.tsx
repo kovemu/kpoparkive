@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import NamuHybridRenderer from "../../../../components/wiki/NamuHybridRenderer";
+import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
 import { parseNamuHybridSegments } from "../../../../lib/namuHybrid";
 import { parseNamuRaw } from "../../../../lib/namuRawParser";
@@ -48,13 +48,14 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const docs = await db<{
     id: string;
     source_title: string;
+    root_title: string;
     raw_html: string;
     source_wikitext: string | null;
     source_raw_segments: RawSourceSegment[] | null;
     source_format: string | null;
     raw_extracted_at: string | null;
   }[]>(
-    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,raw_html,source_wikitext,source_raw_segments,source_format,raw_extracted_at&limit=1`,
+    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id,source_title,root_title,raw_html,source_wikitext,source_raw_segments,source_format,raw_extracted_at&limit=1`,
   );
   const source = docs[0];
   if (!source) notFound();
@@ -68,7 +69,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
 
   const assetRows = await db<AssetRow[]>(
-    `source_asset_queue?source_document_id=eq.${source.id}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
+    `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
   );
   const assets: Record<string, string> = { ...bundle.renderedFileMap };
   for (const row of assetRows) {
@@ -81,7 +82,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU SOURCE MIRROR · v3</div>
+        <div className="draftBadge">NAMU SOURCE MIRROR · v4 DOM</div>
       </header>
       <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
@@ -91,32 +92,32 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
             <p>
               {completeRaw
                 ? "A complete Namu raw document is available, so this preview renders the preserved source directly."
-                : "The mirror exposes only part of the document as Namu raw syntax. Missing source regions are therefore filled from the same stored mirror HTML in source order instead of being silently dropped."}
+                : "The stored mirror DOM is preserved as the layout skeleton, and unsupported <pre><code> Namu source blocks are rendered in place instead of flattening their parent structure."}
             </p>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
-          <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "SOURCE + FALLBACK"} />
+          <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "DOM + RAW"} />
           <Metric label="Mirror raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
           <Metric label="Visible raw blocks" value={String(visible.visibleRawBlocks)} />
           <Metric label="Rendered sections" value={String(hybrid.renderedSections)} />
           <Metric label="Skipped controls" value={String(hybrid.skippedControlChunks)} />
-          <Metric label="Mapped images" value={String(Object.keys(assets).length)} />
+          <Metric label="Cluster mapped images" value={String(Object.keys(assets).length)} />
         </div>
 
         <section>
           <h2 className="sectionTitle">Document preview</h2>
           {completeRaw
             ? <NamuRawRenderer nodes={completeRawNodes} assets={assets} />
-            : <NamuHybridRenderer chunks={hybrid.chunks} assets={assets} />}
+            : <NamuMirrorDomRenderer html={source.raw_html || ""} assets={assets} />}
         </section>
 
         <details style={{ marginTop: 28 }}>
           <summary style={{ cursor: "pointer", fontWeight: 700 }}>Source diagnostics</summary>
           <div style={{ marginTop: 12, padding: 16, border: "1px solid #d7dde5", borderRadius: 8, background: "#f8fafc" }}>
             <p style={{ marginTop: 0 }}>
-              Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; {hybrid.renderedSections} rendered sections remain necessary until a complete raw source is acquired.
+              Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; DOM + RAW mode preserves the mirror's parent layout while replacing raw code blocks in place.
             </p>
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0, fontSize: 13, lineHeight: 1.55 }}>{raw || "No raw syntax blocks recovered."}</pre>
           </div>
