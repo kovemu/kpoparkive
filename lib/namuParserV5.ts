@@ -44,6 +44,7 @@ function cleanText(value: string) {
     .replace(/<(?:colbgcolor|colcolor|rowcolor|tablewidth|tablebgcolor|tableclass|nopad|rowkeepall|colkeepall|keepall|thead|sortable)[^>]*>/gi, " ")
     .replace(/\[age\([^\]]+\)\](?:세)?/gi, "")
     .replace(/\[dday\([^\]]+\)\]/gi, "")
+    .replace(/\(\s*데뷔일로부터\s*일\s*,\s*주년\s*\)/gi, "")
     .replace(/\[br\]/gi, " ")
     .replace(/#!(?:wiki|if|folding|style|html)\b[^{}\n]*/gi, " ")
     .replace(/\{\{\{(?:[-+]\d+)?/g, " ")
@@ -137,7 +138,7 @@ function parseCell(cell: HTMLElement): RichWikiCell {
   });
   const meaningfulAnchor = meaningfulAnchors[0];
 
-  let text = preserveCountryAndDate(cleanText(cell.textContent || ""));
+  const text = preserveCountryAndDate(cleanText(cell.textContent || ""));
   const imgSrc = image?.getAttribute("data-original") || image?.getAttribute("data-src") || image?.getAttribute("src") || undefined;
   const href = meaningfulAnchor?.getAttribute("href") || undefined;
   let linkLabel = meaningfulAnchor ? cleanText(meaningfulAnchor.textContent || "") : undefined;
@@ -162,11 +163,36 @@ function parseCell(cell: HTMLElement): RichWikiCell {
   };
 }
 
+function effectiveCellCount(row: RichWikiCell[]) {
+  return row.reduce((sum, cell) => sum + Math.max(1, cell.colspan || 1), 0);
+}
+
+function isEmptyCell(cell: RichWikiCell | undefined) {
+  return Boolean(cell) && !cell?.text && !cell?.image_url && !cell?.link_url;
+}
+
+function normalizeTableRows(rows: RichWikiCell[][]) {
+  if (rows.length < 3) return rows;
+  const counts = rows.slice(2).map(effectiveCellCount).filter(Boolean);
+  if (!counts.length) return rows;
+  const frequencies = new Map<number, number>();
+  for (const count of counts) frequencies.set(count, (frequencies.get(count) || 0) + 1);
+  const dominant = [...frequencies.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!dominant) return rows;
+
+  return rows.map((row, index) => {
+    if (index > 1) return row;
+    if (effectiveCellCount(row) === dominant + 1 && isEmptyCell(row[0])) return row.slice(1);
+    return row;
+  });
+}
+
 function parseTable(table: HTMLElement): ParsedBlockV5 | null {
   const rows = directRows(table)
     .map((row) => directCells(row).map(parseCell))
     .filter((row) => row.length && row.some((cell) => cell.text || cell.image_url || cell.link_url));
-  return rows.length ? { type: "rich-table", rows: rows.slice(0, 180) } : null;
+  const normalized = normalizeTableRows(rows);
+  return normalized.length ? { type: "rich-table", rows: normalized.slice(0, 180) } : null;
 }
 
 function parseLink(anchor: HTMLElement): ParsedBlockV5 | null {
