@@ -5,6 +5,7 @@ const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhlt
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
 const BUCKET = "wiki-media";
+const NAMU_MIRROR = "https://www.namu.moe";
 
 function dbHeaders(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -19,12 +20,7 @@ async function db(path: string, init: RequestInit = {}) {
 }
 
 function safePart(value: string) {
-  const ascii = value
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+  const ascii = value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
   return ascii || "asset";
 }
 
@@ -46,7 +42,7 @@ function normalizeDirectUrl(value: unknown) {
   if (typeof value !== "string") return null;
   const url = value.trim();
   if (url.startsWith("//")) return `https:${url}`;
-  if (url.startsWith("/")) return `https://www.namu.moe${url}`;
+  if (url.startsWith("/")) return `${NAMU_MIRROR}${url}`;
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
@@ -68,6 +64,16 @@ function extractFileMap(rawHtml: string) {
   return map;
 }
 
+async function fetchMirrorDocumentFileMap(title: string) {
+  const response = await fetch(`${NAMU_MIRROR}/w/${encodeURIComponent(title)}`, {
+    cache: "no-store",
+    redirect: "follow",
+    headers: { "User-Agent": "KpoparkiveAssetResolver/0.6 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
+  });
+  if (!response.ok) throw new Error(`linked mirror fetch ${response.status}: ${title}`);
+  return extractFileMap(await response.text());
+}
+
 function isNoiseImageRef(value: string) {
   return /(?:CC-white|cc-by-nc-sa|유튜브 아이콘|youtube icon|MBC 로고|상세 내용 아이콘)/i.test(value);
 }
@@ -79,39 +85,25 @@ function looksGenericWikiTarget(target: string) {
 }
 
 function isRootAffinityTarget(target: string, rootTitle: string) {
-  return target === rootTitle
-    || target.startsWith(`${rootTitle}/`)
-    || target.includes(`(${rootTitle})`)
-    || target.includes(`[${rootTitle}]`);
+  return target === rootTitle || target.startsWith(`${rootTitle}/`) || target.includes(`(${rootTitle})`) || target.includes(`[${rootTitle}]`);
 }
 
 async function classifyInternalTarget(target: string, rootTitle: string) {
   const sources = await db(`source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(target)}&select=generated_document_id,root_title&limit=1`) as { generated_document_id: string | null; root_title: string | null }[];
   const source = sources[0];
-
   if (source?.generated_document_id) {
     const docs = await db(`documents?id=eq.${source.generated_document_id}&select=slug,status&limit=1`) as { slug: string; status: string }[];
     if (docs[0]) return { disposition: "internal" as const, url: docs[0].status === "published" ? `/wiki/${docs[0].slug}` : `/admin/drafts/${docs[0].slug}`, confidence: 1 };
   }
-
-  if (source && source.root_title === rootTitle) {
-    return { disposition: "internal_pending" as const, confidence: 0.95, reason: "target belongs to imported group cluster but draft has not been generated yet" };
-  }
-
-  if (isRootAffinityTarget(target, rootTitle)) {
-    return { disposition: "crawl_candidate" as const, confidence: 0.9, reason: "target is explicitly qualified by the root group" };
-  }
-
-  if (looksGenericWikiTarget(target)) {
-    return { disposition: "plain_text" as const, confidence: 0.98, reason: "generic/date/broadcaster navigation target does not need a Kpoparkive document" };
-  }
-
+  if (source && source.root_title === rootTitle) return { disposition: "internal_pending" as const, confidence: 0.95, reason: "target belongs to imported group cluster but draft has not been generated yet" };
+  if (isRootAffinityTarget(target, rootTitle)) return { disposition: "crawl_candidate" as const, confidence: 0.9, reason: "target is explicitly qualified by the root group" };
+  if (looksGenericWikiTarget(target)) return { disposition: "plain_text" as const, confidence: 0.98, reason: "generic/date/broadcaster navigation target does not need a Kpoparkive document" };
   return { disposition: "plain_text" as const, confidence: 0.82, reason: "background reference outside the imported group cluster" };
 }
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.5", Referer: "https://www.namu.moe/" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.6", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -139,14 +131,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   try {
     const body = await request.json() as { rootTitle?: string; batchSize?: number; retryUnresolved?: boolean };
     const rootTitle = String(body.rootTitle || "").trim();
     if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
     const batchSize = Math.max(1, Math.min(Number(body.batchSize ?? 12), 30));
     const statusFilter = body.retryUnresolved ? "in.(pending,unresolved)" : "eq.pending";
-
     const rows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=${statusFilter}&select=id,source_document_id,source_title,asset_type,source_ref,label,provider,metadata&order=created_at.asc&limit=${batchSize}`) as Array<{
       id: string; source_document_id: string; source_title: string; asset_type: string; source_ref: string; label: string | null; provider: string | null; metadata: Record<string, unknown>;
     }>;
@@ -155,6 +145,7 @@ export async function POST(request: Request) {
     const skipped: string[] = [];
     const unresolved: { id: string; ref: string; reason: string }[] = [];
     const fileMaps = new Map<string, Map<string, string>>();
+    const linkedMaps = new Map<string, Map<string, string>>();
 
     async function mirrorFileUrl(documentId: string, sourceRef: string) {
       let map = fileMaps.get(documentId);
@@ -162,6 +153,17 @@ export async function POST(request: Request) {
         const docs = await db(`source_documents?id=eq.${documentId}&select=raw_html&limit=1`) as { raw_html: string }[];
         map = extractFileMap(docs[0]?.raw_html || "");
         fileMaps.set(documentId, map);
+      }
+      return map.get(normalizedFileName(sourceRef)) || null;
+    }
+
+    async function linkedTargetFileUrl(target: unknown, sourceRef: string) {
+      if (typeof target !== "string" || !target.trim()) return null;
+      const cleanTarget = target.trim().replace(/#.*$/, "");
+      let map = linkedMaps.get(cleanTarget);
+      if (!map) {
+        map = await fetchMirrorDocumentFileMap(cleanTarget);
+        linkedMaps.set(cleanTarget, map);
       }
       return map.get(normalizedFileName(sourceRef)) || null;
     }
@@ -178,21 +180,17 @@ export async function POST(request: Request) {
 
           const enrichedUrl = normalizeDirectUrl(row.metadata?.enrichment_url);
           const mirrorMappedUrl = await mirrorFileUrl(row.source_document_id, row.source_ref);
-          const directUrl = enrichedUrl || mirrorMappedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
-          if (!directUrl) throw new Error("source image file is not present in mirror markup; enrichment required");
+          const linkedMappedUrl = enrichedUrl || mirrorMappedUrl ? null : await linkedTargetFileUrl(row.metadata?.linked_target, row.source_ref);
+          const directUrl = enrichedUrl || mirrorMappedUrl || linkedMappedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
+          if (!directUrl) throw new Error("source image file is not recoverable from current or linked mirror document");
           const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
+          const resolvedFrom = enrichedUrl ? "raw-file-map" : mirrorMappedUrl ? "mirror-img-alt" : linkedMappedUrl ? "linked-document-img-alt" : "source";
           patch = {
             ...patch,
             resolved_url: uploaded.publicUrl,
             storage_path: uploaded.path,
-            confidence: enrichedUrl || mirrorMappedUrl ? 1 : 0.9,
-            metadata: {
-              ...row.metadata,
-              original_url: directUrl,
-              content_type: uploaded.contentType,
-              bytes: uploaded.bytes,
-              resolved_from: enrichedUrl ? "raw-file-map" : mirrorMappedUrl ? "mirror-img-alt" : "source",
-            },
+            confidence: linkedMappedUrl ? 0.99 : enrichedUrl || mirrorMappedUrl ? 1 : 0.9,
+            metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes, resolved_from: resolvedFrom },
           };
         } else if (row.asset_type === "video") {
           const videoId = typeof row.metadata?.video_id === "string" ? row.metadata.video_id : null;
@@ -201,26 +199,14 @@ export async function POST(request: Request) {
           patch = { ...patch, resolved_url: row.source_ref, confidence: 1 };
         } else if (row.asset_type === "internal_link") {
           const classification = await classifyInternalTarget(row.source_ref, rootTitle);
-          if (classification.disposition === "internal") {
-            patch = { ...patch, resolved_url: classification.url, confidence: classification.confidence, metadata: { ...row.metadata, link_disposition: classification.disposition } };
-          } else if (classification.disposition === "internal_pending" || classification.disposition === "crawl_candidate") {
-            throw new Error(classification.reason);
-          } else {
-            await db(`source_asset_queue?id=eq.${row.id}`, {
-              method: "PATCH",
-              headers: { Prefer: "return=minimal" },
-              body: JSON.stringify({
-                status: "skipped",
-                confidence: classification.confidence,
-                metadata: { ...row.metadata, link_disposition: classification.disposition, skip_reason: classification.reason },
-                updated_at: new Date().toISOString(),
-              }),
-            });
+          if (classification.disposition === "internal") patch = { ...patch, resolved_url: classification.url, confidence: classification.confidence, metadata: { ...row.metadata, link_disposition: classification.disposition } };
+          else if (classification.disposition === "internal_pending" || classification.disposition === "crawl_candidate") throw new Error(classification.reason);
+          else {
+            await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "skipped", confidence: classification.confidence, metadata: { ...row.metadata, link_disposition: classification.disposition, skip_reason: classification.reason }, updated_at: new Date().toISOString() }) });
             skipped.push(row.id);
             continue;
           }
         }
-
         await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) });
         resolved.push(row.id);
       } catch (error) {
