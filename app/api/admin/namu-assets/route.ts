@@ -68,14 +68,20 @@ async function fetchMirrorDocumentFileMap(title: string) {
   const response = await fetch(`${NAMU_MIRROR}/w/${encodeURIComponent(title)}`, {
     cache: "no-store",
     redirect: "follow",
-    headers: { "User-Agent": "KpoparkiveAssetResolver/0.6 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
+    headers: { "User-Agent": "KpoparkiveAssetResolver/0.7 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
   });
   if (!response.ok) throw new Error(`linked mirror fetch ${response.status}: ${title}`);
   return extractFileMap(await response.text());
 }
 
-function isNoiseImageRef(value: string) {
-  return /(?:CC-white|cc-by-nc-sa|유튜브 아이콘|youtube icon|MBC 로고|상세 내용 아이콘)/i.test(value);
+/**
+ * Article image references are never discarded as "decorative" at import time.
+ * Provider icons, broadcaster logos, detail icons and template images are part
+ * of the rendered Namu document and must remain resolvable. Presentation code
+ * may choose to hide an asset later, but the importer must preserve it first.
+ */
+function isNoiseImageRef(_value: string) {
+  return false;
 }
 
 function looksGenericWikiTarget(target: string) {
@@ -103,7 +109,7 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.6", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.7", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -173,7 +179,7 @@ export async function POST(request: Request) {
         let patch: Record<string, unknown> = { status: "resolved", updated_at: new Date().toISOString() };
         if (row.asset_type === "image") {
           if (isNoiseImageRef(`${row.source_ref} ${row.label || ""}`)) {
-            await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "skipped", confidence: 1, metadata: { ...row.metadata, skip_reason: "decorative or provider icon" }, updated_at: new Date().toISOString() }) });
+            await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "skipped", confidence: 1, metadata: { ...row.metadata, skip_reason: "source presentation excluded asset" }, updated_at: new Date().toISOString() }) });
             skipped.push(row.id);
             continue;
           }
