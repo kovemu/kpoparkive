@@ -1,5 +1,8 @@
 import { notFound } from "next/navigation";
+import NamuHybridRenderer from "../../../../components/wiki/NamuHybridRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
+import { parseNamuHybridSegments } from "../../../../lib/namuHybrid";
+import { parseNamuRaw } from "../../../../lib/namuRawParser";
 import { extractMirrorRawBundle, type RawSourceSegment } from "../../../../lib/namuRawSource";
 import { parseVisibleNamuRawSegments } from "../../../../lib/namuRawSegments";
 
@@ -26,13 +29,17 @@ type AssetRow = {
 };
 
 function fileKey(ref: string) {
-  return ref.trim().replace(/^(?:파일|File):/i, "");
+  return ref.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
 function usableAssetUrl(row: AssetRow) {
   if (row.resolved_url) return row.resolved_url;
   const candidate = row.metadata?.enrichment_url;
   return typeof candidate === "string" && /^https?:\/\//i.test(candidate) ? candidate : null;
+}
+
+function isCompleteRawFormat(format: string | null) {
+  return /^(?:namuwiki[_-]?raw|namu[_-]?raw|direct[_-]?raw)$/i.test(format || "");
 }
 
 export default async function NamuRawPreviewPage({ params }: { params: Promise<{ title: string }> }) {
@@ -56,6 +63,10 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
   const segments = source.source_raw_segments?.length ? source.source_raw_segments : bundle.segments;
   const raw = source.source_wikitext || bundle.sourceWikitext;
   const visible = parseVisibleNamuRawSegments(segments);
+  const hybrid = parseNamuHybridSegments(segments);
+  const completeRaw = Boolean(raw) && isCompleteRawFormat(source.source_format);
+  const completeRawNodes = completeRaw ? parseNamuRaw(raw) : [];
+
   const assetRows = await db<AssetRow[]>(
     `source_asset_queue?source_document_id=eq.${source.id}&asset_type=eq.image&select=asset_type,source_ref,status,resolved_url,storage_path,metadata`,
   );
@@ -70,45 +81,56 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU RAW RENDERER · v2</div>
+        <div className="draftBadge">NAMU SOURCE MIRROR · v3</div>
       </header>
-      <main className="articleShell" style={{ maxWidth: 1180 }}>
+      <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
-            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Raw renderer › {source.source_title}</div>
+            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Source mirror › {source.source_title}</div>
             <h1>{source.source_title}</h1>
-            <p>Original Namu syntax is rendered directly. Template control branches stay preserved in storage but are excluded from visible article content.</p>
+            <p>
+              {completeRaw
+                ? "A complete Namu raw document is available, so this preview renders the preserved source directly."
+                : "The mirror exposes only part of the document as Namu raw syntax. Missing source regions are therefore filled from the same stored mirror HTML in source order instead of being silently dropped."}
+            </p>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0" }}>
-          <Metric label="Raw blocks" value={String(bundle.rawBlockCount)} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
+          <Metric label="Render mode" value={completeRaw ? "DIRECT RAW" : "SOURCE + FALLBACK"} />
+          <Metric label="Mirror raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
           <Metric label="Visible raw blocks" value={String(visible.visibleRawBlocks)} />
-          <Metric label="Skipped control blocks" value={String(visible.skippedControlBlocks)} />
-          <Metric label="Estimated raw coverage" value={`${bundle.estimatedRawCoverage}%`} />
-          <Metric label="Parsed raw nodes" value={String(visible.nodes.length)} />
+          <Metric label="Rendered sections" value={String(hybrid.renderedSections)} />
+          <Metric label="Skipped controls" value={String(hybrid.skippedControlChunks)} />
           <Metric label="Mapped images" value={String(Object.keys(assets).length)} />
         </div>
 
         <section>
-          <h2 className="sectionTitle">Direct raw rendering</h2>
-          <NamuRawRenderer nodes={visible.nodes} assets={assets} />
+          <h2 className="sectionTitle">Document preview</h2>
+          {completeRaw
+            ? <NamuRawRenderer nodes={completeRawNodes} assets={assets} />
+            : <NamuHybridRenderer chunks={hybrid.chunks} assets={assets} />}
         </section>
 
         <details style={{ marginTop: 28 }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Recovered source</summary>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", padding: 18, border: "1px solid #d7dde5", borderRadius: 8, background: "#f8fafc", fontSize: 13, lineHeight: 1.55 }}>{raw || "No raw syntax blocks recovered."}</pre>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Source diagnostics</summary>
+          <div style={{ marginTop: 12, padding: 16, border: "1px solid #d7dde5", borderRadius: 8, background: "#f8fafc" }}>
+            <p style={{ marginTop: 0 }}>
+              Current source format: <strong>{source.source_format || "namu mirror hybrid"}</strong>. The recovered raw subset contains {bundle.rawBlockCount} raw blocks; {hybrid.renderedSections} rendered sections remain necessary until a complete raw source is acquired.
+            </p>
+            <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0, fontSize: 13, lineHeight: 1.55 }}>{raw || "No raw syntax blocks recovered."}</pre>
+          </div>
         </details>
 
-        <section>
-          <h2 className="sectionTitle">Recovered file references</h2>
+        <details style={{ marginTop: 18 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Recovered file references ({bundle.fileRefs.length})</summary>
           <ul className="wikiList">{bundle.fileRefs.slice(0, 300).map((file) => <li key={file}>{file}</li>)}</ul>
-        </section>
+        </details>
       </main>
     </>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div style={{ border: "1px solid #d7dde5", borderRadius: 8, padding: 14, background: "white" }}><div style={{ fontSize: 12, color: "#667085" }}>{label}</div><div style={{ marginTop: 4, fontSize: 22, fontWeight: 700 }}>{value}</div></div>;
+  return <div style={{ border: "1px solid #d7dde5", borderRadius: 8, padding: 14, background: "white" }}><div style={{ fontSize: 12, color: "#667085" }}>{label}</div><div style={{ marginTop: 4, fontSize: 18, fontWeight: 700 }}>{value}</div></div>;
 }
