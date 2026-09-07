@@ -8,7 +8,7 @@ import {
 } from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v4-grammar-aware";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v5-image-alt-normalized";
 
 export type NamuRenderManifest = {
   version: string;
@@ -30,6 +30,7 @@ export type NamuRenderManifest = {
   rawGrammar: ReturnType<typeof mergeNamuRawGrammarAnalyses> & {
     renderNormalizedCodeBlocks: number;
     expandedIncludeResiduesRepaired: number;
+    bareImageAltsNormalized: number;
   };
 };
 
@@ -84,6 +85,28 @@ function hasFloatRight(style: string | undefined) {
   return /(?:^|;)\s*float\s*:\s*right\b/i.test(style || "");
 }
 
+/**
+ * namu.moe frequently emits article images with a bare filename in alt= rather
+ * than the canonical "파일:" prefix. The source asset queue, however, is keyed
+ * by Namu file references. Normalize only obvious image-filename alts inside the
+ * derived render artifact so the renderer can resolve them through the same
+ * imported asset map. raw_html/source_wikitext stay untouched.
+ */
+function normalizeBareImageAltsForRender(html: string) {
+  let repaired = 0;
+  const output = String(html || "").replace(
+    /<img\b([^>]*?)\balt\s*=\s*(["'])([\s\S]*?)\2([^>]*)>/gi,
+    (full, before: string, quote: string, rawAlt: string, after: string) => {
+      const alt = decodeEntities(rawAlt).normalize("NFKC").trim();
+      if (!alt || /^(?:파일|File):/i.test(alt)) return full;
+      if (!/\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt)) return full;
+      repaired += 1;
+      return `<img${before}alt=${quote}파일:${rawAlt}${quote}${after}>`;
+    },
+  );
+  return { html: output, repaired };
+}
+
 export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArtifact {
   const rawArticleHtml = extractExactArticleHtml(html || "");
   const rawBundle = extractMirrorRawBundle(html || "");
@@ -101,7 +124,12 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   // the invocation in front of the HTML it already expanded. Remove only that
   // duplicated control token when a block-level expansion is immediately next.
   const includeNormalized = repairExpandedIncludeResiduesForRender(renderNormalized.html);
-  const articleHtml = includeNormalized.html;
+
+  // Phase 4: make bare mirror image alts canonical Namu file references in the
+  // derived artifact. This is importer-wide and lets pending/enriched assets be
+  // displayed immediately instead of falling through to broken namu.moe URLs.
+  const imageAltNormalized = normalizeBareImageAltsForRender(includeNormalized.html);
+  const articleHtml = imageAltNormalized.html;
 
   const rawAnalyses = rawBundle.segments
     .filter((segment) => segment.type === "raw")
@@ -110,6 +138,7 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
     ...mergeNamuRawGrammarAnalyses(rawAnalyses),
     renderNormalizedCodeBlocks: renderNormalized.normalizedBlocks,
     expandedIncludeResiduesRepaired: includeNormalized.repaired,
+    bareImageAltsNormalized: imageAltNormalized.repaired,
   };
 
   const root = parse(articleHtml);
