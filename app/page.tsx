@@ -1,5 +1,5 @@
 import WikiBlocks from "../components/wiki/WikiBlocks";
-import { getWikiDocument } from "../lib/wiki";
+import { getStoragePublicUrl, getWikiDocument, getWikiMedia } from "../lib/wiki";
 
 function SectionTitle({ id, number, level, children }: { id: string; number: string; level: number; children: React.ReactNode }) {
   const Tag = level >= 4 ? "h4" : level === 3 ? "h3" : "h2";
@@ -41,6 +41,8 @@ export default async function Home() {
     return <main className="articleShell"><h1>RESCENE</h1><p>Document not found.</p></main>;
   }
 
+  const media = await getWikiMedia(document.id);
+  const infoboxImage = [...media].reverse().find((item) => item.role === "infobox");
   const numbers = numberSections(document.sections);
   const updated = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
@@ -86,7 +88,18 @@ export default async function Home() {
                 <span>리센느</span>
               </div>
             </div>
-            <div className="photoPlaceholder">RESCENE</div>
+            {infoboxImage ? (
+              <figure className="infoboxPhotoWrap">
+                <img
+                  className="infoboxPhoto"
+                  src={getStoragePublicUrl(infoboxImage.storage_path)}
+                  alt={infoboxImage.alt_text ?? "RESCENE group photo"}
+                />
+                {infoboxImage.caption && <figcaption>{infoboxImage.caption}</figcaption>}
+              </figure>
+            ) : (
+              <div className="photoPlaceholder">RESCENE</div>
+            )}
             <dl className="facts">
               <div><dt>Debut</dt><dd>🇰🇷 March 26, 2024<br />🇯🇵 August 16, 2024<br />🇺🇸 February 17, 2025</dd></div>
               <div><dt>Debut release</dt><dd><span className="pill pink">Re:Scene</span></dd></div>
