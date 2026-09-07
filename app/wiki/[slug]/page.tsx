@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import WikiBlocks from "../../../components/wiki/WikiBlocks";
-import { getWikiDocument } from "../../../lib/wiki";
+import { getStoragePublicUrl, getWikiDocument, getWikiMedia } from "../../../lib/wiki";
 
 function numberSections(sections: { heading_level: number }[]) {
   let major = 0;
@@ -29,6 +29,8 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
   const document = await getWikiDocument(slug);
   if (!document) notFound();
 
+  const media = await getWikiMedia(document.id);
+  const infoboxImage = [...media].reverse().find((item) => item.role === "infobox");
   const numbers = numberSections(document.sections);
 
   return (
@@ -44,11 +46,24 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
       <main id="top" className="articleShell" style={{ "--accent": document.accent_color ?? "#8d7cff" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
-            <div className="breadcrumbs">Kpoparkive › {document.title}</div>
+            <div className="breadcrumbs">Kpoparkive › RESCENE › {document.title}</div>
             <h1>{document.title}</h1>
             {document.summary && <p>{document.summary}</p>}
           </div>
         </div>
+
+        {infoboxImage && (
+          <div className="memberLead">
+            <figure className="memberLeadPhotoWrap">
+              <img
+                className="memberLeadPhoto"
+                src={getStoragePublicUrl(infoboxImage.storage_path)}
+                alt={infoboxImage.alt_text ?? `${document.title} of RESCENE`}
+              />
+              {infoboxImage.caption && <figcaption>{infoboxImage.caption}</figcaption>}
+            </figure>
+          </div>
+        )}
 
         <nav className="toc" aria-label="Contents">
           <div className="tocHeader">Contents <span>⌄</span></div>
