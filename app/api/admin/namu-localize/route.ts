@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { translateNamuDocument } from "../../../../lib/namuTranslate";
 import type { ParsedSection } from "../../../../lib/namuParser";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const TRANSLATION_VERSION = "gemini-en-v1";
+const TRANSLATION_VERSION = "assistant-en-v1";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -41,21 +40,19 @@ async function upsertDraft(row: {
   source_title: string;
   source_url: string;
   source_hash: string;
-  root_title: string;
   translated_title: string;
   translated_sections: ParsedSection[];
   crawl_depth: number;
 }, rootGeneratedId: string | null) {
   const slug = slugify(row.source_title);
-  const existing = await db(`documents?slug=eq.${encodeURIComponent(slug)}&select=id,slug&limit=1`) as { id: string; slug: string }[];
-
+  const existing = await db(`documents?slug=eq.${encodeURIComponent(slug)}&select=id&limit=1`) as { id: string }[];
   let documentId = existing[0]?.id || null;
   const payload = {
     slug,
     title: row.translated_title,
     document_type: row.crawl_depth === 0 ? "group" : "other",
     parent_document_id: row.crawl_depth === 0 ? null : rootGeneratedId,
-    summary: `Automatically localized draft sourced from ${row.source_title}.`,
+    summary: `English localization draft sourced from ${row.source_title}.`,
     accent_color: "#ff62c7",
     status: "draft",
     source_language: "ko",
@@ -66,17 +63,9 @@ async function upsertDraft(row: {
   };
 
   if (documentId) {
-    await db(`documents?id=eq.${documentId}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(payload),
-    });
+    await db(`documents?id=eq.${documentId}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(payload) });
   } else {
-    const inserted = await db("documents", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(payload),
-    }) as { id: string }[];
+    const inserted = await db("documents", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload) }) as { id: string }[];
     documentId = inserted[0].id;
   }
 
@@ -99,10 +88,25 @@ async function upsertDraft(row: {
   await db(`source_documents?id=eq.${row.id}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ generated_document_id: documentId, generation_status: "draft", updated_at: new Date().toISOString() }),
+    body: JSON.stringify({
+      generated_document_id: documentId,
+      generation_status: "draft",
+      updated_at: new Date().toISOString(),
+    }),
   });
-
   return { documentId, slug };
+}
+
+export async function GET(request: Request) {
+  if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const rootTitle = new URL(request.url).searchParams.get("rootTitle")?.trim();
+  if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
+  const rows = await db(
+    `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&translation_status=eq.ready&select=id,source_title,crawl_depth,parsed_sections&order=crawl_depth.asc,source_title.asc`,
+  );
+  return NextResponse.json({ ok: true, rootTitle, translationVersion: TRANSLATION_VERSION, queue: rows });
 }
 
 export async function POST(request: Request) {
@@ -111,80 +115,48 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json() as { rootTitle?: string; batchSize?: number; force?: boolean };
+    const body = await request.json() as {
+      rootTitle?: string;
+      translations?: { sourceTitle: string; title: string; sections: ParsedSection[] }[];
+    };
     const rootTitle = String(body.rootTitle || "").trim();
-    if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
-    const batchSize = Math.max(1, Math.min(Number(body.batchSize ?? 4), 8));
-
-    const allRows = await db(
-      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&select=id,source_title,source_url,source_hash,root_title,crawl_depth,parsed_sections,translated_title,translated_sections,translation_version,translation_status,generated_document_id&order=crawl_depth.asc,source_title.asc`,
-    ) as {
-      id: string;
-      source_title: string;
-      source_url: string;
-      source_hash: string;
-      root_title: string;
-      crawl_depth: number;
-      parsed_sections: ParsedSection[] | null;
-      translated_title: string | null;
-      translated_sections: ParsedSection[] | null;
-      translation_version: string | null;
-      translation_status: string | null;
-      generated_document_id: string | null;
-    }[];
-
-    if (!allRows.length) return NextResponse.json({ error: `No source documents found for ${rootTitle}` }, { status: 404 });
-
-    const pending = allRows.filter((row) => row.parsed_sections?.length && (body.force || row.translation_version !== TRANSLATION_VERSION || !row.translated_sections?.length)).slice(0, batchSize);
-    const translatedNow: string[] = [];
-    const errors: { title: string; error: string }[] = [];
-
-    for (const row of pending) {
-      try {
-        await db(`source_documents?id=eq.${row.id}`, {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({ translation_status: "translating", updated_at: new Date().toISOString() }),
-        });
-        const translated = await translateNamuDocument(row.source_title, row.parsed_sections || []);
-        row.translated_title = translated.title;
-        row.translated_sections = translated.sections;
-        row.translation_version = TRANSLATION_VERSION;
-        await db(`source_documents?id=eq.${row.id}`, {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({
-            translated_title: translated.title,
-            translated_sections: translated.sections,
-            translation_version: TRANSLATION_VERSION,
-            translated_at: new Date().toISOString(),
-            translation_status: "translated",
-            updated_at: new Date().toISOString(),
-          }),
-        });
-        translatedNow.push(row.source_title);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "translation error";
-        errors.push({ title: row.source_title, error: message });
-        await db(`source_documents?id=eq.${row.id}`, {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({ translation_status: "failed", updated_at: new Date().toISOString() }),
-        });
-      }
+    const translations = Array.isArray(body.translations) ? body.translations : [];
+    if (!rootTitle || !translations.length) {
+      return NextResponse.json({ error: "rootTitle and translations are required" }, { status: 400 });
     }
 
-    const freshRows = await db(
-      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&translation_version=eq.${TRANSLATION_VERSION}&select=id,source_title,source_url,source_hash,root_title,crawl_depth,translated_title,translated_sections,generated_document_id&order=crawl_depth.asc,source_title.asc`,
-    ) as {
-      id: string; source_title: string; source_url: string; source_hash: string; root_title: string; crawl_depth: number;
-      translated_title: string; translated_sections: ParsedSection[]; generated_document_id: string | null;
-    }[];
+    const sourceRows = await db(
+      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&select=id,source_title,source_url,source_hash,crawl_depth,generated_document_id&order=crawl_depth.asc,source_title.asc`,
+    ) as { id: string; source_title: string; source_url: string; source_hash: string; crawl_depth: number; generated_document_id: string | null }[];
+    if (!sourceRows.length) return NextResponse.json({ error: `No source documents found for ${rootTitle}` }, { status: 404 });
 
-    let rootGeneratedId = freshRows.find((row) => row.crawl_depth === 0)?.generated_document_id || null;
+    const translatedMap = new Map(translations.map((item) => [item.sourceTitle, item]));
+    const applied: string[] = [];
+    for (const row of sourceRows) {
+      const translated = translatedMap.get(row.source_title);
+      if (!translated?.sections?.length) continue;
+      await db(`source_documents?id=eq.${row.id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          translated_title: translated.title,
+          translated_sections: translated.sections,
+          translation_version: TRANSLATION_VERSION,
+          translated_at: new Date().toISOString(),
+          translation_status: "translated",
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      applied.push(row.source_title);
+    }
+
+    const translatedRows = await db(
+      `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(rootTitle)}&translation_version=eq.${TRANSLATION_VERSION}&select=id,source_title,source_url,source_hash,crawl_depth,translated_title,translated_sections,generated_document_id&order=crawl_depth.asc,source_title.asc`,
+    ) as { id: string; source_title: string; source_url: string; source_hash: string; crawl_depth: number; translated_title: string; translated_sections: ParsedSection[]; generated_document_id: string | null }[];
+
+    let rootGeneratedId = translatedRows.find((row) => row.crawl_depth === 0)?.generated_document_id || null;
     const generated: { title: string; slug: string }[] = [];
-
-    for (const row of freshRows) {
+    for (const row of translatedRows) {
       if (!row.translated_title || !row.translated_sections?.length) continue;
       if (row.crawl_depth > 0 && !rootGeneratedId) continue;
       const result = await upsertDraft(row, rootGeneratedId);
@@ -192,18 +164,7 @@ export async function POST(request: Request) {
       generated.push({ title: row.source_title, slug: result.slug });
     }
 
-    const remaining = allRows.filter((row) => row.parsed_sections?.length && (body.force || row.translation_version !== TRANSLATION_VERSION || !row.translated_sections?.length)).length - translatedNow.length;
-
-    return NextResponse.json({
-      ok: true,
-      rootTitle,
-      translationVersion: TRANSLATION_VERSION,
-      translatedNow,
-      generatedDrafts: generated.length,
-      remaining: Math.max(0, remaining),
-      errors,
-      rootDraftSlug: slugify(rootTitle),
-    });
+    return NextResponse.json({ ok: true, rootTitle, translationVersion: TRANSLATION_VERSION, applied, generated });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown localization error" }, { status: 500 });
   }
