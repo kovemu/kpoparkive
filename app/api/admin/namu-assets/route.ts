@@ -1,6 +1,7 @@
-import { readNamuImageBytes } from "../../../../lib/namuImageBytes";
+import { detectNamuImageContentType, readNamuImageBytes } from "../../../../lib/namuImageBytes";
+import { discoverNamuFilePageCandidates } from "../../../../lib/namuFilePageAssets";
 import { extractRenderedFileMap } from "../../../../lib/namuRawSource";
-import { findNamuAssetCandidates } from "../../../../lib/namuStoredAssets";
+import { expandNamuRemoteCandidates, findNamuAssetCandidates } from "../../../../lib/namuStoredAssets";
 import { hydrateNamuStoredMedia } from "../../../../lib/namuStoredMediaHydrate";
 import { NextResponse } from "next/server";
 export const maxDuration = 60;
@@ -37,9 +38,10 @@ function extensionFor(contentType: string, url: string) {
   if (/webp/i.test(contentType)) return "webp";
   if (/png/i.test(contentType)) return "png";
   if (/gif/i.test(contentType)) return "gif";
+  if (/avif/i.test(contentType)) return "avif";
   if (/svg/i.test(contentType)) return "svg";
   if (/jpe?g/i.test(contentType)) return "jpg";
-  return url.match(/\.(webp|png|gif|svg|jpe?g)(?:\?|$)/i)?.[1]?.replace("jpeg", "jpg") || "jpg";
+  return url.match(/\.(webp|png|gif|avif|svg|jpe?g)(?:\?|$)/i)?.[1]?.replace("jpeg", "jpg") || "jpg";
 }
 
 function normalizeDirectUrl(value: unknown) {
@@ -54,6 +56,19 @@ function normalizedFileName(value: string) {
   return value.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
+function canonicalFileKey(value: string) {
+  return normalizedFileName(value).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function expandCandidateList(values: Array<string | null | undefined>) {
+  const output: string[] = [];
+  for (const value of values) {
+    if (!value) continue;
+    for (const candidate of expandNamuRemoteCandidates(value)) if (!output.includes(candidate)) output.push(candidate);
+  }
+  return output;
+}
+
 function extractFileMap(rawHtml: string) {
   return new Map(Object.entries(extractRenderedFileMap(rawHtml)));
 }
@@ -63,21 +78,14 @@ async function fetchMirrorDocumentFileMap(title: string) {
     cache: "no-store",
     redirect: "follow",
     signal: AbortSignal.timeout(8000),
-    headers: { "User-Agent": "KpoparkiveAssetResolver/0.8 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
+    headers: { "User-Agent": "KpoparkiveAssetResolver/1.0 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
   });
   if (!response.ok) throw new Error(`linked mirror fetch ${response.status}: ${title}`);
   return extractFileMap(await response.text());
 }
 
-/**
- * Article image references are never discarded as "decorative" at import time.
- * Provider icons, broadcaster logos, detail icons and template images are part
- * of the rendered Namu document and must remain resolvable. Presentation code
- * may choose to hide an asset later, but the importer must preserve it first.
- */
-function isNoiseImageRef(_value: string) {
-  return false;
-}
+/** Preserve every source image at import time; presentation can hide it later. */
+function isNoiseImageRef(_value: string) { return false; }
 
 function looksGenericWikiTarget(target: string) {
   return /^(?:\d{4}년|\d{1,2}월(?:\s*\d{1,2}일)?|SBS|MBC|KBS|JTBC|tvN|엠넷|Mnet|유튜브|YouTube|Instagram|X|트위터|OST|가수|아이돌|대한민국|일본|미국)$/i.test(target)
@@ -102,11 +110,31 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
   return { disposition: "plain_text" as const, confidence: 0.82, reason: "background reference outside the imported group cluster" };
 }
 
+async function downloadImage(url: string) {
+  const browserUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
+  const profiles: Record<string, string>[] = [
+    { "User-Agent": browserUa, Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", Referer: `${NAMU_MIRROR}/` },
+    { "User-Agent": browserUa, Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" },
+    { "User-Agent": "KpoparkiveAssetResolver/1.0 (+https://kpoparkive.vercel.app)", Accept: "image/*,*/*;q=0.5" },
+  ];
+  const errors: string[] = [];
+  for (const headers of profiles) {
+    try {
+      const response = await fetch(url, { headers, cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(7000) });
+      const bytes = await readNamuImageBytes(response, url);
+      const contentType = detectNamuImageContentType(bytes, response.headers.get("content-type") || "", url);
+      if (!contentType) throw new Error("unsupported image bytes");
+      return { bytes, contentType };
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "download failed");
+    }
+  }
+  throw new Error([...new Set(errors)].join(" / "));
+}
+
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.8", Referer: `${NAMU_MIRROR}/` }, redirect: "follow", signal: AbortSignal.timeout(8000) });
-  const bytes = await readNamuImageBytes(response);
-  const contentType = response.headers.get("content-type")!;
+  const { bytes, contentType } = await downloadImage(url);
   const ext = extensionFor(contentType, url);
   const hash = await shortHash(`${rootTitle}|${url}`);
   const path = `imports/${safePart(rootTitle)}/${safePart(sourceTitle)}-${hash}.${ext}`;
@@ -152,6 +180,18 @@ export async function POST(request: Request) {
     const clusterDocs = await db(`source_documents?root_title=eq.${encodeURIComponent(rootTitle)}&select=raw_html`) as { raw_html: string }[];
     const clusterMaps = clusterDocs.map(doc => extractRenderedFileMap(doc.raw_html || ""));
     const uploadedUrls = new Map<string, Awaited<ReturnType<typeof uploadImage>>>();
+    const uploadedFiles = new Map<string, Awaited<ReturnType<typeof uploadImage>>>();
+    const failedUrls = new Map<string, string>();
+    const filePageCache = new Map<string, string[]>();
+    const clusterImageRows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&asset_type=eq.image&select=id,source_ref,label,status,resolved_url,storage_path,metadata&limit=3000`) as Array<{
+      id: string; source_ref: string; label: string | null; status: string; resolved_url: string | null; storage_path: string | null; metadata: Record<string, unknown> | null;
+    }>;
+    const resolvedByFile = new Map<string, { resolved_url: string; storage_path: string | null }>();
+    for (const asset of clusterImageRows) {
+      if (asset.status !== "resolved" || !asset.resolved_url) continue;
+      const key = canonicalFileKey(asset.label || asset.source_ref);
+      if (key && !resolvedByFile.has(key)) resolvedByFile.set(key, { resolved_url: asset.resolved_url, storage_path: asset.storage_path });
+    }
 
     async function mirrorFileUrl(documentId: string, sourceRef: string) {
       let map = fileMaps.get(documentId);
@@ -174,8 +214,17 @@ export async function POST(request: Request) {
       return map.get(normalizedFileName(sourceRef)) || null;
     }
 
+    async function filePageCandidates(sourceRef: string) {
+      const key = canonicalFileKey(sourceRef);
+      const cached = filePageCache.get(key);
+      if (cached) return cached;
+      const discovered = await discoverNamuFilePageCandidates(normalizedFileName(sourceRef));
+      filePageCache.set(key, discovered);
+      return discovered;
+    }
+
     for (const row of rows) {
-      if (Date.now() - startedAt > 35000) break;
+      if (Date.now() - startedAt > 40000) break;
       try {
         let patch: Record<string, unknown> = { status: "resolved", updated_at: new Date().toISOString() };
         if (row.asset_type === "image") {
@@ -185,43 +234,72 @@ export async function POST(request: Request) {
             continue;
           }
 
+          const fileKey = canonicalFileKey(row.label || row.source_ref);
+          const reused = resolvedByFile.get(fileKey);
+          if (reused) {
+            patch = { ...patch, resolved_url: reused.resolved_url, storage_path: reused.storage_path, confidence: 1, metadata: { ...row.metadata, resolved_from: "root-cluster-resolved-image", resolution_error: null } };
+            await db(`source_asset_queue?id=eq.${row.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) });
+            resolved.push(row.id);
+            continue;
+          }
+
           const refs = [row.source_ref, row.label || ""].filter(Boolean);
           const local = await mirrorFileUrl(row.source_document_id, row.label || row.source_ref);
-          const candidates = [...new Set([
+          const directSeeds = [
             normalizeDirectUrl(row.metadata?.enrichment_url), local,
             ...findNamuAssetCandidates(refs, clusterMaps),
             normalizeDirectUrl(row.source_ref), normalizeDirectUrl(row.metadata?.url),
-          ].filter((url): url is string => Boolean(url)))];
+          ];
+          const candidates = expandCandidateList(directSeeds);
           const errors: string[] = [];
-          let uploaded: Awaited<ReturnType<typeof uploadImage>> | undefined;
+          let uploaded = uploadedFiles.get(fileKey);
           let directUrl = "";
           const tryCandidates = async (urls: string[]) => {
             for (const url of urls) {
-              if (Date.now() - startedAt > 45000) break;
+              if (uploaded || Date.now() - startedAt > 50000) break;
+              const priorFailure = failedUrls.get(url);
+              if (priorFailure) { errors.push(`${url}: ${priorFailure}`); continue; }
               try {
                 uploaded = uploadedUrls.get(url) || await uploadImage(url, rootTitle, row.source_title);
                 uploadedUrls.set(url, uploaded);
+                uploadedFiles.set(fileKey, uploaded);
                 directUrl = url;
-                break;
-              } catch (error) { errors.push(error instanceof Error ? error.message : "download failed"); }
+              } catch (error) {
+                const reason = error instanceof Error ? error.message : "download failed";
+                failedUrls.set(url, reason);
+                errors.push(`${url}: ${reason}`);
+              }
             }
           };
-          await tryCandidates(candidates);
-          if (!uploaded && Date.now() - startedAt < 35000) {
+          if (!uploaded) await tryCandidates(candidates);
+
+          if (!uploaded && Date.now() - startedAt < 39000) {
             try {
               const linked = await linkedTargetFileUrl(row.metadata?.linked_target, row.label || row.source_ref);
-              if (linked && !candidates.includes(linked)) await tryCandidates([linked]);
+              if (linked) await tryCandidates(expandCandidateList([linked]).filter(url => !candidates.includes(url)));
             } catch (error) { errors.push(error instanceof Error ? error.message : "linked document failed"); }
           }
-          if (!uploaded) throw new Error(errors.join("; ") || "No downloadable image candidate found");
-          const resolvedFrom = "cluster-candidate-download";
+
+          // Raw-only image refs (e.g. album grid [[파일:YoYo.jpg]]) often do not
+          // have a rendered <img> URL. Namu's file page exposes the clickable
+          // download/CDN URL; discover it as the last network fallback, then pin
+          // the bytes into Supabase so the runtime never depends on that URL.
+          if (!uploaded && Date.now() - startedAt < 36000) {
+            try {
+              const discovered = await filePageCandidates(row.label || row.source_ref);
+              await tryCandidates(discovered.filter(url => !candidates.includes(url)));
+            } catch (error) { errors.push(error instanceof Error ? error.message : "file-page discovery failed"); }
+          }
+
+          if (!uploaded) throw new Error(errors.slice(-8).join("; ") || "No downloadable image candidate found");
           patch = {
             ...patch,
             resolved_url: uploaded.publicUrl,
             storage_path: uploaded.path,
             confidence: 0.99,
-            metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes, resolved_from: resolvedFrom, resolution_error: null },
+            metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes, resolved_from: "storage-pinned-namu-download", resolution_error: null },
           };
+          resolvedByFile.set(fileKey, { resolved_url: uploaded.publicUrl, storage_path: uploaded.path });
         } else if (row.asset_type === "video") {
           const videoId = typeof row.metadata?.video_id === "string" ? row.metadata.video_id : null;
           patch = { ...patch, resolved_url: row.provider === "youtube" && videoId ? `https://www.youtube.com/embed/${videoId}` : row.source_ref, confidence: 1 };
@@ -247,9 +325,18 @@ export async function POST(request: Request) {
     }
 
     const remaining = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=eq.pending&select=id`) as { id: string }[];
-    return NextResponse.json({ ok: true, rootTitle, processed: resolved.length + skipped.length + unresolved.length, reusedStoredMedia, resolved: resolved.length, skipped: skipped.length, unresolved, remaining: remaining.length });
+    return NextResponse.json({
+      ok: true, rootTitle,
+      processed: resolved.length + skipped.length + unresolved.length,
+      reusedStoredMedia,
+      resolved: resolved.length,
+      skipped: skipped.length,
+      unresolved,
+      remaining: remaining.length,
+      cachedFailures: failedUrls.size,
+      filePageLookups: filePageCache.size,
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown asset resolution error" }, { status: 500 });
   }
 }
-
