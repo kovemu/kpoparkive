@@ -7,7 +7,7 @@ import type { MirrorRawBundle, RenderedFileMap } from "../../../../lib/namuRawSo
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY;
-const EXTRACTION_VERSION = "namu-mirror-hybrid-v6-dom-artifacts-on-import";
+const EXTRACTION_VERSION = "namu-mirror-hybrid-v7-storage-first-assets";
 
 function headers(extra: Record<string, string> = {}) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -90,48 +90,100 @@ function mergeRenderedFileMap(target: RenderedFileMap, incoming: RenderedFileMap
   }
 }
 
+/**
+ * Every import is also an asset-resolution retry opportunity.
+ *
+ * Old importer versions left many valid Namu images permanently `unresolved`
+ * after a transient 503 from the mirror CDN. Do not skip those rows merely
+ * because the source_ref already exists. Refresh their current mirror hints and
+ * return them to `pending` so the storage-first resolver can try the rendered
+ * map, linked document, file page, alternate mirror hosts, and finally pin the
+ * first valid byte stream into Supabase Storage.
+ *
+ * A row is considered durable only when it already has a Storage path. This
+ * also migrates legacy `resolved` rows that merely hotlinked a remote CDN.
+ */
 async function queueRawAssets(sourceDocumentId: string, rootTitle: string, sourceTitle: string, bundle: MirrorRawBundle) {
   const existing = await db(
-    `source_asset_queue?source_document_id=eq.${sourceDocumentId}&asset_type=eq.image&select=source_ref`,
-  ) as { source_ref: string }[];
-  const existingRefs = new Set(existing.map((asset) => asset.source_ref));
+    `source_asset_queue?source_document_id=eq.${sourceDocumentId}&asset_type=eq.image&select=id,source_ref,status,resolved_url,storage_path,label,metadata`,
+  ) as Array<{
+    id: string;
+    source_ref: string;
+    status: string;
+    resolved_url: string | null;
+    storage_path: string | null;
+    label: string | null;
+    metadata: Record<string, unknown> | null;
+  }>;
+  const existingByRef = new Map(existing.map((asset) => [asset.source_ref, asset]));
   const allFiles = [...new Set([...bundle.fileRefs, ...Object.keys(bundle.renderedFileMap)])];
-  const imageRows = allFiles
-    .map((file) => ({
-      file,
-      source_ref: rawImageRef(file),
-      directUrl: bundle.renderedFileMap[file] || null,
-      linkedTarget: bundle.fileTargetMap[file] || null,
-    }))
-    .filter((asset) => !existingRefs.has(asset.source_ref))
-    .map((asset) => ({
-      source_document_id: sourceDocumentId,
-      root_title: rootTitle,
-      source_title: sourceTitle,
-      asset_type: "image",
-      source_ref: asset.source_ref,
-      label: asset.file,
-      provider: "namu_file",
-      role: "inline",
-      metadata: {
-        filename: asset.file,
-        origin: bundle.fileRefs.includes(asset.file) ? "raw" : "rendered",
-        extraction_version: EXTRACTION_VERSION,
-        render_artifact_version: NAMU_RENDER_ARTIFACT_VERSION,
-        ...(asset.directUrl ? { enrichment_url: asset.directUrl, enrichment_confidence: 1, resolved_from_hint: "mirror-img-alt" } : {}),
-        ...(asset.linkedTarget ? { linked_target: asset.linkedTarget, resolved_from_hint: asset.directUrl ? "mirror-img-alt" : "linked-document" } : {}),
-      },
-    }));
+  const inserts: Record<string, unknown>[] = [];
+  let refreshed = 0;
 
-  if (imageRows.length) {
+  for (const file of allFiles) {
+    const sourceRef = rawImageRef(file);
+    const directUrl = bundle.renderedFileMap[file] || null;
+    const linkedTarget = bundle.fileTargetMap[file] || null;
+    const old = existingByRef.get(sourceRef);
+    const freshMetadata = {
+      ...(old?.metadata || {}),
+      filename: file,
+      origin: bundle.fileRefs.includes(file) ? "raw" : "rendered",
+      extraction_version: EXTRACTION_VERSION,
+      render_artifact_version: NAMU_RENDER_ARTIFACT_VERSION,
+      ...(directUrl ? { enrichment_url: directUrl, enrichment_confidence: 1, resolved_from_hint: "mirror-img-alt" } : {}),
+      ...(linkedTarget ? { linked_target: linkedTarget, linked_document_title: linkedTarget, resolved_from_hint: directUrl ? "mirror-img-alt" : "linked-document" } : {}),
+      resolution_error: null,
+    };
+
+    if (!old) {
+      inserts.push({
+        source_document_id: sourceDocumentId,
+        root_title: rootTitle,
+        source_title: sourceTitle,
+        asset_type: "image",
+        source_ref: sourceRef,
+        label: file,
+        provider: "namu_file",
+        role: "inline",
+        status: "pending",
+        metadata: freshMetadata,
+      });
+      continue;
+    }
+
+    // Stored bytes are canonical and need no further network resolution.
+    if (old.storage_path) continue;
+
+    await db(`source_asset_queue?id=eq.${old.id}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        root_title: rootTitle,
+        source_title: sourceTitle,
+        label: file,
+        provider: "namu_file",
+        role: "inline",
+        status: "pending",
+        resolved_url: null,
+        storage_path: null,
+        confidence: null,
+        metadata: freshMetadata,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    refreshed += 1;
+  }
+
+  if (inserts.length) {
     await db("source_asset_queue", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(imageRows),
+      body: JSON.stringify(inserts),
     });
   }
 
-  return imageRows.length;
+  return inserts.length + refreshed;
 }
 
 async function hydrateClusterAssetHints(rootTitle: string, renderedFileMap: RenderedFileMap) {
@@ -387,4 +439,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown import error" }, { status: 500 });
   }
 }
-
