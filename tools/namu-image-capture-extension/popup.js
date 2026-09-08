@@ -11,7 +11,9 @@ function setStatus(text, kind = "") {
 async function refreshHealth() {
   const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-health" });
   if (response?.ok) {
-    health.textContent = "Local helper: connected";
+    health.textContent = response.supabaseHost
+      ? `Local helper: connected (${response.supabaseHost})`
+      : "Local helper: connected";
     health.className = "ok";
   } else {
     health.textContent = "Local helper: not running";
@@ -42,6 +44,7 @@ captureButton.addEventListener("click", async () => {
     if (!response?.ok) throw new Error(response?.error || "Capture failed.");
     const result = response.result;
     const failed = result.details.filter((item) => item.status === "failed").slice(0, 8);
+    const noQueue = result.details.filter((item) => item.status === "no_queue").slice(0, 8);
     const lines = [
       `Page: ${result.sourceTitle}`,
       `Found: ${result.found}`,
@@ -50,6 +53,10 @@ captureButton.addEventListener("click", async () => {
       `Rejected candidates: ${result.rejected}`,
       `Failed files: ${result.failed}`,
     ];
+
+    if (result.helper?.supabaseHost) {
+      lines.push(`Helper DB: ${result.helper.supabaseHost}`);
+    }
 
     if (result.debug) {
       lines.push(
@@ -69,6 +76,20 @@ captureButton.addEventListener("click", async () => {
           const label = sample.alt || sample.title || "(no label)";
           lines.push(`- ${label} | ${String(sample.src || "").slice(0, 100)}`);
         }
+      }
+    }
+
+    if (noQueue.length) {
+      lines.push("", "No queue samples:");
+      for (const item of noQueue) {
+        lines.push(`- ${item.fileName}`);
+        if (item.fileKey && item.fileKey !== String(item.fileName || "").toLowerCase()) lines.push(`  key: ${item.fileKey}`);
+      }
+      const first = noQueue[0];
+      if (Number.isFinite(first.queueRows)) lines.push(`Queue rows visible to helper: ${first.queueRows}`);
+      if (first.sampleKeys?.length) {
+        lines.push("Queue key samples:");
+        for (const key of first.sampleKeys.slice(0, 6)) lines.push(`- ${key}`);
       }
     }
 
