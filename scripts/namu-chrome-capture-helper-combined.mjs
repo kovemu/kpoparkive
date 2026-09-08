@@ -8,7 +8,7 @@ const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
 const ASSET_WORKER_PORT = PORT + 1;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;
-const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v2";
+const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -94,12 +94,61 @@ function validateNamuPageUrl(value) {
   return url.toString();
 }
 
+function cleanInternalLinks(value) {
+  if (!Array.isArray(value)) return [];
+  const output = [];
+  const seen = new Set();
+  for (const item of value) {
+    const title = String(item?.title || item || "").normalize("NFKC").trim();
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    output.push({
+      title,
+      href: String(item?.href || `https://namu.wiki/w/${encodeURIComponent(title)}`).trim(),
+      text: String(item?.text || "").replace(/\s+/g, " ").trim().slice(0, 240),
+    });
+    if (output.length >= 2000) break;
+  }
+  return output;
+}
+
 const stats = {
   documentsSaved: 0,
+  documentsCreated: 0,
   documentErrors: 0,
   proxiedAssets: 0,
   proxyErrors: 0,
 };
+
+async function ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks }) {
+  const docs = await db(
+    `source_documents?source=eq.namu_mirror` +
+    `&root_title=eq.${encodeURIComponent(rootTitle)}` +
+    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
+    `&select=id,source_title,root_title&limit=1`,
+  );
+  if (docs?.[0]?.id) return docs[0];
+
+  const created = await db("source_documents", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      source: "namu_mirror",
+      source_title: sourceTitle,
+      source_url: pageUrl,
+      root_title: rootTitle,
+      crawl_depth: Math.max(0, Number(crawlDepth || 0) || 0),
+      discovered_links: internalLinks,
+      source_format: "browser_rendered",
+      source_extraction_version: DOCUMENT_CAPTURE_VERSION,
+    }),
+  });
+  const doc = created?.[0];
+  if (!doc?.id) throw new Error(`Could not create source_document for ${sourceTitle}`);
+  stats.documentsCreated += 1;
+  console.log(`SOURCE DOCUMENT CREATED ${sourceTitle} under ${rootTitle}`);
+  return doc;
+}
 
 async function saveRenderedDocument(payload) {
   const rootTitle = String(payload?.rootTitle || "").normalize("NFKC").trim();
@@ -108,20 +157,17 @@ async function saveRenderedDocument(payload) {
   const styleCss = String(payload?.styleCss || "");
   const pageUrl = validateNamuPageUrl(payload?.pageUrl);
   const captureVersion = String(payload?.captureVersion || DOCUMENT_CAPTURE_VERSION).trim() || DOCUMENT_CAPTURE_VERSION;
+  const crawlDepth = Math.max(0, Number(payload?.meta?.crawlDepth || 0) || 0);
+  const internalLinks = cleanInternalLinks(payload?.meta?.internalLinks);
 
   if (!rootTitle || !sourceTitle) throw new Error("document capture is missing rootTitle/sourceTitle");
   if (articleHtml.length < 200) throw new Error("rendered article HTML is unexpectedly small");
-  if (!/<(?:article|main)\b/i.test(articleHtml)) throw new Error("rendered capture does not contain an article/main root");
+  if (!/data-kpop-capture-root=["']true["']/i.test(articleHtml) && !/<(?:article|main)\b/i.test(articleHtml)) {
+    throw new Error("rendered capture does not contain a trusted captured content root");
+  }
   if (captureVersion !== DOCUMENT_CAPTURE_VERSION) throw new Error(`capture version mismatch: expected ${DOCUMENT_CAPTURE_VERSION}, got ${captureVersion}`);
 
-  const docs = await db(
-    `source_documents?source=eq.namu_mirror` +
-    `&root_title=eq.${encodeURIComponent(rootTitle)}` +
-    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-    `&select=id,source_title,root_title&limit=1`,
-  );
-  const doc = docs?.[0];
-  if (!doc?.id) throw new Error(`No imported source_document matched ${rootTitle} / ${sourceTitle}. Import the document cluster first.`);
+  const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks });
 
   const capturedAt = new Date().toISOString();
   const articleBytes = Buffer.byteLength(articleHtml, "utf8");
@@ -132,6 +178,8 @@ async function saveRenderedDocument(payload) {
     page_title: String(payload?.pageTitle || ""),
     article_bytes: articleBytes,
     style_bytes: styleBytes,
+    crawlDepth,
+    internalLinkCount: internalLinks.length,
     captured_by: "normal-chrome-extension",
     presentation_mode: "final-dom-plus-computed-layout",
   };
@@ -140,16 +188,20 @@ async function saveRenderedDocument(payload) {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({
+      source_url: pageUrl,
+      crawl_depth: crawlDepth,
+      discovered_links: internalLinks,
       source_browser_article_html: articleHtml,
       source_browser_style_css: styleCss || null,
       source_browser_capture_meta: meta,
       source_browser_capture_version: captureVersion,
       source_browser_captured_at: capturedAt,
+      updated_at: capturedAt,
     }),
   });
 
   stats.documentsSaved += 1;
-  console.log(`BROWSER ARTIFACT SAVED ${sourceTitle} -> HTML ${(articleBytes / 1024).toFixed(1)} KB + CSS ${(styleBytes / 1024).toFixed(1)} KB`);
+  console.log(`BROWSER ARTIFACT SAVED ${sourceTitle} -> HTML ${(articleBytes / 1024).toFixed(1)} KB + CSS ${(styleBytes / 1024).toFixed(1)} KB + ${internalLinks.length} links`);
   return {
     ok: true,
     status: "saved",
@@ -164,6 +216,33 @@ async function saveRenderedDocument(payload) {
     pseudoRuleCount: Number(meta.pseudoRuleCount || 0),
     imageCount: Number(meta.imageCount || 0),
     tableCount: Number(meta.tableCount || 0),
+    internalLinkCount: internalLinks.length,
+  };
+}
+
+async function clusterDocuments(rootTitle) {
+  const title = String(rootTitle || "").normalize("NFKC").trim();
+  if (!title) throw new Error("rootTitle is required");
+  return db(
+    `source_documents?source=eq.namu_mirror&root_title=eq.${encodeURIComponent(title)}` +
+    `&select=source_title,source_url,crawl_depth,source_browser_captured_at` +
+    `&order=crawl_depth.asc,source_title.asc&limit=500`,
+  );
+}
+
+async function documentStatus(rootTitle, sourceTitle) {
+  const rows = await db(
+    `source_documents?source=eq.namu_mirror` +
+    `&root_title=eq.${encodeURIComponent(rootTitle)}` +
+    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
+    `&select=id,source_browser_captured_at,source_browser_capture_version&limit=1`,
+  );
+  const row = rows?.[0] || null;
+  return {
+    exists: Boolean(row),
+    captured: Boolean(row?.source_browser_captured_at),
+    capturedAt: row?.source_browser_captured_at || null,
+    captureVersion: row?.source_browser_capture_version || null,
   };
 }
 
@@ -229,17 +308,32 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/health") {
     json(res, 200, {
       ok: true,
-      service: "kpoparkive-namu-chrome-capture-combined-v2",
+      service: "kpoparkive-namu-chrome-capture-helper-v7",
       port: PORT,
       assetWorkerPort: ASSET_WORKER_PORT,
       supabaseHost: SUPABASE_HOST,
       documentCapture: DOCUMENT_CAPTURE_VERSION,
+      recursiveClone: true,
       stats,
     });
     return;
   }
 
   try {
+    if (req.method === "GET" && url.pathname === "/cluster") {
+      const docs = await clusterDocuments(url.searchParams.get("rootTitle"));
+      json(res, 200, { ok: true, documents: docs || [] });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/document-status") {
+      const rootTitle = String(url.searchParams.get("rootTitle") || "").trim();
+      const sourceTitle = String(url.searchParams.get("sourceTitle") || "").trim();
+      if (!rootTitle || !sourceTitle) throw new Error("rootTitle/sourceTitle are required");
+      json(res, 200, { ok: true, ...(await documentStatus(rootTitle, sourceTitle)) });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/document") {
       const bytes = await readBody(req, MAX_DOCUMENT_BYTES);
       let payload;
@@ -260,7 +354,7 @@ const server = http.createServer(async (req, res) => {
     const message = error instanceof Error ? error.message : String(error);
     if (url.pathname === "/document") stats.documentErrors += 1;
     else stats.proxyErrors += 1;
-    console.error(`CAPTURE COMBINED ERROR: ${message}`);
+    console.error(`CAPTURE HELPER ERROR: ${message}`);
     json(res, 400, { ok: false, error: message });
   }
 });
@@ -274,10 +368,10 @@ process.on("SIGINT", () => { shutdown(); process.exit(0); });
 process.on("SIGTERM", () => { shutdown(); process.exit(0); });
 
 server.listen(PORT, HOST, () => {
-  console.log("Kpoparkive Namu Chrome capture helper v5 (DOM + computed layout + images)");
+  console.log("Kpoparkive Namu Chrome capture helper v7 (recursive DOM clone + images)");
   console.log(`Listening on http://${HOST}:${PORT}`);
   console.log(`Image worker proxy: http://${HOST}:${ASSET_WORKER_PORT}`);
   console.log(`Supabase: ${SUPABASE_HOST}`);
   console.log(`Artifact format: ${DOCUMENT_CAPTURE_VERSION}`);
-  console.log("Capture stores the final rendered DOM, computed styles/layout snapshot, pseudo-element CSS and verified image bytes.");
+  console.log("One browser capture can now create missing source_documents, persist internal-link graphs and support recursive cluster cloning.");
 });
