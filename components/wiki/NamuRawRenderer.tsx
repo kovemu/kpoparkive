@@ -1,4 +1,5 @@
 import React from "react";
+import { findNamuAsset, normalizeNamuFileRef } from "../../lib/namuAssetLookup";
 import type { NamuInline, NamuRawCell, NamuRawNode, NamuRawTableMeta } from "../../lib/namuRawParser";
 import styles from "./NamuRawRenderer.module.css";
 
@@ -22,24 +23,11 @@ function internalHref(target: string) {
   return anchor ? `${base}#${encodeURIComponent(anchor)}` : base;
 }
 
-function normalizeFileRef(file: string) {
-  return file.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
-}
-
 function imageStyle(width?: string, height?: string): React.CSSProperties {
   const style: React.CSSProperties = { display: "block", maxWidth: "100%", height: "auto" };
   if (width && /^(?:\d+(?:\.\d+)?(?:px|%|rem|em|vw)?|auto)$/i.test(width)) style.width = /^\d+$/.test(width) ? `${width}px` : width;
   if (height && /^\d+(?:\.\d+)?(?:px|rem|em|vh)?$/i.test(height)) style.height = /^\d+$/.test(height) ? `${height}px` : height;
   return style;
-}
-
-function findAsset(assets: AssetMap, file: string) {
-  const normalized = normalizeFileRef(file);
-  if (assets[normalized]) return assets[normalized];
-  for (const [key, url] of Object.entries(assets)) {
-    if (normalizeFileRef(key) === normalized) return url;
-  }
-  return undefined;
 }
 
 // Inline rendering intentionally mirrors the recursive source nesting.
@@ -86,8 +74,18 @@ const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   "display": "display",
   "justify-content": "justifyContent",
   "align-items": "alignItems",
+  "align-content": "alignContent",
+  "flex": "flex",
+  "flex-grow": "flexGrow",
+  "flex-shrink": "flexShrink",
+  "flex-basis": "flexBasis",
+  "flex-direction": "flexDirection",
+  "flex-wrap": "flexWrap",
   "gap": "gap",
+  "row-gap": "rowGap",
+  "column-gap": "columnGap",
   "text-align": "textAlign",
+  "vertical-align": "verticalAlign",
   "background": "background",
   "background-color": "backgroundColor",
   "color": "color",
@@ -95,6 +93,7 @@ const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   "max-width": "maxWidth",
   "min-width": "minWidth",
   "height": "height",
+  "max-height": "maxHeight",
   "min-height": "minHeight",
   "margin": "margin",
   "margin-left": "marginLeft",
@@ -112,14 +111,19 @@ const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   "border-top": "borderTop",
   "border-bottom": "borderBottom",
   "border-radius": "borderRadius",
+  "box-sizing": "boxSizing",
   "font": "font",
   "font-family": "fontFamily",
   "font-size": "fontSize",
   "font-weight": "fontWeight",
   "line-height": "lineHeight",
+  "letter-spacing": "letterSpacing",
+  "text-decoration": "textDecoration",
   "white-space": "whiteSpace",
   "word-break": "wordBreak",
   "overflow": "overflow",
+  "overflow-x": "overflowX",
+  "overflow-y": "overflowY",
 };
 
 function safeWikiStyle(args: string): React.CSSProperties | undefined {
@@ -189,8 +193,8 @@ function Inline({ nodes, assets, footnotes }: { nodes: NamuInline[]; assets: Ass
       }
       if (node.type === "code") return <code key={index}>{node.text}</code>;
 
-      const file = normalizeFileRef(node.file);
-      const url = findAsset(assets, file);
+      const file = normalizeNamuFileRef(node.file);
+      const url = findNamuAsset(assets, file);
       if (url) return <img key={index} src={url} alt={file} loading="lazy" style={imageStyle(node.width, node.height)} />;
       return <span key={index} title={`Unresolved image: ${file}`} style={{ display: "inline-block", padding: "4px 7px", border: "1px dashed #c7ccd4", color: "#667085", fontSize: 12 }}>[{file}]</span>;
     })}
@@ -217,18 +221,29 @@ function tableStyle(meta?: NamuRawTableMeta): React.CSSProperties {
     borderColor: meta?.borderColor,
   };
 
+  if (meta?.borderColor) style.border = `2px solid ${meta.borderColor}`;
+  return style;
+}
+
+/**
+ * Keep the wrapper from changing Namu's table geometry. A fixed/auto source
+ * table should stay shrink-wrapped, while tablewidth=100% continues to fill the
+ * document. Alignment is applied to the wrapper so overflow handling does not
+ * create a full-width block around narrow infobox/navigation tables.
+ */
+function tableWrapStyle(meta?: NamuRawTableMeta): React.CSSProperties {
+  const width = meta?.width || "fit-content";
+  const style: React.CSSProperties = { width, maxWidth: "100%" };
   if (meta?.align === "center") {
     style.marginLeft = "auto";
     style.marginRight = "auto";
   } else if (meta?.align === "right") {
     style.marginLeft = "auto";
     style.marginRight = 0;
-  } else if (meta?.align === "left") {
+  } else {
     style.marginLeft = 0;
     style.marginRight = "auto";
   }
-
-  if (meta?.borderColor) style.border = `2px solid ${meta.borderColor}`;
   return style;
 }
 
@@ -254,7 +269,7 @@ function NodeList({ nodes, assets, footnotes }: { nodes: NamuRawNode[]; assets: 
       if (node.type === "table") {
         const rawClass = sourceTableClass(node.meta);
         const className = [`wikiTable`, styles.table, rawClass].filter(Boolean).join(" ");
-        return <div key={index} className={styles.tableWrap}>
+        return <div key={index} className={styles.tableWrap} style={tableWrapStyle(node.meta)}>
           <table className={className} data-namu-table-class={rawClass} style={tableStyle(node.meta)}><tbody>
             {node.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} rowSpan={cell.rowspan} colSpan={cell.colspan} style={cellStyle(cell, node.meta)}><Inline nodes={cell.children} assets={assets} footnotes={footnotes} /></td>)}</tr>)}
           </tbody></table>
