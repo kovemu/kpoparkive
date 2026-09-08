@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Kpoparkive Namu Image Capture",
+  "version": "0.1.0",
+  "description": "Capture image bytes from a NamuWiki page opened in your normal Chrome and send them to the local Kpoparkive helper.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "https://namu.wiki/*",
+    "https://*.namu.wiki/*",
+    "https://*/*",
+    "http://127.0.0.1:43117/*"
+  ],
+  "action": {
+    "default_title": "Capture NamuWiki images",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
