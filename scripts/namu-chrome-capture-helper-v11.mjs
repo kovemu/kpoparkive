@@ -12,7 +12,7 @@ if (!source.includes(combinedMarker) || !source.includes(v8Marker)) throw new Er
 
 const dbRetryPatch = String.raw`
 const oldDbWithNoRetry = String.raw\`async function db(pathname, init = {}) {
-  const response = await fetch(\`${SUPABASE_URL}/rest/v1/\${pathname}\`, {
+  const response = await fetch(\`\${SUPABASE_URL}/rest/v1/\${pathname}\`, {
     ...init,
     headers: { ...dbHeaders(), ...(init.headers || {}) },
   });
@@ -25,7 +25,7 @@ const newDbWithRetry = String.raw\`async function db(pathname, init = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      const response = await fetch(\`${SUPABASE_URL}/rest/v1/\${pathname}\`, {
+      const response = await fetch(\`\${SUPABASE_URL}/rest/v1/\${pathname}\`, {
         ...init,
         headers: { ...dbHeaders(), ...(init.headers || {}) },
       });
