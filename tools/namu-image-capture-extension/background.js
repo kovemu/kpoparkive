@@ -123,6 +123,7 @@ async function captureCurrentTab(rootTitle) {
     failed: 0,
     rejected: 0,
     details: [],
+    debug: extracted.debug || null,
   };
 
   for (const asset of extracted.assets) {
