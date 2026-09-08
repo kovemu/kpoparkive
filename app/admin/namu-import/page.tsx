@@ -104,6 +104,17 @@ export default function NamuImportPage() {
     return result;
   }
 
+  async function cleanupStorage() {
+    const response = await fetch("/api/admin/namu-storage-cleanup", {
+      method: "POST",
+      headers: commonHeaders,
+      body: JSON.stringify({ rootTitle }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Storage cleanup failed");
+    return result;
+  }
+
   async function runImportAndParse() {
     setBusy(true);
     try {
@@ -119,13 +130,17 @@ export default function NamuImportPage() {
       setStatus(`Step 3/4 complete: ${rawResult.extracted ?? 0} legacy documents upgraded, ${rawResult.rawBlocks ?? 0} raw blocks recovered, ${rawResult.styleBlocks ?? 0} style blocks captured, ${rawResult.clusterAssetHints ?? 0} cluster media hints connected.\nStep 4/4: resolving and validating images/videos and classifying links...`);
       const assetResult = await resolveAssets(false);
 
+      setStatus("Finalizing: removing unreferenced import objects from Storage...");
+      const cleanupResult = await cleanupStorage();
+
       setStatus(JSON.stringify({
         import: importResult,
         compatibilityParse: parseResult,
         domRawBackfill: rawResult,
         assets: assetResult,
+        storageCleanup: cleanupResult,
         preview: rawPreviewHref,
-        next: "Reusable import complete. Rendered DOM is the layout skeleton; RAW Namu fragments provide unresolved semantics; template CSS and cluster media mappings are captured by the importer.",
+        next: "Reusable import complete. Rendered DOM is the layout skeleton; RAW Namu fragments provide unresolved semantics; only validated asset payloads are retained and unreferenced import objects are removed from Storage.",
       }, null, 2));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Pipeline failed");
