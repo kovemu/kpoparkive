@@ -15,10 +15,16 @@ async function kpopControllerJson(path, init = {}) {
   return body;
 }
 
-async function kpopEnsureRunnerTab() {
+async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
   const existing = tabs.find((tab) => tab.id);
-  if (existing) return existing;
+  if (existing?.id) {
+    if (reloadExisting) {
+      try { await chrome.tabs.reload(existing.id); } catch {}
+      try { return await chrome.tabs.get(existing.id); } catch { return existing; }
+    }
+    return existing;
+  }
   return chrome.tabs.create({ url: KPOP_RUNNER_URL, active: false, pinned: true });
 }
 
@@ -45,14 +51,39 @@ async function kpopStartHelperClone(options = {}) {
     method: "POST",
     body: JSON.stringify({ rootTitle, rootUrl: activeTab.url, maxDepth, maxDocs }),
   });
-  await kpopEnsureRunnerTab();
+
+  // A previous helper failure can leave runner.html open but dead. Because the
+  // Import button is disabled while a job is already running, an explicit start
+  // here means it is safe to restart the runner page and create fresh workers.
+  await kpopEnsureRunnerTab({ reloadExisting: true });
   return result.job;
 }
 
 async function kpopRecoverRunner() {
   try {
     const status = await kpopControllerJson("/clone/status");
-    if (status?.job?.running) await kpopEnsureRunnerTab();
+    const job = status?.job;
+    if (!job?.running) return;
+
+    const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
+    const existing = tabs.find((tab) => tab.id);
+    if (!existing) {
+      await kpopEnsureRunnerTab();
+      return;
+    }
+
+    // If a persisted job has queued work but no active leases, the previous
+    // runner likely died while the helper was stopped or errored. Confirm the
+    // idle state after a short grace period before reloading to avoid racing a
+    // healthy worker between claims.
+    if (Number(job.queued || 0) > 0 && Number(job.leased || 0) === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const confirm = await kpopControllerJson("/clone/status");
+      const next = confirm?.job;
+      if (next?.running && Number(next.queued || 0) > 0 && Number(next.leased || 0) === 0) {
+        await kpopEnsureRunnerTab({ reloadExisting: true });
+      }
+    }
   } catch {}
 }
 
