@@ -44,13 +44,29 @@ export function buildNamuResolvedAssetMap(rows: NamuQueueAsset[], hints: Record<
   };
   for (const row of rows) {
     const hint = row.metadata?.enrichment_url;
-    const url = typeof hint === "string" && /^https?:\/\//i.test(hint) ? hint
-      : /^https?:\/\//i.test(row.source_ref) ? row.source_ref : null;
+    const url = typeof hint === "string" && /^https?:\/\//i.test(hint) && !isNamuMirrorUiAssetUrl(hint) ? hint
+      : /^https?:\/\//i.test(row.source_ref) && !isNamuMirrorUiAssetUrl(row.source_ref) ? row.source_ref : null;
     if (url) add(row, url);
   }
-  for (const row of rows) if (row.resolved_url) add(row, row.resolved_url);
-  for (const row of rows) if (row.storage_path && row.resolved_url) add(row, row.resolved_url);
+  for (const row of rows) if (row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
+  for (const row of rows) if (row.storage_path && row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
   return assets;
+}
+
+/**
+ * Mirror-owned /images/* are page chrome (for example the CC BY-NC-SA badge),
+ * not Namu [[파일:...]] payloads. They can appear next to a file reference on a
+ * mirror file page and must never be promoted into the filename -> asset map.
+ */
+export function isNamuMirrorUiAssetUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const isMirror = host === "namu.moe" || host.endsWith(".namu.moe");
+    return isMirror && /^\/images\//i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -61,6 +77,7 @@ export function buildNamuResolvedAssetMap(rows: NamuQueueAsset[], hints: Record<
  * Supabase, so these remote URLs are never a long-term runtime dependency.
  */
 export function expandNamuRemoteCandidates(url: string) {
+  if (isNamuMirrorUiAssetUrl(url)) return [];
   const output = [url];
   try {
     const parsed = new URL(url);
@@ -72,7 +89,7 @@ export function expandNamuRemoteCandidates(url: string) {
   } catch {
     // Candidate validation happens again before network I/O.
   }
-  return [...new Set(output)];
+  return [...new Set(output)].filter(candidate => !isNamuMirrorUiAssetUrl(candidate));
 }
 
 export function findNamuAssetCandidates(refs: string[], maps: Record<string, string>[]) {
