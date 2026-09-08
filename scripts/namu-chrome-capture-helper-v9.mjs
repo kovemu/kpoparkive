@@ -35,8 +35,17 @@ const newBlock = String.raw`async function kpopKnownAssetUrls(rootTitle) {
   return [...new Set(urls)];
 }`;
 
+const oldSkip = String.raw`    if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION) {
+      kpopCloneState.processed += 1;`;
+
+const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_browser_captured_at || "");
+    const capturedAfterAdFilter = Number.isFinite(capturedAtMs) && capturedAtMs >= Date.parse("2026-09-08T16:30:00Z");
+    if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter) {
+      kpopCloneState.processed += 1;`;
+
 if (!base.includes(oldBlock)) throw new Error("v8 helper changed; v9 known-media patch no longer matches");
-const patched = base.replace(oldBlock, newBlock);
+if (!base.includes(oldSkip)) throw new Error("v8 helper changed; v9 artifact-refresh patch no longer matches");
+const patched = base.replace(oldBlock, newBlock).replace(oldSkip, newSkip);
 const tempPath = path.join(os.tmpdir(), `kpoparkive-namu-capture-v9-${process.pid}.mjs`);
 fs.writeFileSync(tempPath, patched, "utf8");
 const cleanup = () => { try { fs.unlinkSync(tempPath); } catch {} };
