@@ -81,6 +81,14 @@ function cleanHint(value) {
     .trim();
 }
 
+function normalizeSourceTitle(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 function hasEllipsis(value) {
   return /(?:\.{3}|…)\s*$/.test(String(value || "").trim());
 }
@@ -190,6 +198,35 @@ async function loadQueue(rootTitle, force = false) {
   return value;
 }
 
+function narrowAnonymousCandidates(candidates, meta, preferSvg) {
+  let narrowed = candidates;
+  let usedSourcePage = false;
+  let usedType = false;
+
+  if (narrowed.length > 1) {
+    const sourceTitle = normalizeSourceTitle(meta.sourceTitle);
+    if (sourceTitle) {
+      const sourceScoped = narrowed.filter((entry) =>
+        entry.rows.some((row) => normalizeSourceTitle(row.source_title) === sourceTitle),
+      );
+      if (sourceScoped.length) {
+        narrowed = sourceScoped;
+        usedSourcePage = true;
+      }
+    }
+  }
+
+  if (narrowed.length > 1) {
+    const typed = narrowed.filter((entry) => preferSvg ? entry.key.endsWith(".svg") : !entry.key.endsWith(".svg"));
+    if (typed.length) {
+      narrowed = typed;
+      usedType = true;
+    }
+  }
+
+  return { candidates: narrowed, usedSourcePage, usedType };
+}
+
 function inferAnonymousMatch(cache, meta, contentType) {
   const hints = [meta.semanticFileName, meta.alt, meta.title].filter((v) => String(v || "").trim());
   if (!hints.length) return null;
@@ -203,24 +240,32 @@ function inferAnonymousMatch(cache, meta, contentType) {
     const truncated = hasEllipsis(rawHint);
 
     if (!truncated) {
-      let exact = entries.filter((entry) => entry.stem === hint);
-      if (exact.length > 1) {
-        const typed = exact.filter((entry) => preferSvg ? entry.key.endsWith(".svg") : !entry.key.endsWith(".svg"));
-        if (typed.length === 1) exact = typed;
-      }
-      if (exact.length === 1) {
-        return { ...exact[0], method: "alt-stem-exact", confidence: 0.995, hint: rawHint };
+      const exactRaw = entries.filter((entry) => entry.stem === hint);
+      const exact = narrowAnonymousCandidates(exactRaw, meta, preferSvg);
+      if (exact.candidates.length === 1) {
+        const sourceSuffix = exact.usedSourcePage ? "-source-page" : "";
+        const typeSuffix = exact.usedType ? "-type" : "";
+        return {
+          ...exact.candidates[0],
+          method: `alt-stem-exact${sourceSuffix}${typeSuffix}`,
+          confidence: exact.usedSourcePage ? 0.998 : 0.995,
+          hint: rawHint,
+        };
       }
     }
 
     if (hint.length >= 4) {
-      let prefix = entries.filter((entry) => entry.stem.startsWith(hint));
-      if (prefix.length > 1) {
-        const typed = prefix.filter((entry) => preferSvg ? entry.key.endsWith(".svg") : !entry.key.endsWith(".svg"));
-        if (typed.length === 1) prefix = typed;
-      }
-      if (prefix.length === 1) {
-        return { ...prefix[0], method: "alt-stem-prefix", confidence: 0.965, hint: rawHint };
+      const prefixRaw = entries.filter((entry) => entry.stem.startsWith(hint));
+      const prefix = narrowAnonymousCandidates(prefixRaw, meta, preferSvg);
+      if (prefix.candidates.length === 1) {
+        const sourceSuffix = prefix.usedSourcePage ? "-source-page" : "";
+        const typeSuffix = prefix.usedType ? "-type" : "";
+        return {
+          ...prefix.candidates[0],
+          method: `alt-stem-prefix${sourceSuffix}${typeSuffix}`,
+          confidence: prefix.usedSourcePage ? 0.985 : 0.965,
+          hint: rawHint,
+        };
       }
     }
   }
@@ -367,8 +412,10 @@ const server = http.createServer(async (req, res) => {
     const contentType = detectContentType(bytes, req.headers["content-type"] || meta.contentType || "", meta.sourceUrl);
     if (!contentType) throw new Error("payload is not a supported image");
     const parsed = dimensionsFromBytes(bytes, contentType);
-    const width = Math.max(Number(meta.width || 0), Number(parsed.width || 0));
-    const height = Math.max(Number(meta.height || 0), Number(parsed.height || 0));
+    const rawWidth = Math.max(Number(meta.width || 0), Number(parsed.width || 0));
+    const rawHeight = Math.max(Number(meta.height || 0), Number(parsed.height || 0));
+    const width = Number.isFinite(rawWidth) ? Math.max(0, Math.round(rawWidth)) : 0;
+    const height = Number.isFinite(rawHeight) ? Math.max(0, Math.round(rawHeight)) : 0;
     if (contentType !== "image/svg+xml" && (width < 8 || height < 8)) throw new Error(`placeholder-sized image ${width}x${height}`);
     if (meta.visual?.valid === false) throw new Error(meta.visual.reason || "browser visual validation failed");
 
@@ -427,7 +474,7 @@ server.listen(PORT, HOST, () => {
   console.log("Kpoparkive Namu Chrome capture helper v3");
   console.log(`Listening on http://${HOST}:${PORT}`);
   console.log(`Supabase: ${SUPABASE_URL}`);
-  console.log("Anonymous CDN images are matched back to queue filenames using unique alt/title stems.");
+  console.log("Anonymous CDN images are matched back to queue filenames using alt/title, source page, and image type.");
   console.log("Matched captures -> wiki-media/imports/<root>/...");
   console.log("Unmatched captures -> wiki-media/captures/<root>/... + namu_capture_staging");
 });
