@@ -9,14 +9,39 @@ function safeStyle(value: string | undefined) {
     const colon = declaration.indexOf(":");
     if (colon < 1) continue;
     const property = declaration.slice(0, colon).trim().toLowerCase();
-    const rawValue = declaration.slice(colon + 1).trim();
+    let rawValue = declaration.slice(colon + 1).trim();
     if (!/^-?[a-z][a-z0-9-]*$/i.test(property)) continue;
     if (!rawValue || /[<>]/.test(rawValue)) continue;
     if (/url\s*\(|expression\s*\(|javascript:|behavior\s*:|-moz-binding/i.test(rawValue)) continue;
     if (property === "behavior" || property === "-moz-binding") continue;
+
+    // A computed-layout snapshot often freezes responsive Namu wrappers as
+    // scroll containers even though the original page naturally expands at
+    // the captured desktop width. Replaying those values creates nested
+    // horizontal/vertical scrollbars. Keep clipping semantics, but turn
+    // snapshot-only scrolling back into normal document flow.
+    if (["overflow", "overflow-x", "overflow-y"].includes(property) && /^(?:auto|scroll)$/i.test(rawValue)) {
+      rawValue = "visible";
+    }
+
     output.push(`${property}:${rawValue}`);
   }
   return output.join(";");
+}
+
+function stripFlowHeights(value: string | undefined) {
+  if (!value) return "";
+  const blocked = new Set(["height", "min-height", "max-height"]);
+  return value
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((declaration) => {
+      const colon = declaration.indexOf(":");
+      if (colon < 1) return false;
+      return !blocked.has(declaration.slice(0, colon).trim().toLowerCase());
+    })
+    .join(";");
 }
 
 function safeHref(value: string | undefined) {
@@ -59,7 +84,7 @@ function assetUrl(value: string, assets: BrowserArtifactAssetMap) {
   const exact = assets[value];
   if (exact) return exact;
   const normalized = normalizeUrlKey(value);
-  return assets[normalized] || value;
+  return assets[normalized] || normalized || value;
 }
 
 function sanitizePseudoCss(source: string | null | undefined) {
@@ -114,6 +139,25 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
       element.removeAttribute("loading");
     }
 
+    if (tag === "video") {
+      const src = element.getAttribute("src") || element.getAttribute("data-kpop-source-url") || element.getAttribute("data-original") || "";
+      const resolved = assetUrl(src, assets);
+      if (resolved) element.setAttribute("src", resolved);
+
+      const poster = element.getAttribute("poster") || "";
+      if (poster) element.setAttribute("poster", assetUrl(poster, assets));
+
+      // Namu's client code starts these muted logo/media loops. The captured
+      // DOM no longer has that Vue runtime, so preserve the same behavior with
+      // native video attributes.
+      element.setAttribute("autoplay", "");
+      element.setAttribute("muted", "");
+      element.setAttribute("playsinline", "");
+      element.setAttribute("loop", "");
+      element.setAttribute("preload", "metadata");
+      element.removeAttribute("loading");
+    }
+
     if (tag === "iframe") {
       const src = String(element.getAttribute("src") || "").trim();
       let allowed = false;
@@ -128,6 +172,26 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
     if (tag === "form") {
       element.removeAttribute("action");
       element.removeAttribute("method");
+    }
+  }
+
+  // Native <details>/<summary> still works without Namu's JavaScript, but a
+  // computed snapshot captures the *current* fixed height. Once the user
+  // toggles it, that frozen height prevents the surrounding table/cell from
+  // reflowing and makes the action look broken. Restore natural height only
+  // along the details ancestry; keep the rest of the snapshot untouched.
+  for (const details of root.querySelectorAll("details")) {
+    let current: any = details;
+    let depth = 0;
+    while (current && depth < 8) {
+      const tag = String(current.tagName || "").toLowerCase();
+      if (["details", "div", "td", "th", "tr", "tbody", "thead", "tfoot", "table"].includes(tag)) {
+        const cleaned = stripFlowHeights(current.getAttribute?.("style") || undefined);
+        if (cleaned) current.setAttribute?.("style", cleaned);
+        else current.removeAttribute?.("style");
+      }
+      current = current.parentNode;
+      depth += 1;
     }
   }
 
@@ -161,6 +225,11 @@ export default function NamuBrowserArtifactRenderer({
       }}
     >
       {pseudoCss ? <style dangerouslySetInnerHTML={{ __html: pseudoCss }} /> : null}
+      <style dangerouslySetInnerHTML={{ __html: `
+        [data-kpop-browser-artifact] details { height:auto !important; max-height:none !important; }
+        [data-kpop-browser-artifact] summary { cursor:pointer !important; }
+        [data-kpop-browser-artifact] video { max-width:100%; }
+      ` }} />
       <div dangerouslySetInnerHTML={{ __html: safeHtml }} />
     </div>
   );
