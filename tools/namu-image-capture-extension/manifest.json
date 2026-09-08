@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Capture and recursively clone rendered NamuWiki document clusters with verified media from normal Chrome.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
@@ -15,7 +15,7 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-fast.js"
   },
   "content_scripts": [
     {
