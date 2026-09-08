@@ -611,6 +611,17 @@ export function parseNamuRaw(source: string): NamuRawNode[] {
       flushTable();
     }
 
+    // A physical newline inside a [[link]] or {{{inline macro}}} is not a block
+    // boundary. The mirror frequently emits link labels that contain nested
+    // #!wiki spans over several lines (for example logo + title headers). Keep
+    // consuming the logical inline structure before interpreting a line that
+    // happens to begin with {{{#!wiki as a new top-level directive.
+    if (paragraph.length && syntaxBalance(paragraph.join("\n")).open) {
+      paragraph.push(line);
+      if (paragraph.join("\n").length > 12000) flushParagraph();
+      continue;
+    }
+
     const macroStart = trimmed.match(/^\{\{\{#!([a-z]+)\b/i);
     if (macroStart) {
       flushParagraph();
