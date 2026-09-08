@@ -472,9 +472,10 @@ async function main() {
   const context = await chromium.launchPersistentContext(profileDir, {
     executablePath,
     headless: HEADLESS,
+    chromiumSandbox: true,
     viewport: null,
     locale: "ko-KR",
-    args: ["--disable-blink-features=AutomationControlled"],
+    ignoreDefaultArgs: ["--enable-automation"],
   });
 
   const sourcePage = context.pages()[0] || await context.newPage();
