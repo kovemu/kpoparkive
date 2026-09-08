@@ -15,11 +15,6 @@ function safeStyle(value: string | undefined) {
     if (/url\s*\(|expression\s*\(|javascript:|behavior\s*:|-moz-binding/i.test(rawValue)) continue;
     if (property === "behavior" || property === "-moz-binding") continue;
 
-    // A computed-layout snapshot often freezes responsive Namu wrappers as
-    // scroll containers even though the original page naturally expands at
-    // the captured desktop width. Replaying those values creates nested
-    // horizontal/vertical scrollbars. Keep clipping semantics, but turn
-    // snapshot-only scrolling back into normal document flow.
     if (["overflow", "overflow-x", "overflow-y"].includes(property) && /^(?:auto|scroll)$/i.test(rawValue)) {
       rawValue = "visible";
     }
@@ -102,6 +97,12 @@ function sanitizePseudoCss(source: string | null | undefined) {
   return output.join("\n");
 }
 
+function thawElementHeight(element: any) {
+  const cleaned = stripFlowHeights(element.getAttribute?.("style") || undefined);
+  if (cleaned) element.setAttribute?.("style", cleaned);
+  else element.removeAttribute?.("style");
+}
+
 function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
   const root = parse(html, { comment: false, lowerCaseTagName: false });
   for (const node of root.querySelectorAll("script,noscript,style,link,meta,base")) node.remove();
@@ -147,9 +148,6 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
       const poster = element.getAttribute("poster") || "";
       if (poster) element.setAttribute("poster", assetUrl(poster, assets));
 
-      // Namu's client code starts these muted logo/media loops. The captured
-      // DOM no longer has that Vue runtime, so preserve the same behavior with
-      // native video attributes.
       element.setAttribute("autoplay", "");
       element.setAttribute("muted", "");
       element.setAttribute("playsinline", "");
@@ -175,21 +173,23 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
     }
   }
 
-  // Native <details>/<summary> still works without Namu's JavaScript, but a
-  // computed snapshot captures the *current* fixed height. Once the user
-  // toggles it, that frozen height prevents the surrounding table/cell from
-  // reflowing and makes the action look broken. Restore natural height only
-  // along the details ancestry; keep the rest of the snapshot untouched.
+  // Computed snapshots capture the CLOSED height of <details> and of every
+  // ancestor that contains it. Opening the native details then paints outside
+  // those frozen boxes instead of pushing later document sections down. Thaw
+  // both the details subtree's flow wrappers and the complete ancestor chain.
   for (const details of root.querySelectorAll("details")) {
+    for (const child of details.querySelectorAll("div,section,table,thead,tbody,tfoot,tr,td,th")) {
+      thawElementHeight(child);
+    }
+
     let current: any = details;
     let depth = 0;
-    while (current && depth < 8) {
+    while (current && depth < 40) {
       const tag = String(current.tagName || "").toLowerCase();
-      if (["details", "div", "td", "th", "tr", "tbody", "thead", "tfoot", "table"].includes(tag)) {
-        const cleaned = stripFlowHeights(current.getAttribute?.("style") || undefined);
-        if (cleaned) current.setAttribute?.("style", cleaned);
-        else current.removeAttribute?.("style");
+      if (["details", "div", "section", "article", "main", "td", "th", "tr", "tbody", "thead", "tfoot", "table"].includes(tag)) {
+        thawElementHeight(current);
       }
+      if (current.getAttribute?.("data-kpop-capture-root") === "true") break;
       current = current.parentNode;
       depth += 1;
     }
@@ -226,7 +226,19 @@ export default function NamuBrowserArtifactRenderer({
     >
       {pseudoCss ? <style dangerouslySetInnerHTML={{ __html: pseudoCss }} /> : null}
       <style dangerouslySetInnerHTML={{ __html: `
-        [data-kpop-browser-artifact] details { height:auto !important; max-height:none !important; }
+        [data-kpop-browser-artifact] details,
+        [data-kpop-browser-artifact] details > :not(summary) {
+          height:auto !important;
+          min-height:0 !important;
+          max-height:none !important;
+        }
+        [data-kpop-browser-artifact] :is(div,section,article,main,table,thead,tbody,tfoot,tr,td,th):has(details) {
+          height:auto !important;
+          max-height:none !important;
+          overflow:visible !important;
+          overflow-x:visible !important;
+          overflow-y:visible !important;
+        }
         [data-kpop-browser-artifact] summary { cursor:pointer !important; }
         [data-kpop-browser-artifact] video { max-width:100%; }
       ` }} />
