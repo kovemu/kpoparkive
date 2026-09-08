@@ -66,11 +66,14 @@ export default function NamuImportPage() {
     let remaining = 1;
     let batches = 0;
 
-    while (remaining > 0 && batches < 100) {
+    // The server deliberately keeps each request small enough for Vercel's
+    // function duration. The browser continues issuing safe batches until the
+    // pending queue is actually drained, so one normal Import click is enough.
+    while (remaining > 0 && batches < 1000) {
       const response = await fetch("/api/admin/namu-assets", {
         method: "POST",
         headers: commonHeaders,
-        body: JSON.stringify({ rootTitle, batchSize: 30, retryUnresolved }),
+        body: JSON.stringify({ rootTitle, batchSize: 12, retryUnresolved }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Asset resolution failed");
@@ -80,8 +83,10 @@ export default function NamuImportPage() {
       unresolved += Array.isArray(result.unresolved) ? result.unresolved.length : 0;
       remaining = Number(result.remaining || 0);
       batches += 1;
-      setStatus(`Step 4/4: resolving assets... ${totalProcessed} processed / ${totalResolved} resolved / ${totalSkipped} skipped / ${unresolved} unresolved / ${remaining} pending`);
+      setStatus(`Step 4/4: resolving assets... ${totalProcessed} processed / ${totalResolved} resolved / ${totalSkipped} skipped / ${unresolved} unresolved / ${remaining >= 1000 ? "1000+" : remaining} pending`);
       if (result.processed === 0) break;
+      // Manual retry intentionally performs one pass so permanently broken
+      // unresolved rows cannot loop forever. Normal imports drain all pending.
       if (retryUnresolved) break;
     }
 
@@ -108,13 +113,10 @@ export default function NamuImportPage() {
       setStatus(`Step 1/4 complete: ${importResult.fetched} documents fetched, ${importResult.templateStyles ?? 0} template style blocks captured, ${importResult.renderedFiles ?? 0} rendered files mapped, ${importResult.clusterAssetHints ?? 0} cluster asset hints connected.\nStep 2/4: rebuilding the compatibility/localization AST without deleting importer artifacts...`);
       const parseResult = await parse(true);
 
-      // Newly imported documents already contain canonical DOM/RAW artifacts.
-      // This pass is intentionally non-forced: it upgrades legacy rows from old
-      // imports while leaving current v6 artifacts untouched.
       setStatus(`Step 2/4 complete: ${parseResult.totalQueuedAssets ?? 0} missing compatibility references added without replacing importer assets.\nStep 3/4: backfilling legacy DOM/RAW render artifacts where needed...`);
       const rawResult = await extractRaw(false);
 
-      setStatus(`Step 3/4 complete: ${rawResult.extracted ?? 0} legacy documents upgraded, ${rawResult.rawBlocks ?? 0} raw blocks recovered, ${rawResult.styleBlocks ?? 0} style blocks captured, ${rawResult.clusterAssetHints ?? 0} cluster media hints connected.\nStep 4/4: resolving images/videos and classifying links...`);
+      setStatus(`Step 3/4 complete: ${rawResult.extracted ?? 0} legacy documents upgraded, ${rawResult.rawBlocks ?? 0} raw blocks recovered, ${rawResult.styleBlocks ?? 0} style blocks captured, ${rawResult.clusterAssetHints ?? 0} cluster media hints connected.\nStep 4/4: resolving and validating images/videos and classifying links...`);
       const assetResult = await resolveAssets(false);
 
       setStatus(JSON.stringify({
@@ -156,7 +158,7 @@ export default function NamuImportPage() {
 
   async function runResolveAssets() {
     setBusy(true);
-    setStatus("Retrying enriched images and classifying unresolved internal links...");
+    setStatus("Retrying unresolved assets with strict payload validation...");
     try { setStatus(JSON.stringify(await resolveAssets(true), null, 2)); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Asset resolution failed"); }
     finally { setBusy(false); }
@@ -174,20 +176,25 @@ export default function NamuImportPage() {
     <main className="adminShell">
       <section className="adminPanel">
         <h1>Namu mirror importer</h1>
-        <p className="adminIntro">Reusable K-pop mirror pipeline. A root document import now preserves the untouched snapshot, rendered article DOM skeleton, unsupported RAW Namu fragments, template CSS, table/TOC/float diagnostics, and rendered filename mappings. Media hints are shared across the imported group cluster. The old DOM parser remains only as a non-destructive compatibility/localization AST.</p>
+        <p className="adminIntro">Reusable K-pop mirror pipeline. Normal operation is one Import click followed by Preview. Individual stages are kept only for debugging and recovery.</p>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" /><small>Saved only in this browser after you enter it once.</small></label>
           <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
           <label>Root document<input value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} /></label>
           <label>Max depth<input type="number" min={0} max={4} value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
           <label>Max documents<input type="number" min={1} max={200} value={maxDocuments} onChange={(e) => setMaxDocuments(Number(e.target.value))} /></label>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : "Run DOM + RAW mirror import pipeline"}</button>
+          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : `Import ${rootTitle || "document"}`}</button>
           <a href={rawPreviewHref} target="_blank" rel="noreferrer">Open DOM/RAW preview</a>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>1. Crawl + capture render artifacts</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>2. Rebuild compatibility AST</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runRawExtract}>3. Force rebuild DOM/RAW artifacts</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>4. Retry asset resolution</button>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runHydrateDrafts}>Apply resolved assets to translated drafts</button>
+          <details>
+            <summary style={{ cursor: "pointer", fontWeight: 700, margin: "10px 0" }}>Advanced / Debug tools</summary>
+            <div className="adminForm">
+              <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>1. Crawl only</button>
+              <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>2. Rebuild compatibility AST</button>
+              <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runRawExtract}>3. Force rebuild DOM/RAW artifacts</button>
+              <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runResolveAssets}>4. Retry unresolved assets</button>
+              <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runHydrateDrafts}>Apply resolved assets to translated drafts</button>
+            </div>
+          </details>
         </div>
         <pre className="adminStatus">{status}</pre>
       </section>
