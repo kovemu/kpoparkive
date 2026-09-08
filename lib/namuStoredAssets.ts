@@ -34,25 +34,6 @@ export type NamuQueueAsset = {
   storage_path: string | null; metadata: Record<string, unknown> | null;
 };
 
-/** Stored files always win over remote hints, regardless of DB row order. */
-export function buildNamuResolvedAssetMap(rows: NamuQueueAsset[], hints: Record<string, string> = {}) {
-  const assets = { ...hints };
-  const add = (row: NamuQueueAsset, url: string) => {
-    for (const key of [row.source_ref, row.label, row.metadata?.original_url]) {
-      if (typeof key === "string" && key) assets[normalizeNamuFileRef(key)] = url;
-    }
-  };
-  for (const row of rows) {
-    const hint = row.metadata?.enrichment_url;
-    const url = typeof hint === "string" && /^https?:\/\//i.test(hint) && !isNamuMirrorUiAssetUrl(hint) ? hint
-      : /^https?:\/\//i.test(row.source_ref) && !isNamuMirrorUiAssetUrl(row.source_ref) ? row.source_ref : null;
-    if (url) add(row, url);
-  }
-  for (const row of rows) if (row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
-  for (const row of rows) if (row.storage_path && row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
-  return assets;
-}
-
 /**
  * Mirror-owned /images/* are page chrome (for example the CC BY-NC-SA badge),
  * not Namu [[파일:...]] payloads. They can appear next to a file reference on a
@@ -67,6 +48,40 @@ export function isNamuMirrorUiAssetUrl(url: string) {
   } catch {
     return false;
   }
+}
+
+/** Stored files always win over remote hints, regardless of DB row order. */
+export function buildNamuResolvedAssetMap(rows: NamuQueueAsset[], hints: Record<string, string> = {}) {
+  const poisonedStoragePaths = new Set(
+    rows
+      .filter(row => typeof row.metadata?.original_url === "string" && isNamuMirrorUiAssetUrl(row.metadata.original_url as string))
+      .map(row => row.storage_path)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const usableRow = (row: NamuQueueAsset) => {
+    const originalUrl = row.metadata?.original_url;
+    if (typeof originalUrl === "string" && isNamuMirrorUiAssetUrl(originalUrl)) return false;
+    if (row.storage_path && poisonedStoragePaths.has(row.storage_path)) return false;
+    return true;
+  };
+
+  const assets = Object.fromEntries(Object.entries(hints).filter(([, url]) => !isNamuMirrorUiAssetUrl(url)));
+  const add = (row: NamuQueueAsset, url: string) => {
+    if (!usableRow(row)) return;
+    for (const key of [row.source_ref, row.label, row.metadata?.original_url]) {
+      if (typeof key === "string" && key) assets[normalizeNamuFileRef(key)] = url;
+    }
+  };
+  for (const row of rows) {
+    if (!usableRow(row)) continue;
+    const hint = row.metadata?.enrichment_url;
+    const url = typeof hint === "string" && /^https?:\/\//i.test(hint) && !isNamuMirrorUiAssetUrl(hint) ? hint
+      : /^https?:\/\//i.test(row.source_ref) && !isNamuMirrorUiAssetUrl(row.source_ref) ? row.source_ref : null;
+    if (url) add(row, url);
+  }
+  for (const row of rows) if (usableRow(row) && row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
+  for (const row of rows) if (usableRow(row) && row.storage_path && row.resolved_url && !isNamuMirrorUiAssetUrl(row.resolved_url)) add(row, row.resolved_url);
+  return assets;
 }
 
 /**
