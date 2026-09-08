@@ -1,6 +1,6 @@
 import { parse } from "node-html-parser";
 import { extractRenderedFileMap } from "./namuRawSource";
-import { expandNamuRemoteCandidates } from "./namuStoredAssets";
+import { expandNamuRemoteCandidates, isNamuMirrorUiAssetUrl } from "./namuStoredAssets";
 
 const MIRROR = "https://www.namu.moe";
 const OFFICIAL = "https://namu.wiki";
@@ -35,11 +35,11 @@ function isNamuAssetHost(url: string) {
 function assetish(url: string) {
   try {
     const parsed = new URL(url);
-    if (!isNamuAssetHost(url)) return false;
-    // Exclude normal wiki/document navigation. Namu CDN paths are usually /i/
-    // or mirror /file/ paths and often have no filename extension.
+    if (!isNamuAssetHost(url) || isNamuMirrorUiAssetUrl(url)) return false;
+    // Exclude normal wiki/document navigation. Namu CDN paths are usually /i/,
+    // /file/ or mirror /xref/ paths and often have no filename extension.
     if (/^\/w\//.test(parsed.pathname) || /^\/(?:RecentChanges|Search)(?:\/|$)/i.test(parsed.pathname)) return false;
-    return /\/(?:i|file)\//i.test(parsed.pathname)
+    return /\/(?:i|file|xref)\//i.test(parsed.pathname)
       || /\.(?:jpe?g|png|webp|gif|avif|svg)(?:$|[?#])/i.test(url);
   } catch {
     return false;
