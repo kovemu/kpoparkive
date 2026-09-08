@@ -87,6 +87,15 @@ function normalizeUrl(value, baseUrl = location.href) {
   }
 }
 
+function isNamuContentImageUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "i.namu.wiki" && url.pathname.startsWith("/i/");
+  } catch {
+    return false;
+  }
+}
+
 function cssBackgroundUrls(element) {
   const values = [];
   try {
@@ -146,24 +155,70 @@ function urlsForImage(image) {
   return unique(urls);
 }
 
+function nearbyContext(element) {
+  const parts = [];
+  let current = element;
+  for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+    if (!(current instanceof Element)) continue;
+    const text = (current.textContent || "").replace(/\s+/g, " ").trim();
+    if (text && text.length <= 500) parts.push(text);
+  }
+  const heading = (() => {
+    let node = element;
+    for (let steps = 0; node && steps < 20; steps += 1) {
+      let prev = node.previousElementSibling;
+      while (prev) {
+        const h = prev.matches?.("h1,h2,h3,h4,h5,h6") ? prev : prev.querySelector?.("h1,h2,h3,h4,h5,h6");
+        if (h) return (h.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180);
+        prev = prev.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return "";
+  })();
+  return { text: unique(parts).join(" | ").slice(0, 1200), heading };
+}
+
 function extractAssets() {
   const byFile = new Map();
+  const anonymousByUrl = new Map();
   const roots = collectOpenRoots();
   let imageCount = 0;
   let pictureSourceCount = 0;
   let backgroundCount = 0;
   let fileLinkCount = 0;
+  let domIndex = 0;
   const unlabeledSamples = [];
 
-  const addAsset = (fileName, urls, width = 0, height = 0) => {
+  const addAsset = (fileName, urls, width = 0, height = 0, meta = {}) => {
     const clean = normalizeFileName(fileName);
     if (!clean || !urls.length) return;
     const key = clean.toLowerCase();
-    const existing = byFile.get(key) || { fileName: clean, urls: [], width: 0, height: 0 };
+    const existing = byFile.get(key) || { fileName: clean, urls: [], width: 0, height: 0, anonymous: false, domIndex: meta.domIndex ?? null, contextText: meta.contextText || "", heading: meta.heading || "", alt: meta.alt || "", title: meta.title || "" };
     existing.urls = unique([...existing.urls, ...urls]);
     existing.width = Math.max(existing.width, width || 0);
     existing.height = Math.max(existing.height, height || 0);
+    if (existing.domIndex == null && meta.domIndex != null) existing.domIndex = meta.domIndex;
     byFile.set(key, existing);
+  };
+
+  const addAnonymous = (image, urls, index) => {
+    const primary = urls.find(isNamuContentImageUrl);
+    if (!primary) return;
+    if (anonymousByUrl.has(primary)) return;
+    const context = nearbyContext(image);
+    anonymousByUrl.set(primary, {
+      fileName: "",
+      anonymous: true,
+      domIndex: index,
+      urls: [primary, ...urls.filter((url) => url !== primary)],
+      width: image.naturalWidth || 0,
+      height: image.naturalHeight || 0,
+      contextText: context.text,
+      heading: context.heading,
+      alt: image.getAttribute("alt") || "",
+      title: image.getAttribute("title") || "",
+    });
   };
 
   for (const root of roots) {
@@ -172,19 +227,24 @@ function extractAssets() {
     pictureSourceCount += root.querySelectorAll?.("picture source")?.length || 0;
 
     for (const image of images) {
+      domIndex += 1;
       const urls = urlsForImage(image);
       if (!urls.length) continue;
+      const context = nearbyContext(image);
       const fileName = fileNameForElement(image);
       if (fileName) {
-        addAsset(fileName, urls, image.naturalWidth || 0, image.naturalHeight || 0);
-      } else if (unlabeledSamples.length < 12) {
-        unlabeledSamples.push({
-          tag: "img",
+        addAsset(fileName, urls, image.naturalWidth || 0, image.naturalHeight || 0, {
+          domIndex,
+          contextText: context.text,
+          heading: context.heading,
           alt: image.getAttribute("alt") || "",
           title: image.getAttribute("title") || "",
-          src: urls[0] || "",
-          parent: image.parentElement?.tagName || "",
         });
+      } else {
+        addAnonymous(image, urls, domIndex);
+        if (unlabeledSamples.length < 12) {
+          unlabeledSamples.push({ tag: "img", alt: image.getAttribute("alt") || "", title: image.getAttribute("title") || "", src: urls[0] || "", parent: image.parentElement?.tagName || "", domIndex });
+        }
       }
     }
 
@@ -205,17 +265,17 @@ function extractAssets() {
       backgroundCount += 1;
       const fileName = fileNameForElement(element);
       if (fileName) addAsset(fileName, urls);
-      else if (unlabeledSamples.length < 12) {
-        unlabeledSamples.push({ tag: element.tagName, alt: "", title: element.getAttribute("title") || "", src: urls[0] || "", parent: element.parentElement?.tagName || "" });
-      }
     }
   }
+
+  const assets = [...byFile.values(), ...anonymousByUrl.values()]
+    .sort((a, b) => (a.domIndex ?? Number.MAX_SAFE_INTEGER) - (b.domIndex ?? Number.MAX_SAFE_INTEGER));
 
   return {
     pageUrl: location.href,
     pageTitle: document.title,
     sourceTitle: sourceTitleFromLocation(),
-    assets: [...byFile.values()],
+    assets,
     debug: {
       roots: roots.length,
       images: imageCount,
@@ -223,6 +283,7 @@ function extractAssets() {
       backgroundSurfaces: backgroundCount,
       fileLinks: fileLinkCount,
       labeledAssets: byFile.size,
+      anonymousAssets: anonymousByUrl.size,
       unlabeledSamples,
     },
   };
