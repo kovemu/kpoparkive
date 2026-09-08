@@ -1,5 +1,6 @@
 const KPOP_HELPER_CONTROLLER = "http://127.0.0.1:43117";
 const KPOP_RUNNER_URL = chrome.runtime.getURL("runner.html");
+let kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
 
 async function kpopControllerJson(path, init = {}) {
   const response = await fetch(`${KPOP_HELPER_CONTROLLER}${path}`, {
@@ -28,10 +29,35 @@ async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   return chrome.tabs.create({ url: KPOP_RUNNER_URL, active: false, pinned: true });
 }
 
+async function kpopWatchRunner(job) {
+  if (!job?.running || Number(job.queued || 0) <= 0 || Number(job.leased || 0) > 0) {
+    kpopRunnerWatch = { processed: Number(job?.processed || 0), since: 0, recovering: false };
+    return;
+  }
+
+  const processed = Number(job.processed || 0);
+  if (kpopRunnerWatch.processed !== processed) {
+    kpopRunnerWatch = { processed, since: Date.now(), recovering: false };
+    return;
+  }
+  if (!kpopRunnerWatch.since) kpopRunnerWatch.since = Date.now();
+  if (kpopRunnerWatch.recovering || Date.now() - kpopRunnerWatch.since < 2500) return;
+
+  kpopRunnerWatch.recovering = true;
+  try {
+    await kpopEnsureRunnerTab({ reloadExisting: true });
+    kpopRunnerWatch = { processed, since: Date.now(), recovering: false };
+  } catch {
+    kpopRunnerWatch.recovering = false;
+  }
+}
+
 async function kpopControllerStatus() {
   try {
     const result = await kpopControllerJson("/clone/status");
-    return { ok: true, job: result.job || null };
+    const job = result.job || null;
+    await kpopWatchRunner(job);
+    return { ok: true, job };
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
   }
@@ -56,6 +82,7 @@ async function kpopStartHelperClone(options = {}) {
   // Import button is disabled while a job is already running, an explicit start
   // here means it is safe to restart the runner page and create fresh workers.
   await kpopEnsureRunnerTab({ reloadExisting: true });
+  kpopRunnerWatch = { processed: Number(result?.job?.processed || 0), since: Date.now(), recovering: false };
   return result.job;
 }
 
@@ -80,7 +107,12 @@ async function kpopRecoverRunner() {
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const confirm = await kpopControllerJson("/clone/status");
       const next = confirm?.job;
-      if (next?.running && Number(next.queued || 0) > 0 && Number(next.leased || 0) === 0) {
+      if (
+        next?.running &&
+        Number(next.queued || 0) > 0 &&
+        Number(next.leased || 0) === 0 &&
+        Number(next.processed || 0) === Number(job.processed || 0)
+      ) {
         await kpopEnsureRunnerTab({ reloadExisting: true });
       }
     }
