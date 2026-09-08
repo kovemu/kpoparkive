@@ -12,7 +12,7 @@
     label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; }
     input, select { box-sizing: border-box; width: 100%; padding: 8px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; background: white; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-    button { width: 100%; margin-top: 12px; padding: 10px; border: 0; border-radius: 6px; background: #6f3cff; color: #fff; font-weight: 700; cursor: pointer; }
+    button { width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 6px; background: #6f3cff; color: #fff; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     #health { margin-top: 9px; font-size: 11px; }
     #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 300px; overflow: auto; }
@@ -22,12 +22,10 @@
 </head>
 <body>
   <main>
-    <h1>Kpoparkive Namu Capture</h1>
-    <p>Open the root NamuWiki document in normal Chrome. One action captures the root and, if requested, linked documents into the same Kpoparkive cluster.</p>
-
+    <h1>Kpoparkive Namu Import</h1>
+    <p>Start once, then close this popup. A pinned background runner handles the resumable queue while you keep using Chrome.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
-
     <div class="row">
       <div>
         <label for="depth">Linked depth</label>
@@ -43,9 +41,7 @@
         <input id="maxDocs" type="number" min="1" max="200" value="25" />
       </div>
     </div>
-
-    <button id="clone">Clone root + linked docs</button>
-
+    <button id="clone">Import to Kpoparkive</button>
     <div id="health">Checking local helper...</div>
     <div id="status">Ready.</div>
   </main>
