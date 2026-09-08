@@ -1,8 +1,8 @@
 import { parse } from "node-html-parser";
 import { extractRenderedFileMap } from "./namuRawSource";
-import { expandNamuRemoteCandidates, isNamuMirrorUiAssetUrl } from "./namuStoredAssets";
+import { expandNamuRemoteCandidates, isNamuNonPayloadAssetUrl } from "./namuStoredAssets";
 
-const MIRROR = "https://www.namu.moe";
+const MIRRORS = ["https://www.namu.moe", "https://dark.namu.moe", "https://d.namu.moe", "https://m.namu.moe"];
 const OFFICIAL = "https://namu.wiki";
 
 function normalizeFile(value: string) {
@@ -35,11 +35,11 @@ function isNamuAssetHost(url: string) {
 function assetish(url: string) {
   try {
     const parsed = new URL(url);
-    if (!isNamuAssetHost(url) || isNamuMirrorUiAssetUrl(url)) return false;
-    // Exclude normal wiki/document navigation. Namu CDN paths are usually /i/,
-    // /file/ or mirror /xref/ paths and often have no filename extension.
-    if (/^\/w\//.test(parsed.pathname) || /^\/(?:RecentChanges|Search)(?:\/|$)/i.test(parsed.pathname)) return false;
-    return /\/(?:i|file|xref)\//i.test(parsed.pathname)
+    if (!isNamuAssetHost(url) || isNamuNonPayloadAssetUrl(url)) return false;
+    // Only accept CDN/file-like locations. /xref/ is intentionally excluded:
+    // the mirror can return tiny placeholder images with valid MIME signatures.
+    if (/^\/w\//.test(parsed.pathname) || /^\/(?:RecentChanges|Search|xref|images)(?:\/|$)/i.test(parsed.pathname)) return false;
+    return /\/(?:i|file)\//i.test(parsed.pathname)
       || /\.(?:jpe?g|png|webp|gif|avif|svg)(?:$|[?#])/i.test(url);
   } catch {
     return false;
@@ -78,7 +78,8 @@ function collectHtmlCandidates(html: string, base: string, fileName: string) {
     }
   }
 
-  // On a dedicated file page the social preview is often the image itself.
+  // On a dedicated file page the social preview can be the image itself, but
+  // it still has to pass the same CDN/path validation above.
   for (const selector of ['meta[property="og:image"]', 'meta[name="twitter:image"]']) {
     const meta = root.querySelector(selector);
     add(secondary, absoluteUrl(meta?.getAttribute("content"), base));
@@ -104,11 +105,10 @@ async function fetchHtml(url: string) {
 }
 
 /**
- * Last-mile discovery for raw-only image references. Namu articles often keep
- * `[[파일:name]]` even when the mirror did not render an <img>. The file page,
- * however, normally exposes a clickable/downloadable image URL. We resolve it
- * only long enough to download the bytes into our own Storage; callers must
- * never persist the signed CDN URL as the final runtime image.
+ * Last-mile discovery for raw-only image references. A candidate is returned
+ * only when it is a genuine CDN/file URL. Mirror navigation resources such as
+ * /xref/<filename> and /images/* are never returned, even if they respond with
+ * technically valid JPEG/PNG bytes.
  */
 export async function discoverNamuFilePageCandidates(fileName: string) {
   const clean = normalizeFile(fileName);
@@ -119,21 +119,24 @@ export async function discoverNamuFilePageCandidates(fileName: string) {
     for (const candidate of expandNamuRemoteCandidates(value)) if (!output.includes(candidate)) output.push(candidate);
   };
 
-  // Mirror first: cheaper and usually not protected. extractRenderedFileMap is
-  // useful when the file page has a conventional alt="파일:name" <img>.
-  const mirrorUrl = `${MIRROR}/w/${encodeURIComponent(title)}`;
-  try {
-    const html = await fetchHtml(mirrorUrl);
-    const map = extractRenderedFileMap(html);
-    const direct = map[clean] || map[title];
-    if (direct) add(direct);
-    for (const url of collectHtmlCandidates(html, mirrorUrl, clean)) add(url);
-  } catch {
-    // Continue to first-party page.
+  // Try the mirror variants because the article host can be healthy while the
+  // default host is degraded. Stop once we have useful candidates.
+  for (const mirror of MIRRORS) {
+    const mirrorUrl = `${mirror}/w/${encodeURIComponent(title)}`;
+    try {
+      const html = await fetchHtml(mirrorUrl);
+      const map = extractRenderedFileMap(html);
+      const direct = map[clean] || map[title];
+      if (direct) add(direct);
+      for (const url of collectHtmlCandidates(html, mirrorUrl, clean)) add(url);
+      if (output.length) break;
+    } catch {
+      // Try the next mirror variant.
+    }
   }
 
-  // First-party NamuWiki is protected intermittently. When it is reachable,
-  // use the same downloadable link a browser gets after opening the image.
+  // First-party NamuWiki is protected intermittently. When reachable, prefer
+  // its real CDN URL over mirror navigation fallbacks.
   const officialUrl = `${OFFICIAL}/w/${encodeURIComponent(title)}`;
   try {
     const html = await fetchHtml(officialUrl);
