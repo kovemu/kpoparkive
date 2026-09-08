@@ -1,7 +1,7 @@
 import { detectNamuImageContentType, readNamuImageBytes } from "../../../../lib/namuImageBytes";
 import { discoverNamuFilePageCandidates } from "../../../../lib/namuFilePageAssets";
 import { extractRenderedFileMap } from "../../../../lib/namuRawSource";
-import { expandNamuRemoteCandidates, findNamuAssetCandidates } from "../../../../lib/namuStoredAssets";
+import { expandNamuRemoteCandidates, findNamuAssetCandidates, isNamuNonPayloadAssetUrl } from "../../../../lib/namuStoredAssets";
 import { hydrateNamuStoredMedia } from "../../../../lib/namuStoredMediaHydrate";
 import { NextResponse } from "next/server";
 export const maxDuration = 60;
@@ -111,6 +111,7 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 }
 
 async function downloadImage(url: string) {
+  if (isNamuNonPayloadAssetUrl(url)) throw new Error("mirror navigation/placeholder URL is not an image payload");
   const browserUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
   const profiles: Record<string, string>[] = [
     { "User-Agent": browserUa, Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", Referer: `${NAMU_MIRROR}/` },
@@ -121,8 +122,9 @@ async function downloadImage(url: string) {
   for (const headers of profiles) {
     try {
       const response = await fetch(url, { headers, cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(7000) });
+      if (isNamuNonPayloadAssetUrl(response.url)) throw new Error("redirected to mirror placeholder/navigation URL");
       const bytes = await readNamuImageBytes(response, url);
-      const contentType = detectNamuImageContentType(bytes, response.headers.get("content-type") || "", url);
+      const contentType = detectNamuImageContentType(bytes, response.headers.get("content-type") || "", response.url || url);
       if (!contentType) throw new Error("unsupported image bytes");
       return { bytes, contentType };
     } catch (error) {
@@ -186,9 +188,23 @@ export async function POST(request: Request) {
     const clusterImageRows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&asset_type=eq.image&select=id,source_ref,label,status,resolved_url,storage_path,metadata&limit=3000`) as Array<{
       id: string; source_ref: string; label: string | null; status: string; resolved_url: string | null; storage_path: string | null; metadata: Record<string, unknown> | null;
     }>;
+
+    // Never let a previously poisoned row seed cluster-wide reuse. A wrong
+    // placeholder otherwise propagates to every occurrence of the same filename.
+    const poisonedPaths = new Set<string>();
+    for (const asset of clusterImageRows) {
+      for (const value of [asset.metadata?.original_url, asset.metadata?.enrichment_url]) {
+        if (typeof value === "string" && isNamuNonPayloadAssetUrl(value) && asset.storage_path) poisonedPaths.add(asset.storage_path);
+      }
+    }
     const resolvedByFile = new Map<string, { resolved_url: string; storage_path: string | null }>();
     for (const asset of clusterImageRows) {
       if (asset.status !== "resolved" || !asset.resolved_url) continue;
+      if (asset.storage_path && poisonedPaths.has(asset.storage_path)) continue;
+      const original = asset.metadata?.original_url;
+      const enrichment = asset.metadata?.enrichment_url;
+      if ((typeof original === "string" && isNamuNonPayloadAssetUrl(original))
+        || (typeof enrichment === "string" && isNamuNonPayloadAssetUrl(enrichment))) continue;
       const key = canonicalFileKey(asset.label || asset.source_ref);
       if (key && !resolvedByFile.has(key)) resolvedByFile.set(key, { resolved_url: asset.resolved_url, storage_path: asset.storage_path });
     }
@@ -200,7 +216,8 @@ export async function POST(request: Request) {
         map = extractFileMap(docs[0]?.raw_html || "");
         fileMaps.set(documentId, map);
       }
-      return map.get(normalizedFileName(sourceRef)) || null;
+      const result = map.get(normalizedFileName(sourceRef)) || null;
+      return result && !isNamuNonPayloadAssetUrl(result) ? result : null;
     }
 
     async function linkedTargetFileUrl(target: unknown, sourceRef: string) {
@@ -211,7 +228,8 @@ export async function POST(request: Request) {
         map = await fetchMirrorDocumentFileMap(cleanTarget);
         linkedMaps.set(cleanTarget, map);
       }
-      return map.get(normalizedFileName(sourceRef)) || null;
+      const result = map.get(normalizedFileName(sourceRef)) || null;
+      return result && !isNamuNonPayloadAssetUrl(result) ? result : null;
     }
 
     async function filePageCandidates(sourceRef: string) {
@@ -249,7 +267,7 @@ export async function POST(request: Request) {
             normalizeDirectUrl(row.metadata?.enrichment_url), local,
             ...findNamuAssetCandidates(refs, clusterMaps),
             normalizeDirectUrl(row.source_ref), normalizeDirectUrl(row.metadata?.url),
-          ];
+          ].filter((url): url is string => Boolean(url) && !isNamuNonPayloadAssetUrl(url));
           const candidates = expandCandidateList(directSeeds);
           const errors: string[] = [];
           let uploaded = uploadedFiles.get(fileKey);
@@ -257,6 +275,7 @@ export async function POST(request: Request) {
           const tryCandidates = async (urls: string[]) => {
             for (const url of urls) {
               if (uploaded || Date.now() - startedAt > 50000) break;
+              if (isNamuNonPayloadAssetUrl(url)) continue;
               const priorFailure = failedUrls.get(url);
               if (priorFailure) { errors.push(`${url}: ${priorFailure}`); continue; }
               try {
@@ -280,10 +299,6 @@ export async function POST(request: Request) {
             } catch (error) { errors.push(error instanceof Error ? error.message : "linked document failed"); }
           }
 
-          // Raw-only image refs (e.g. album grid [[파일:YoYo.jpg]]) often do not
-          // have a rendered <img> URL. Namu's file page exposes the clickable
-          // download/CDN URL; discover it as the last network fallback, then pin
-          // the bytes into Supabase so the runtime never depends on that URL.
           if (!uploaded && Date.now() - startedAt < 36000) {
             try {
               const discovered = await filePageCandidates(row.label || row.source_ref);
