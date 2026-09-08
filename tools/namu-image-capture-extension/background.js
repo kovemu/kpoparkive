@@ -80,6 +80,7 @@ async function helperHealth() {
       supabaseHost: json?.supabaseHost || json?.supabase || "",
       stats: json?.stats || null,
       documentCapture: json?.documentCapture || null,
+      recursiveClone: Boolean(json?.recursiveClone),
     };
   } catch {
     return { ok: false };
@@ -126,23 +127,24 @@ async function sendAsset(blob, meta) {
   return body;
 }
 
-async function prepareCapture(rootTitle) {
-  const health = await helperHealth();
-  if (!health.ok) throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
+async function tabCapturePayload(tabId, rootTitle, crawlDepth = 0) {
+  const rendered = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-rendered-document" });
+  if (!rendered?.ok) throw new Error(rendered?.error || "Could not extract rendered article DOM.");
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) throw new Error("Open a NamuWiki document in this Chrome tab first.");
-
-  let browserDom = { ok: false, error: "Rendered DOM capture was not attempted." };
+  let links = { ok: true, links: [] };
   try {
-    const rendered = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-rendered-document" });
-    if (!rendered?.ok) throw new Error(rendered?.error || "Could not extract rendered article DOM.");
-    browserDom = await sendRenderedDocument(rendered, rootTitle);
-  } catch (error) {
-    browserDom = { ok: false, error: error?.message || String(error) };
-  }
+    const response = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-links" });
+    if (response?.ok) links = response;
+  } catch {}
 
-  const extracted = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-images" });
+  rendered.meta = {
+    ...(rendered.meta || {}),
+    crawlDepth,
+    internalLinks: links.links || [],
+  };
+  const browserDom = await sendRenderedDocument(rendered, rootTitle);
+
+  const extracted = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-images" });
   if (!extracted?.ok) throw new Error(extracted?.error || "Could not extract images from this page.");
 
   return {
@@ -151,9 +153,36 @@ async function prepareCapture(rootTitle) {
     pageUrl: extracted.pageUrl,
     assets: extracted.assets || [],
     debug: extracted.debug || null,
-    helper: health,
     browserDom,
+    internalLinks: links.links || [],
   };
+}
+
+async function prepareCapture(rootTitle) {
+  const health = await helperHealth();
+  if (!health.ok) throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) throw new Error("Open a NamuWiki document in this Chrome tab first.");
+
+  let result;
+  try {
+    result = await tabCapturePayload(tab.id, rootTitle, 0);
+  } catch (error) {
+    const extracted = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-images" });
+    if (!extracted?.ok) throw error;
+    result = {
+      rootTitle,
+      sourceTitle: extracted.sourceTitle,
+      pageUrl: extracted.pageUrl,
+      assets: extracted.assets || [],
+      debug: extracted.debug || null,
+      browserDom: { ok: false, error: error?.message || String(error) },
+      internalLinks: [],
+    };
+  }
+
+  return { ...result, helper: health };
 }
 
 async function captureOneAsset(payload) {
@@ -221,6 +250,150 @@ async function captureOneAsset(payload) {
   return { status: "failed", rejected, detail: { fileName: asset.fileName || `anonymous@${asset.domIndex ?? "?"}`, status: "failed", error: lastError } };
 }
 
+async function captureAssetsForDocument(prep) {
+  const result = { resolved: 0, noQueue: 0, failed: 0, rejected: 0 };
+  for (const asset of prep.assets) {
+    const item = await captureOneAsset({
+      rootTitle: prep.rootTitle,
+      sourceTitle: prep.sourceTitle,
+      pageUrl: prep.pageUrl,
+      asset,
+    });
+    result.rejected += Number(item.rejected || 0);
+    if (item.status === "resolved") result.resolved += 1;
+    else if (item.status === "no_queue") result.noQueue += 1;
+    else result.failed += 1;
+  }
+  return result;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTab(tabId, timeoutMs = 30000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete" && /^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) {
+      await wait(900);
+      return tab;
+    }
+    await wait(350);
+  }
+  throw new Error("Timed out waiting for NamuWiki document to finish loading.");
+}
+
+let cloneJob = {
+  running: false,
+  rootTitle: "",
+  processed: 0,
+  captured: 0,
+  failed: 0,
+  queued: 0,
+  current: "",
+  maxDepth: 0,
+  maxDocs: 0,
+  errors: [],
+  done: false,
+};
+
+async function runRecursiveClone({ rootTitle, maxDepth, maxDocs }) {
+  const health = await helperHealth();
+  if (!health.ok) throw new Error("Local helper is not running.");
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!activeTab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(activeTab.url || "")) {
+    throw new Error("Open the root NamuWiki document in this Chrome tab first.");
+  }
+
+  const depthLimit = Math.max(0, Math.min(3, Number(maxDepth || 0) || 0));
+  const docLimit = Math.max(1, Math.min(200, Number(maxDocs || 25) || 25));
+  const root = String(rootTitle || "").trim() || "RESCENE";
+  const queue = [{ url: activeTab.url, depth: 0, tabId: activeTab.id, temporary: false }];
+  const seenUrls = new Set();
+  const seenTitles = new Set();
+
+  cloneJob = {
+    running: true,
+    rootTitle: root,
+    processed: 0,
+    captured: 0,
+    failed: 0,
+    queued: 1,
+    current: "",
+    maxDepth: depthLimit,
+    maxDocs: docLimit,
+    errors: [],
+    done: false,
+  };
+  await chrome.storage.local.set({ kpoparkiveCloneJob: cloneJob });
+
+  while (queue.length && cloneJob.processed < docLimit) {
+    const item = queue.shift();
+    if (!item || seenUrls.has(item.url)) continue;
+    seenUrls.add(item.url);
+    let tabId = item.tabId;
+    let temporary = item.temporary;
+
+    try {
+      if (!tabId) {
+        const tab = await chrome.tabs.create({ url: item.url, active: false });
+        tabId = tab.id;
+        temporary = true;
+      }
+      if (!tabId) throw new Error("Could not open linked document tab.");
+      await waitForTab(tabId);
+
+      const prep = await tabCapturePayload(tabId, root, item.depth);
+      if (seenTitles.has(prep.sourceTitle)) continue;
+      seenTitles.add(prep.sourceTitle);
+      cloneJob.current = prep.sourceTitle;
+      cloneJob.processed += 1;
+      const media = await captureAssetsForDocument(prep);
+      cloneJob.captured += 1;
+
+      if (item.depth < depthLimit) {
+        for (const link of prep.internalLinks || []) {
+          if (queue.length + cloneJob.processed >= docLimit * 4) break;
+          const url = String(link.href || "").trim();
+          if (!url || seenUrls.has(url)) continue;
+          queue.push({ url, depth: item.depth + 1, tabId: null, temporary: true });
+        }
+      }
+      cloneJob.queued = queue.length;
+      cloneJob.lastMedia = media;
+    } catch (error) {
+      cloneJob.processed += 1;
+      cloneJob.failed += 1;
+      cloneJob.errors = [...cloneJob.errors, `${item.url}: ${error?.message || error}`].slice(-10);
+    } finally {
+      if (temporary && tabId) {
+        try { await chrome.tabs.remove(tabId); } catch {}
+      }
+      cloneJob.current = "";
+      await chrome.storage.local.set({ kpoparkiveCloneJob: cloneJob });
+      await wait(900);
+    }
+  }
+
+  cloneJob.running = false;
+  cloneJob.done = true;
+  cloneJob.queued = queue.length;
+  await chrome.storage.local.set({ kpoparkiveCloneJob: cloneJob });
+}
+
+function startRecursiveClone(options) {
+  if (cloneJob.running) throw new Error("A recursive clone job is already running.");
+  runRecursiveClone(options).catch(async (error) => {
+    cloneJob.running = false;
+    cloneJob.done = true;
+    cloneJob.failed += 1;
+    cloneJob.errors = [...cloneJob.errors, error?.message || String(error)].slice(-10);
+    await chrome.storage.local.set({ kpoparkiveCloneJob: cloneJob });
+  });
+  return { ...cloneJob, running: true };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "kpoparkive-prepare-capture") {
     prepareCapture(String(message.rootTitle || "RESCENE").trim() || "RESCENE")
@@ -233,6 +406,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     captureOneAsset(message.payload)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-start-recursive-clone") {
+    try { sendResponse({ ok: true, job: startRecursiveClone(message.options || {}) }); }
+    catch (error) { sendResponse({ ok: false, error: error?.message || String(error) }); }
+    return;
+  }
+
+  if (message?.type === "kpoparkive-recursive-clone-status") {
+    chrome.storage.local.get(["kpoparkiveCloneJob"]).then((stored) => {
+      sendResponse({ ok: true, job: stored.kpoparkiveCloneJob || cloneJob });
+    }).catch(() => sendResponse({ ok: true, job: cloneJob }));
     return true;
   }
 
