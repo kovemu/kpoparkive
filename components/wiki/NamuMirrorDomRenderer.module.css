@@ -16,14 +16,6 @@
   text-decoration: underline;
 }
 
-.root :global(.RESCENE) {
-  color: var(--namu-theme-fg);
-}
-
-.root :global(.RESCENE) a {
-  color: inherit;
-}
-
 .root table {
   border-collapse: collapse;
   border-spacing: 0;
@@ -109,12 +101,12 @@
   border-left: 4px solid #d8dde3;
 }
 
-/* NamuWiki table of contents. The mirror emits the semantic hierarchy but its
-   stylesheet is not shipped with Kpoparkive, so preserve the compact boxed UX. */
+/* NamuWiki table of contents. Let normal float flow decide the remaining
+   width instead of assuming a document-specific infobox width. */
 .root :global(.toc) {
   display: inline-block;
   min-width: 260px;
-  max-width: calc(100% - 430px);
+  max-width: 100%;
   margin: 10px 0 24px 10px;
   padding: 13px 16px 14px;
   border: 1px solid #c9cdd2;
@@ -123,6 +115,7 @@
   font-size: 15px;
   line-height: 1.55;
   vertical-align: top;
+  box-sizing: border-box;
 }
 
 .root :global(.toc)::before {
@@ -162,9 +155,8 @@
 .root :global(.wikiColor) { color: inherit; }
 .root :global(.wikiFootnote) { font-size: .78em; vertical-align: super; }
 
-/* These template class rules are emitted by Namu raw #!style blocks across
-   creator pages. They are safe fallbacks even before the scoped source CSS is
-   injected, and match the semantics of Namu's album/document templates. */
+/* Source-level Namu template classes shared by many creator/discography pages.
+   Persisted #!style remains authoritative; these are generic fallbacks. */
 .root :global(.albums) tbody {
   background: #fff;
 }
