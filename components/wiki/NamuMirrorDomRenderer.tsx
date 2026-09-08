@@ -169,6 +169,38 @@ function safeDecode(value: string) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
+function safeMediaDimension(value: string | undefined) {
+  const raw = decodeEntities(String(value || "")).trim();
+  const match = raw.match(/^(\d+(?:\.\d+)?)(%)?$/);
+  if (!match) return undefined;
+  const numeric = Number(match[1]);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return match[2] ? `${numeric}%` : `${numeric}px`;
+}
+
+function recoveredWikiLinkLabel(node: HTMLElement) {
+  const classes = safeClassName(node.getAttribute("class")) || "";
+  if (!/(?:^|\s)recovered-wiki-link(?:\s|$)/.test(classes)) return "";
+  if (decodeEntities(node.textContent || "").trim()) return "";
+
+  const rawHref = decodeEntities(node.getAttribute("href") || "").trim();
+  const hash = rawHref.includes("#") ? rawHref.slice(rawHref.indexOf("#") + 1) : "";
+  if (hash && !/^s-\d+(?:\.\d+)*$/i.test(hash)) return safeDecode(hash).trim();
+
+  const title = decodeEntities(node.getAttribute("title") || "").trim();
+  if (title && !title.includes("@문서명@")) return title;
+
+  const pathMatch = rawHref.match(/\/w\/([^?#]+)/i);
+  return pathMatch ? safeDecode(pathMatch[1]).trim() : "";
+}
+
+function isFlagTemplatePlaceholderBranch(args: string, body: string) {
+  if (!/(?:국명|행정구|속령)/u.test(args)) return false;
+  const source = decodeEntities(body).normalize("NFKC");
+  return /\[\[\s*파일:\s*(?:특별행정구기|기)\.svg(?:\||\]\])/iu.test(source)
+    && /(?:행정구|속령)/u.test(source);
+}
+
 function internalHref(value: string | undefined) {
   const href = decodeEntities(String(value || "")).trim();
   if (!href || /^javascript:/i.test(href)) return undefined;
@@ -317,7 +349,10 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
   const args = bare[2].trim();
   const body = bare[3] || "";
   if (kind === "html" || kind === "style") return null;
-  if (kind === "if" && evaluateNamuCondition(args) !== true) return null;
+  if (kind === "if") {
+    if (isFlagTemplatePlaceholderBranch(args, body)) return null;
+    if (evaluateNamuCondition(args) !== true) return null;
+  }
 
   const sourceClass = directiveClass(args);
   const sourceStyle = directiveStyle(args, theme);
@@ -410,7 +445,9 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
   if (tag === "hr") return <hr {...common} />;
   if (tag === "a") {
     const href = internalHref(node.getAttribute("href"));
-    return href ? <a {...common} href={href}>{children}</a> : <span {...common}>{children}</span>;
+    const recoveredLabel = recoveredWikiLinkLabel(node);
+    const content = recoveredLabel || children;
+    return href ? <a {...common} href={href}>{content}</a> : <span {...common}>{content}</span>;
   }
   if (tag === "img") {
     const alt = decodeEntities(node.getAttribute("alt") || "");
@@ -419,7 +456,19 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
     const fallback = normalizeMediaUrl(node.getAttribute("data-original") || node.getAttribute("data-src") || node.getAttribute("src"));
     const src = resolved || (fallback ? assets[fallback] : undefined) || fallback;
     if (!src) return file ? <span key={key} className={styles.unresolvedImage}>[{displayFileRef(file)}]</span> : null;
-    return <img {...common} src={src} alt={file ? displayFileRef(file) : alt} loading="lazy" style={{ maxWidth: "100%", height: "auto", ...common.style }} />;
+
+    const sourceWidth = safeMediaDimension(node.getAttribute("width"));
+    const sourceHeight = safeMediaDimension(node.getAttribute("height"));
+    const iconFallbackWidth = !sourceWidth && !sourceHeight && /(?:아이콘|icon)\.(?:svg|png|webp)$/i.test(displayFileRef(file || alt)) ? "40px" : undefined;
+    const align = String(node.getAttribute("align") || "").toLowerCase();
+    const mediaStyle: React.CSSProperties = {
+      maxWidth: "100%",
+      ...(sourceWidth || iconFallbackWidth ? { width: sourceWidth || iconFallbackWidth } : {}),
+      ...(sourceHeight ? { height: sourceHeight } : { height: "auto" }),
+      ...(align === "left" || align === "right" ? { float: align } : {}),
+      ...common.style,
+    };
+    return <img {...common} src={src} alt={file ? displayFileRef(file) : alt} loading="lazy" style={mediaStyle} />;
   }
   if (tag === "iframe") {
     const src = youtubeEmbed(node.getAttribute("src"));
