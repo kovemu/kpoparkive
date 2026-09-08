@@ -1,3 +1,4 @@
+import { evaluateNamuCondition } from "./namuCondition";
 import { normalizeNamuRawBlocks } from "./namuRawNormalize";
 import { parseNamuRaw, type NamuDirectiveKind, type NamuRawNode } from "./namuRawParser";
 
@@ -69,6 +70,88 @@ function walkNodes(nodes: NamuRawNode[], analysis: NamuRawGrammarAnalysis) {
  */
 export function parseNamuRawCanonical(source: string): NamuRawNode[] {
   return parseNamuRaw(normalizeNamuRawBlocks(String(source || "")));
+}
+
+function findBalancedTripleEnd(source: string, start: number) {
+  let depth = 1;
+  for (let cursor = start + 3; cursor < source.length - 2; cursor += 1) {
+    if (source.slice(cursor, cursor + 3) === "{{{") {
+      depth += 1;
+      cursor += 2;
+      continue;
+    }
+    if (source.slice(cursor, cursor + 3) === "}}}") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+      cursor += 2;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Resolve inline {{{#!if ...}}} macros only in derived render source. Canonical
+ * source_wikitext/raw_html are never rewritten. This closes a long-standing
+ * gap where block #!if was evaluated by the renderer but an inline #!if inside
+ * a link/table cell silently exposed its body regardless of the condition.
+ *
+ * Unsupported conditions are hidden rather than guessed, matching the block
+ * renderer's conservative behavior. Missing template parameters use the shared
+ * Namu condition evaluator's default-null semantics.
+ */
+export function normalizeNamuConditionalMacrosForRender(source: string) {
+  const input = String(source || "");
+  let output = "";
+  let cursor = 0;
+  let evaluated = 0;
+  let included = 0;
+  let excluded = 0;
+
+  while (cursor < input.length) {
+    const start = input.indexOf("{{{#!if", cursor);
+    if (start < 0) {
+      output += input.slice(cursor);
+      break;
+    }
+    output += input.slice(cursor, start);
+    const end = findBalancedTripleEnd(input, start);
+    if (end < 0) {
+      output += input.slice(start);
+      break;
+    }
+
+    const inner = input.slice(start + 3, end);
+    const match = inner.match(/^#!if\b([^\n]*)(?:\n([\s\S]*))?$/i);
+    if (!match) {
+      output += input.slice(start, end + 3);
+      cursor = end + 3;
+      continue;
+    }
+
+    evaluated += 1;
+    const condition = match[1].trim();
+    const body = match[2] || "";
+    const result = evaluateNamuCondition(condition);
+    if (result === true) {
+      const nested = normalizeNamuConditionalMacrosForRender(body);
+      output += nested.source;
+      evaluated += nested.evaluated;
+      included += 1 + nested.included;
+      excluded += nested.excluded;
+    } else {
+      excluded += 1;
+    }
+    cursor = end + 3;
+  }
+
+  return { source: output, evaluated, included, excluded };
+}
+
+/** Render parser: canonical structural normalization plus conditional pruning. */
+export function parseNamuRawForRender(source: string): NamuRawNode[] {
+  const structurallyNormalized = normalizeNamuRawBlocks(String(source || ""));
+  const conditional = normalizeNamuConditionalMacrosForRender(structurallyNormalized);
+  return parseNamuRaw(conditional.source);
 }
 
 export function analyzeNamuRawGrammar(source: string): NamuRawGrammarAnalysis {
@@ -158,17 +241,31 @@ export function repairExpandedIncludeResiduesForRender(source: string) {
  */
 export function normalizeNamuRawCodeBlocksForRender(html: string) {
   let normalizedBlocks = 0;
+  let conditionalMacrosEvaluated = 0;
+  let conditionalMacrosIncluded = 0;
+  let conditionalMacrosExcluded = 0;
   const output = String(html || "").replace(
     /(<pre\b[^>]*>\s*<code\b[^>]*>)([\s\S]*?)(<\/code>\s*<\/pre>)/gi,
     (full, open: string, body: string, close: string) => {
       const decoded = decodeCodeEntities(body).replace(/\\n/g, "\n").replace(/\r\n?/g, "\n");
-      const normalized = normalizeNamuRawBlocks(decoded);
+      const structural = normalizeNamuRawBlocks(decoded);
+      const conditional = normalizeNamuConditionalMacrosForRender(structural);
+      const normalized = conditional.source;
+      conditionalMacrosEvaluated += conditional.evaluated;
+      conditionalMacrosIncluded += conditional.included;
+      conditionalMacrosExcluded += conditional.excluded;
       if (normalized === decoded) return full;
       normalizedBlocks += 1;
       return `${open}${escapeCodeHtml(normalized)}${close}`;
     },
   );
-  return { html: output, normalizedBlocks };
+  return {
+    html: output,
+    normalizedBlocks,
+    conditionalMacrosEvaluated,
+    conditionalMacrosIncluded,
+    conditionalMacrosExcluded,
+  };
 }
 
 export function mergeNamuRawGrammarAnalyses(items: NamuRawGrammarAnalysis[]) {
