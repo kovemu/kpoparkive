@@ -5,16 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Kpoparkive Capture</title>
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; width: 340px; background: #fff; color: #111; }
+    body { margin: 0; font-family: Arial, sans-serif; width: 360px; background: #fff; color: #111; }
     main { padding: 14px; }
     h1 { margin: 0 0 10px; font-size: 16px; }
     p { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: #555; }
     label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; }
-    input { box-sizing: border-box; width: 100%; padding: 8px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    input, select { box-sizing: border-box; width: 100%; padding: 8px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; background: white; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     button { width: 100%; margin-top: 10px; padding: 9px 10px; border: 0; border-radius: 6px; background: #111; color: #fff; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #6f3cff; }
     button:disabled { opacity: .5; cursor: wait; }
     #health { margin-top: 9px; font-size: 11px; }
-    #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 280px; overflow: auto; }
+    #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 300px; overflow: auto; }
     .ok { color: #0a7a2f; }
     .bad { color: #b00020; }
   </style>
@@ -22,10 +24,28 @@
 <body>
   <main>
     <h1>Kpoparkive Namu Capture</h1>
-    <p>Open a NamuWiki document in normal Chrome. One capture stores the final rendered DOM, computed layout/style snapshot, pseudo-elements and verified page images.</p>
+    <p>Open the root NamuWiki document in normal Chrome. Capture one page, or recursively clone linked document pages into the same Kpoparkive cluster.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
-    <button id="capture">Capture DOM + styles + images</button>
+    <button id="capture">Capture this page</button>
+
+    <div class="row">
+      <div>
+        <label for="depth">Linked depth</label>
+        <select id="depth">
+          <option value="0">0 · root only</option>
+          <option value="1" selected>1 · direct links</option>
+          <option value="2">2 · links of links</option>
+          <option value="3">3 · broad crawl</option>
+        </select>
+      </div>
+      <div>
+        <label for="maxDocs">Max documents</label>
+        <input id="maxDocs" type="number" min="1" max="200" value="25" />
+      </div>
+    </div>
+    <button id="clone" class="secondary">Clone root + linked docs</button>
+
     <div id="health">Checking local helper...</div>
     <div id="status">Ready.</div>
   </main>
