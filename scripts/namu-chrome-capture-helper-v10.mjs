@@ -13,21 +13,23 @@ function mustReplace(source, before, after, label) {
   return source.replace(before, after);
 }
 
-const oldEnsureQuery = String.raw`  const docs = await db(
-    `source_documents?source=eq.namu_mirror` +
-    `&root_title=eq.${encodeURIComponent(rootTitle)}` +
-    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-    `&select=id,source_title,root_title&limit=1`,
-  );`;
-const newEnsureQuery = String.raw`  const docs = await db(
-    `source_documents?source=eq.namu_mirror` +
-    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-    `&select=id,source_title,root_title&limit=1`,
-  );`;
+const oldEnsureQuery = [
+  "  const docs = await db(",
+  "    `source_documents?source=eq.namu_mirror` +",
+  "    `&root_title=eq.${encodeURIComponent(rootTitle)}` +",
+  "    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +",
+  "    `&select=id,source_title,root_title&limit=1`,",
+  "  );",
+].join("\n");
+const newEnsureQuery = [
+  "  const docs = await db(",
+  "    `source_documents?source=eq.namu_mirror` +",
+  "    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +",
+  "    `&select=id,source_title,root_title&limit=1`,",
+  "  );",
+].join("\n");
 combined = mustReplace(combined, oldEnsureQuery, newEnsureQuery, "global ensureSourceDocument lookup");
 
-const saveMarker = "async function saveRenderedDocument(payload) {";
-const registryHelpers = String.raw`
 async function recordSourceDocumentCluster(rootTitle, sourceDocumentId, crawlDepth) {
   const keyRoot = String(rootTitle || "").normalize("NFKC").trim();
   if (!keyRoot || !sourceDocumentId) return;
@@ -41,7 +43,10 @@ async function recordSourceDocumentCluster(rootTitle, sourceDocumentId, crawlDep
       {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ min_crawl_depth: Math.min(Number(existing[0].min_crawl_depth || 0), depth), last_seen_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          min_crawl_depth: Math.min(Number(existing[0].min_crawl_depth || 0), depth),
+          last_seen_at: new Date().toISOString(),
+        }),
       },
     );
   } else {
@@ -69,29 +74,27 @@ async function syncSourceDocumentLinks(fromDocumentId, links) {
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify(rows),
   });
-
-  const targetTitles = [...new Set(cleaned.map((link) => link.title))];
-  for (const title of targetTitles.slice(0, 300)) {
-    const targets = await db(
-      `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id&limit=1`
-    );
-    if (!targets?.[0]?.id) continue;
-    await db(
-      `source_document_links?from_document_id=eq.${encodeURIComponent(fromDocumentId)}&to_source_title=eq.${encodeURIComponent(title)}`,
-      { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ to_document_id: targets[0].id, last_seen_at: now }) },
-    );
-  }
 }
 
 async function backfillIncomingDocumentLinks(sourceTitle, sourceDocumentId) {
   if (!sourceTitle || !sourceDocumentId) return;
   await db(
     `source_document_links?to_source_title=eq.${encodeURIComponent(sourceTitle)}&to_document_id=is.null`,
-    { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ to_document_id: sourceDocumentId, last_seen_at: new Date().toISOString() }) },
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ to_document_id: sourceDocumentId, last_seen_at: new Date().toISOString() }),
+    },
   );
 }
 
-`;
+const registryHelpers = [
+  recordSourceDocumentCluster.toString(),
+  syncSourceDocumentLinks.toString(),
+  backfillIncomingDocumentLinks.toString(),
+].join("\n\n") + "\n\n";
+
+const saveMarker = "async function saveRenderedDocument(payload) {";
 combined = mustReplace(combined, saveMarker, registryHelpers + saveMarker, "registry helper injection");
 
 const docMarker = "  const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks });";
@@ -198,7 +201,11 @@ const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_
           await db("source_document_clusters", {
             method: "POST",
             headers: { Prefer: "return=minimal" },
-            body: JSON.stringify({ root_title: kpopCloneState.rootTitle, source_document_id: existing.id, min_crawl_depth: item.depth }),
+            body: JSON.stringify({
+              root_title: kpopCloneState.rootTitle,
+              source_document_id: existing.id,
+              min_crawl_depth: item.depth,
+            }),
           });
         }
       }
@@ -207,7 +214,10 @@ v8 = mustReplace(v8, oldSkip, newSkip, "global reuse membership + ad refresh");
 
 v8 = v8
   .replace('service: "kpoparkive-namu-chrome-capture-helper-v8"', 'service: "kpoparkive-namu-chrome-capture-helper-v10"')
-  .replace('Kpoparkive Namu Chrome capture helper v8 (persistent helper-owned clone queue)', 'Kpoparkive Namu Chrome capture helper v10 (global Namu document registry)');
+  .replace(
+    'Kpoparkive Namu Chrome capture helper v8 (persistent helper-owned clone queue)',
+    'Kpoparkive Namu Chrome capture helper v10 (global Namu document registry)',
+  );
 
 const tempV8 = path.join(os.tmpdir(), `kpoparkive-namu-v8-global-v10-${process.pid}.mjs`);
 fs.writeFileSync(tempV8, v8, "utf8");
