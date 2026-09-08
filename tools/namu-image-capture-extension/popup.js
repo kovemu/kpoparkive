@@ -30,7 +30,7 @@ async function refreshHealth() {
   }
 }
 
-function formatCloneJob(job) {
+function formatCloneJob(job, includeHint = false) {
   if (!job) return "Clone job: not started";
   const lines = [
     `Root: ${job.rootTitle || "—"}`,
@@ -43,6 +43,7 @@ function formatCloneJob(job) {
   ];
   if (job.current) lines.push(`Current: ${job.current}`);
   if (job.lastMedia) lines.push(`Last media: ${job.lastMedia.resolved || 0} resolved · ${job.lastMedia.failed || 0} failed`);
+  if (includeHint && job.running) lines.push("", "Running in background. You can close this popup and use Chrome normally.");
   if (Array.isArray(job.errors) && job.errors.length) {
     lines.push("", "Recent errors:");
     for (const error of job.errors.slice(-5)) lines.push(`- ${error}`);
@@ -52,10 +53,10 @@ function formatCloneJob(job) {
 
 async function pollCloneStatus() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-recursive-clone-status" });
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-fast-clone-status" });
     if (!response?.ok) return;
     const job = response.job;
-    if (job?.running || job?.done) setStatus(formatCloneJob(job), job?.failed ? "" : "ok");
+    if (job?.running || job?.done) setStatus(formatCloneJob(job, true), job?.failed ? "" : "ok");
     cloneButton.disabled = Boolean(job?.running);
     if (!job?.running && clonePoll) {
       clearInterval(clonePoll);
@@ -91,15 +92,15 @@ cloneButton.addEventListener("click", async () => {
   });
 
   cloneButton.disabled = true;
-  setStatus(`Starting clone...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
+  setStatus(`Starting background clone...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
 
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "kpoparkive-start-recursive-clone",
+      type: "kpoparkive-start-fast-clone",
       options: { rootTitle, maxDepth, maxDocs },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start clone.");
-    setStatus(formatCloneJob(response.job), "ok");
+    setStatus(formatCloneJob(response.job, true), "ok");
     if (clonePoll) clearInterval(clonePoll);
     clonePoll = setInterval(pollCloneStatus, 1000);
   } catch (error) {
