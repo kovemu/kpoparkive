@@ -13,17 +13,14 @@ const KPOP_LOW_VALUE_EXACT_TITLES = new Set([
   "YouTube", "유튜브", "Instagram", "인스타그램", "TikTok", "틱톡", "Facebook", "페이스북",
 ]);
 
-const KPOP_HIGH_VALUE_SECTION_RE = /(멤버|음반|앨범|디스코그래피|활동|콘텐츠|공연|행사|음악\s*방송|직캠|수상|팬덤|응원법|굿즈|프로필|유튜브\s*라이브|youtube\s*live)/i;
+const KPOP_MEMBER_SECTION_RE = /(멤버|프로필)/i;
+const KPOP_HIGH_VALUE_SECTION_RE = /(음반|앨범|디스코그래피|활동|콘텐츠|공연|행사|음악\s*방송|직캠|수상|팬덤|응원법|굿즈|유튜브\s*라이브|youtube\s*live)/i;
 const KPOP_MEDIUM_VALUE_SECTION_RE = /(개요|특징|로고|그룹명|콘셉트|컨셉|여담)/i;
 const KPOP_LOW_VALUE_SECTION_RE = /(둘러보기|각주|외부\s*링크|관련\s*문서)/i;
 
 function kpopIsCalendarNoiseTitle(title) {
   const value = String(title || "").normalize("NFKC").trim();
   if (!value) return true;
-
-  // NamuWiki turns dates/years into links very aggressively. These pages are
-  // almost never useful to a K-pop entity cluster and can explode recursive
-  // crawling (e.g. "3월 26일", "2025년", "2024년 8월 16일").
   return /^(?:18|19|20|21)\d{2}년$/u.test(value)
     || /^(?:18|19|20|21)\d{2}$/u.test(value)
     || /^(?:18|19|20|21)\d{2}년\s*(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?$/u.test(value)
@@ -83,11 +80,10 @@ function kpopLinkPriority({ title, sectionTitle, sourceArea }) {
   const normalizedTitle = String(title || "").normalize("NFKC");
   const section = String(sectionTitle || "");
 
-  // Subdocuments and disambiguated artist/member pages are extremely likely
-  // to belong to the same wiki cluster.
-  if (/\//u.test(normalizedTitle) || /\([^)]{2,}\)$/u.test(normalizedTitle)) return 100;
-  if (KPOP_HIGH_VALUE_SECTION_RE.test(section)) return 90;
-  if (KPOP_MEDIUM_VALUE_SECTION_RE.test(section)) return 60;
+  if (KPOP_MEMBER_SECTION_RE.test(section)) return 130;
+  if (/\//u.test(normalizedTitle) || /\([^)]{2,}\)$/u.test(normalizedTitle)) return 120;
+  if (KPOP_HIGH_VALUE_SECTION_RE.test(section)) return 100;
+  if (KPOP_MEDIUM_VALUE_SECTION_RE.test(section)) return 70;
   if (KPOP_LOW_VALUE_SECTION_RE.test(section)) return 10;
   if (sourceArea === "section") return 45;
   return 25;
@@ -140,9 +136,6 @@ function kpopExtractInternalLinks() {
     if (byTitle.size >= 2000) break;
   }
 
-  // Crawl only meaningful K-pop cluster candidates. Low-priority links remain
-  // visible in the captured HTML and therefore still work as hyperlinks; they
-  // simply do not consume recursive clone budget.
   const links = [...byTitle.values()]
     .filter((link) => link.priority >= 45)
     .sort((a, b) => {

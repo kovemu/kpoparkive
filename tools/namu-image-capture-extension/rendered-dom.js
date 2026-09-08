@@ -1,4 +1,5 @@
 const KPOP_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
+const KPOP_ROOT_ALGORITHM_VERSION = 2;
 
 const KPOP_COMPUTED_STYLE_PROPERTIES = [
   "display", "box-sizing", "position", "top", "right", "bottom", "left", "float", "clear",
@@ -33,6 +34,10 @@ function kpopSourceTitleFromLocation() {
   const match = location.pathname.match(/^\/w\/(.+)$/);
   if (!match) return document.title.replace(/\s*-\s*나무위키\s*$/i, "").trim();
   return kpopDecodeMaybe(match[1]);
+}
+
+function kpopNormalizeText(value) {
+  return String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
 function kpopAbsoluteUrl(value) {
@@ -82,6 +87,70 @@ function kpopDescribeElement(element) {
   return `${tag}${id}${classes}`.slice(0, 220);
 }
 
+function kpopIsSectionMarker(element) {
+  return element instanceof Element && /^s-\d+(?:\.\d+)*$/i.test(String(element.id || ""));
+}
+
+function kpopFindTitleElement(sourceTitle) {
+  const wanted = kpopNormalizeText(sourceTitle);
+  if (!wanted) return null;
+  const headings = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6"));
+  const exact = headings.find((element) => kpopNormalizeText(element.textContent) === wanted);
+  if (exact) return exact;
+  return headings.find((element) => {
+    const text = kpopNormalizeText(element.textContent);
+    return text && text.length <= wanted.length + 24 && (text.includes(wanted) || wanted.includes(text));
+  }) || null;
+}
+
+function kpopFindAnchoredDocumentRoot() {
+  const titleElement = kpopFindTitleElement(kpopSourceTitleFromLocation());
+  if (!titleElement) return null;
+
+  const sectionMarkers = Array.from(document.querySelectorAll("[id]"))
+    .filter(kpopIsSectionMarker)
+    .filter((element) => {
+      try {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0;
+      } catch { return true; }
+    });
+  if (!sectionMarkers.length) return null;
+
+  const required = Math.max(1, Math.ceil(sectionMarkers.length * 0.8));
+  const candidates = [];
+  let current = titleElement.parentElement;
+  for (let depth = 0; current && depth < 20; depth += 1, current = current.parentElement) {
+    if (!(current instanceof Element)) continue;
+    if (current === document.body || current === document.documentElement) break;
+    if (!["DIV", "SECTION", "ARTICLE", "MAIN"].includes(current.tagName) && current.getAttribute("role") !== "main") continue;
+    let containedSections = 0;
+    for (const marker of sectionMarkers) if (current.contains(marker)) containedSections += 1;
+    if (containedSections < required) continue;
+    const metrics = kpopElementMetrics(current);
+    if (!metrics.visible || metrics.textLength < 250) continue;
+    candidates.push({ element: current, metrics, containedSections });
+  }
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    if (a.metrics.nodes !== b.metrics.nodes) return a.metrics.nodes - b.metrics.nodes;
+    if (a.metrics.width !== b.metrics.width) return a.metrics.width - b.metrics.width;
+    return b.containedSections - a.containedSections;
+  });
+  const best = candidates[0];
+  return {
+    element: best.element,
+    selector: kpopDescribeElement(best.element),
+    strategy: "document-title-sections",
+    metrics: best.metrics,
+    candidateCount: candidates.length,
+    anchorSections: sectionMarkers.length,
+    containedSections: best.containedSections,
+  };
+}
+
 function kpopCollectRootCandidates() {
   const set = new Set();
   const addAncestors = (element) => {
@@ -101,6 +170,9 @@ function kpopCollectRootCandidates() {
 }
 
 function kpopFindPresentationRoot() {
+  const anchored = kpopFindAnchoredDocumentRoot();
+  if (anchored) return anchored;
+
   const semantic = Array.from(document.querySelectorAll("article,main,[role='main']"))
     .map((element) => ({ element, metrics: kpopElementMetrics(element) }))
     .filter((entry) => entry.metrics.visible && entry.metrics.score > 1200)
@@ -207,6 +279,7 @@ function kpopPseudoRule(nodeId, element, pseudo) {
 function kpopSanitizeRenderedClone(sourceRoot) {
   const clone = sourceRoot.cloneNode(true);
   clone.setAttribute("data-kpop-capture-root", "true");
+  clone.setAttribute("data-kpop-root-algorithm-version", String(KPOP_ROOT_ALGORITHM_VERSION));
   const originals = [sourceRoot, ...sourceRoot.querySelectorAll("*")];
   const copies = [clone, ...clone.querySelectorAll("*")];
   const rootRect = sourceRoot.getBoundingClientRect();
@@ -250,11 +323,11 @@ function kpopSanitizeRenderedClone(sourceRoot) {
     if (after) pseudoRules.push(after);
 
     if (original instanceof HTMLImageElement && copy instanceof HTMLImageElement) {
-      const current = kpopAbsoluteUrl(original.currentSrc || original.getAttribute("src") || original.getAttribute("data-src") || original.getAttribute("data-original"));
-      if (current) {
-        copy.setAttribute("src", current);
-        copy.setAttribute("data-original", current);
-        copy.setAttribute("data-kpop-source-url", current);
+      const currentUrl = kpopAbsoluteUrl(original.currentSrc || original.getAttribute("src") || original.getAttribute("data-src") || original.getAttribute("data-original"));
+      if (currentUrl) {
+        copy.setAttribute("src", currentUrl);
+        copy.setAttribute("data-original", currentUrl);
+        copy.setAttribute("data-kpop-source-url", currentUrl);
       }
       copy.removeAttribute("srcset");
       copy.removeAttribute("sizes");
@@ -264,8 +337,8 @@ function kpopSanitizeRenderedClone(sourceRoot) {
     }
 
     if (original instanceof HTMLIFrameElement && copy instanceof HTMLIFrameElement) {
-      const current = kpopAbsoluteUrl(original.getAttribute("src"));
-      if (current) copy.setAttribute("src", current);
+      const currentUrl = kpopAbsoluteUrl(original.getAttribute("src"));
+      if (currentUrl) copy.setAttribute("src", currentUrl);
     }
 
     if (original instanceof HTMLAnchorElement && copy instanceof HTMLAnchorElement) {
@@ -304,9 +377,12 @@ function kpopExtractRenderedDocument() {
     meta: {
       selector: found.selector,
       rootStrategy: found.strategy,
+      rootAlgorithmVersion: KPOP_ROOT_ALGORITHM_VERSION,
       rootMetrics: found.metrics,
       rootCandidateCount: found.candidateCount || 0,
       rootMaxima: found.maxima || null,
+      rootAnchorSections: found.anchorSections || null,
+      rootContainedSections: found.containedSections || null,
       tagName: source.tagName.toLowerCase(),
       articleBytes: new TextEncoder().encode(html).byteLength,
       styleBytes: new TextEncoder().encode(styleCss).byteLength,
