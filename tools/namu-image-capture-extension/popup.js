@@ -26,10 +26,18 @@ async function refreshHealth() {
   }
 }
 
+function formatBrowserDom(browserDom) {
+  if (!browserDom) return "Browser DOM: not captured";
+  if (!browserDom.ok) return `Browser DOM: FAILED (${browserDom.error || "unknown error"})`;
+  const kb = Number(browserDom.articleBytes || 0) / 1024;
+  return `Browser DOM: SAVED${kb > 0 ? ` (${kb.toFixed(1)} KB)` : ""}`;
+}
+
 function formatResult(result, progress = null) {
   const failed = result.details.filter((item) => item.status === "failed").slice(0, 8);
   const noQueue = result.details.filter((item) => item.status === "no_queue").slice(0, 8);
   const lines = [
+    formatBrowserDom(result.browserDom),
     `Page: ${result.sourceTitle}`,
     `Found: ${result.found}`,
     `Resolved: ${result.resolved}`,
@@ -89,7 +97,7 @@ captureButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
   captureButton.disabled = true;
-  setStatus("Preparing current NamuWiki page...\nKeep this popup open while capture is running.");
+  setStatus("Capturing final rendered article DOM, then image bytes...\nKeep this popup open while capture is running.");
 
   try {
     const prepared = await chrome.runtime.sendMessage({
@@ -109,9 +117,10 @@ captureButton.addEventListener("click", async () => {
       details: [],
       debug: prep.debug || null,
       helper: prep.helper || null,
+      browserDom: prep.browserDom || null,
     };
 
-    setStatus(formatResult(result, { done: 0, total: prep.assets.length }));
+    setStatus(formatResult(result, { done: 0, total: prep.assets.length }), prep.browserDom?.ok ? "ok" : "");
 
     for (let index = 0; index < prep.assets.length; index += 1) {
       const response = await chrome.runtime.sendMessage({
@@ -142,11 +151,11 @@ captureButton.addEventListener("click", async () => {
 
       setStatus(
         formatResult(result, { done: index + 1, total: prep.assets.length }),
-        result.resolved > 0 ? "ok" : "",
+        result.browserDom?.ok || result.resolved > 0 ? "ok" : "",
       );
     }
 
-    setStatus(formatResult(result), result.resolved > 0 ? "ok" : "");
+    setStatus(formatResult(result), result.browserDom?.ok || result.resolved > 0 ? "ok" : "");
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
   } finally {

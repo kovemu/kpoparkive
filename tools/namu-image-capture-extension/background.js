@@ -94,10 +94,33 @@ async function helperHealth() {
       ok: Boolean(json?.ok),
       supabaseHost: json?.supabaseHost || json?.supabase || "",
       stats: json?.stats || null,
+      documentCapture: json?.documentCapture || null,
     };
   } catch {
     return { ok: false };
   }
+}
+
+async function sendRenderedDocument(documentCapture, rootTitle) {
+  const response = await fetch(`${HELPER}/document`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rootTitle,
+      sourceTitle: documentCapture.sourceTitle,
+      pageUrl: documentCapture.pageUrl,
+      pageTitle: documentCapture.pageTitle,
+      articleHtml: documentCapture.articleHtml,
+      captureVersion: documentCapture.captureVersion,
+      meta: documentCapture.meta || {},
+    }),
+  });
+  const text = await response.text();
+  let body;
+  try { body = text ? JSON.parse(text) : {}; }
+  catch { body = { error: text }; }
+  if (!response.ok) throw new Error(body?.error || `document helper HTTP ${response.status}`);
+  return body;
 }
 
 async function sendAsset(blob, meta) {
@@ -128,6 +151,15 @@ async function prepareCapture(rootTitle) {
     throw new Error("Open a NamuWiki document in this Chrome tab first.");
   }
 
+  let browserDom = { ok: false, error: "Rendered DOM capture was not attempted." };
+  try {
+    const rendered = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-rendered-document" });
+    if (!rendered?.ok) throw new Error(rendered?.error || "Could not extract rendered article DOM.");
+    browserDom = await sendRenderedDocument(rendered, rootTitle);
+  } catch (error) {
+    browserDom = { ok: false, error: error?.message || String(error) };
+  }
+
   const extracted = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-images" });
   if (!extracted?.ok) throw new Error(extracted?.error || "Could not extract images from this page.");
 
@@ -138,6 +170,7 @@ async function prepareCapture(rootTitle) {
     assets: extracted.assets || [],
     debug: extracted.debug || null,
     helper: health,
+    browserDom,
   };
 }
 
@@ -202,7 +235,7 @@ async function captureOneAsset(payload) {
           height: helper.height,
           anonymous: Boolean(asset.anonymous),
           matchedAs: helper.matchedAs || helper.fileName || null,
-          matchReason: helper.matchReason || null,
+          matchReason: helper.matchReason || helper.matchMethod || null,
         },
       };
     } catch (error) {
