@@ -38,20 +38,21 @@ def inspect_response(response):
     }
     try:
         image = Image.open(BytesIO(body))
+        width, height = image.size
+        fmt = image.format
         image.verify()
         result.update({
             "image": True,
-            "width": image.width,
-            "height": image.height,
-            "format": image.format,
+            "width": width,
+            "height": height,
+            "format": fmt,
         })
     except Exception as exc:
         result["image_error"] = str(exc)[:200]
     return result
 
 
-@app.get("/")
-def probe():
+def run_probe():
     scraper = cloudscraper.create_scraper(
         browser={"browser": "chrome", "platform": "windows", "mobile": False}
     )
@@ -70,3 +71,13 @@ def probe():
             item["cloudscraper"] = {"error": str(exc)[:300]}
         output.append(item)
     return {"ok": True, "tests": output}
+
+
+@app.get("/")
+def probe_root():
+    return run_probe()
+
+
+@app.get("/api/namu_cloudscraper_probe")
+def probe_file_route():
+    return run_probe()
