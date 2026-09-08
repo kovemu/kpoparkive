@@ -2,6 +2,13 @@ import { parse } from "node-html-parser";
 
 export type BrowserArtifactAssetMap = Record<string, string>;
 
+const FLOW_HEIGHT_TAGS = new Set([
+  "div", "section", "article", "main", "header", "footer", "nav", "aside",
+  "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
+  "details", "summary", "p", "blockquote", "pre", "ul", "ol", "li", "dl", "dt", "dd",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+]);
+
 function safeStyle(value: string | undefined) {
   if (!value) return "";
   const output: string[] = [];
@@ -37,6 +44,24 @@ function stripFlowHeights(value: string | undefined) {
       return !blocked.has(declaration.slice(0, colon).trim().toLowerCase());
     })
     .join(";");
+}
+
+function styleProperty(value: string | undefined, property: string) {
+  if (!value) return "";
+  const lower = property.toLowerCase();
+  for (const declaration of value.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon < 1) continue;
+    if (declaration.slice(0, colon).trim().toLowerCase() === lower) return declaration.slice(colon + 1).trim();
+  }
+  return "";
+}
+
+function thawNormalFlowHeight(tag: string, style: string) {
+  if (!FLOW_HEIGHT_TAGS.has(tag)) return style;
+  const position = styleProperty(style, "position").toLowerCase();
+  if (position === "absolute" || position === "fixed") return style;
+  return stripFlowHeights(style);
 }
 
 function safeHref(value: string | undefined) {
@@ -113,11 +138,12 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
       if (/^on/i.test(lower) || ["nonce", "integrity", "srcdoc"].includes(lower)) element.removeAttribute(attr);
     }
 
-    const style = safeStyle(element.getAttribute("style") || undefined);
+    const tag = element.tagName.toLowerCase();
+    let style = safeStyle(element.getAttribute("style") || undefined);
+    style = thawNormalFlowHeight(tag, style);
     if (style) element.setAttribute("style", style);
     else element.removeAttribute("style");
 
-    const tag = element.tagName.toLowerCase();
     if (tag === "a") {
       const href = safeHref(element.getAttribute("href") || undefined);
       if (href) element.setAttribute("href", href);
