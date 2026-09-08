@@ -27,6 +27,9 @@ loadEnvFile(path.resolve(".env"));
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_HOST = (() => {
+  try { return new URL(SUPABASE_URL).host; } catch { return SUPABASE_URL; }
+})();
 
 if (!SERVICE_ROLE_KEY) {
   console.error("SUPABASE_SERVICE_ROLE_KEY is missing. Put it in .env.local before running the capture helper.");
@@ -111,12 +114,8 @@ function extensionFor(contentType) {
 
 function dimensionsFromBytes(bytes, contentType) {
   try {
-    if (contentType === "image/png" && bytes.length >= 24) {
-      return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
-    }
-    if (contentType === "image/gif" && bytes.length >= 10) {
-      return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
-    }
+    if (contentType === "image/png" && bytes.length >= 24) return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    if (contentType === "image/gif" && bytes.length >= 10) return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
     if (contentType === "image/jpeg") {
       let i = 2;
       const sof = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
@@ -159,7 +158,7 @@ async function loadQueue(rootTitle, force = false) {
   for (let offset = 0; offset < 10000; offset += 1000) {
     const batch = await db(
       `source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}` +
-      `&asset_type=eq.image&status=in.(pending,unresolved)` +
+      `&asset_type=eq.image` +
       `&select=id,source_title,source_ref,label,status,metadata` +
       `&order=updated_at.asc.nullsfirst,id.asc&limit=1000&offset=${offset}`,
     );
@@ -266,7 +265,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   if (req.method === "GET" && url.pathname === "/health") {
-    json(res, 200, { ok: true, service: "kpoparkive-namu-chrome-capture-helper", port: PORT, stats });
+    json(res, 200, { ok: true, service: "kpoparkive-namu-chrome-capture-helper", port: PORT, supabaseHost: SUPABASE_HOST, stats });
     return;
   }
 
@@ -308,7 +307,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (!rows.length) {
       stats.noQueue += 1;
-      json(res, 200, { ok: true, status: "no_queue", fileName, bytes: bytes.length, width, height });
+      const sampleKeys = [...cache.byKey.keys()].slice(0, 12);
+      console.log(`NO QUEUE ${fileName} [${fileKey}] (queue rows=${cache.rows.length}, host=${SUPABASE_HOST})`);
+      json(res, 200, {
+        ok: true,
+        status: "no_queue",
+        fileName,
+        fileKey,
+        bytes: bytes.length,
+        width,
+        height,
+        queueRows: cache.rows.length,
+        sampleKeys,
+        supabaseHost: SUPABASE_HOST,
+      });
       return;
     }
 
@@ -330,6 +342,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log("Kpoparkive Namu Chrome capture helper");
   console.log(`Listening on http://${HOST}:${PORT}`);
+  console.log(`Supabase: ${SUPABASE_HOST}`);
   console.log("Open NamuWiki in your normal Chrome, then use the unpacked Kpoparkive capture extension.");
   console.log("Resolved files are uploaded to Supabase Storage: wiki-media/imports/<root>/...");
 });
