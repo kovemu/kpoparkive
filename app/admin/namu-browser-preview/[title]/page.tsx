@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import NamuBrowserArtifactRenderer, { type BrowserArtifactAssetMap } from "../../../../components/wiki/NamuBrowserArtifactRenderer";
+import NamuArtifactAdCleaner from "../../../../components/wiki/NamuArtifactAdCleaner";
 import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
@@ -67,10 +68,6 @@ function browserAssetMap(rows: AssetRow[], captures: CaptureRow[]) {
     }
   }
 
-  // Browser staging is the canonical fallback for one-click cloning. It maps
-  // the exact CDN URL seen in the rendered DOM to the bytes captured from the
-  // user's normal Chrome session, even when no semantic queue row existed.
-  // Rows arrive newest first, so do not let older captures overwrite them.
   for (const row of captures) {
     if (!row.storage_path) continue;
     const url = publicStorageUrl(row.storage_path);
@@ -146,13 +143,14 @@ export default async function NamuBrowserPreviewPage({ params }: { params: Promi
 
         {!browserHtml ? (
           <section style={{ padding: 20, border: "1px solid #d7dde5", borderRadius: 8, background: "#fff" }}>
-            No browser artifact has been captured for this document yet. Reload the unpacked Chrome extension, open this NamuWiki document in normal Chrome, and press <strong>Capture DOM + images</strong>.
+            No browser artifact has been captured for this document yet. Reload the unpacked Chrome extension, open this NamuWiki document in normal Chrome, and press <strong>Import to Kpoparkive</strong>.
           </section>
         ) : (
           <section>
             <h2 className="sectionTitle">Browser artifact replay</h2>
             <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 16 }}>
               <NamuBrowserArtifactRenderer html={browserHtml} styleCss={styleCss} assets={assets} capturedWidth={capturedWidth} />
+              <NamuArtifactAdCleaner />
             </div>
           </section>
         )}
