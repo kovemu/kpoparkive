@@ -53,9 +53,34 @@ export function buildNamuResolvedAssetMap(rows: NamuQueueAsset[], hints: Record<
   return assets;
 }
 
+/**
+ * namu.moe currently emits `file.namu.moe/file/<hash>` URLs. That host can
+ * intermittently answer Vercel/server requests with 503 while the same object
+ * is reachable through the mirror's main host. Keep every representation as a
+ * download candidate; the resolver stores the first successful response in
+ * Supabase, so these remote URLs are never a long-term runtime dependency.
+ */
+export function expandNamuRemoteCandidates(url: string) {
+  const output = [url];
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "file.namu.moe" && parsed.pathname.startsWith("/file/")) {
+      output.push(`https://www.namu.moe${parsed.pathname}${parsed.search}`);
+      output.push(`https://namu.moe${parsed.pathname}${parsed.search}`);
+    }
+    if (parsed.hostname === "w.namu.la") output.push(`https://i.namu.wiki${parsed.pathname}${parsed.search}`);
+  } catch {
+    // Candidate validation happens again before network I/O.
+  }
+  return [...new Set(output)];
+}
+
 export function findNamuAssetCandidates(refs: string[], maps: Record<string, string>[]) {
   return [...new Set(maps.flatMap(map => {
     const lookup = createNamuAssetLookup(map);
-    return refs.map(ref => lookup(ref)).filter((url): url is string => Boolean(url));
+    return refs.flatMap(ref => {
+      const url = lookup(ref);
+      return url ? expandNamuRemoteCandidates(url) : [];
+    });
   }))];
 }
