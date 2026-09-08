@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "namu:image-worker": "node scripts/namu-browser-image-worker.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
@@ -18,6 +19,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "playwright-core": "^1.63.0",
     "typescript": "^5.8.3"
   }
 }
