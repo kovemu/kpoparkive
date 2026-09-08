@@ -1,5 +1,9 @@
+import { readNamuImageBytes } from "../../../../lib/namuImageBytes";
+import { extractRenderedFileMap } from "../../../../lib/namuRawSource";
+import { findNamuAssetCandidates } from "../../../../lib/namuStoredAssets";
+import { hydrateNamuStoredMedia } from "../../../../lib/namuStoredMediaHydrate";
 import { NextResponse } from "next/server";
-import { parse } from "node-html-parser";
+export const maxDuration = 60;
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -50,31 +54,15 @@ function normalizedFileName(value: string) {
   return value.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
-function imageFileNameFromAlt(value: string) {
-  const alt = value.normalize("NFKC").trim();
-  const explicit = alt.match(/^(?:파일|File):(.+)$/i)?.[1]?.trim();
-  if (explicit) return explicit;
-  return /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt) ? alt : null;
-}
-
 function extractFileMap(rawHtml: string) {
-  const root = parse(rawHtml || "");
-  const map = new Map<string, string>();
-  for (const image of root.querySelectorAll("img")) {
-    const fileName = imageFileNameFromAlt(image.getAttribute("alt") || "");
-    if (!fileName) continue;
-    const key = normalizedFileName(fileName);
-    const rawUrl = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || "";
-    const url = normalizeDirectUrl(rawUrl);
-    if (key && url && !map.has(key)) map.set(key, url);
-  }
-  return map;
+  return new Map(Object.entries(extractRenderedFileMap(rawHtml)));
 }
 
 async function fetchMirrorDocumentFileMap(title: string) {
   const response = await fetch(`${NAMU_MIRROR}/w/${encodeURIComponent(title)}`, {
     cache: "no-store",
     redirect: "follow",
+    signal: AbortSignal.timeout(8000),
     headers: { "User-Agent": "KpoparkiveAssetResolver/0.8 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
   });
   if (!response.ok) throw new Error(`linked mirror fetch ${response.status}: ${title}`);
@@ -116,19 +104,17 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.8", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
-  if (!response.ok) throw new Error(`image fetch ${response.status}`);
-  const contentType = response.headers.get("content-type") || "image/jpeg";
-  if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > 8 * 1024 * 1024) throw new Error("image exceeds 8 MB");
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.8", Referer: `${NAMU_MIRROR}/` }, redirect: "follow", signal: AbortSignal.timeout(8000) });
+  const bytes = await readNamuImageBytes(response);
+  const contentType = response.headers.get("content-type")!;
   const ext = extensionFor(contentType, url);
-  const hash = await shortHash(`${rootTitle}|${sourceTitle}|${url}`);
+  const hash = await shortHash(`${rootTitle}|${url}`);
   const path = `imports/${safePart(rootTitle)}/${safePart(sourceTitle)}-${hash}.${ext}`;
   const upload = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, apikey: SERVICE_ROLE_KEY, "Content-Type": contentType, "x-upsert": "true" },
     body: bytes,
+    signal: AbortSignal.timeout(10000),
   });
   if (!upload.ok) throw new Error(`storage upload ${upload.status}: ${await upload.text()}`);
   return { path, publicUrl: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`, contentType, bytes: bytes.byteLength };
@@ -145,12 +131,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const body = await request.json() as { rootTitle?: string; batchSize?: number; retryUnresolved?: boolean };
+    const body = await request.json() as { rootTitle?: string; batchSize?: number; retryUnresolved?: boolean; assetType?: "image" };
     const rootTitle = String(body.rootTitle || "").trim();
     if (!rootTitle) return NextResponse.json({ error: "rootTitle is required" }, { status: 400 });
-    const batchSize = Math.max(1, Math.min(Number(body.batchSize ?? 12), 30));
+    const requestedSize = Number(body.batchSize ?? 6);
+    if (!Number.isFinite(requestedSize)) return NextResponse.json({ error: "Invalid batchSize" }, { status: 400 });
+    const batchSize = Math.max(1, Math.min(Math.floor(requestedSize), 12));
+    const startedAt = Date.now();
+    const reusedStoredMedia = await hydrateNamuStoredMedia(db, rootTitle, SUPABASE_URL);
     const statusFilter = body.retryUnresolved ? "in.(pending,unresolved)" : "eq.pending";
-    const rows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=${statusFilter}&select=id,source_document_id,source_title,asset_type,source_ref,label,provider,metadata&order=created_at.asc&limit=${batchSize}`) as Array<{
+    const rows = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=${statusFilter}${body.assetType === "image" ? "&asset_type=eq.image" : ""}&select=id,source_document_id,source_title,asset_type,source_ref,label,provider,metadata&order=updated_at.asc.nullsfirst,id.asc&limit=${batchSize}`) as Array<{
       id: string; source_document_id: string; source_title: string; asset_type: string; source_ref: string; label: string | null; provider: string | null; metadata: Record<string, unknown>;
     }>;
 
@@ -159,6 +149,9 @@ export async function POST(request: Request) {
     const unresolved: { id: string; ref: string; reason: string }[] = [];
     const fileMaps = new Map<string, Map<string, string>>();
     const linkedMaps = new Map<string, Map<string, string>>();
+    const clusterDocs = await db(`source_documents?root_title=eq.${encodeURIComponent(rootTitle)}&select=raw_html`) as { raw_html: string }[];
+    const clusterMaps = clusterDocs.map(doc => extractRenderedFileMap(doc.raw_html || ""));
+    const uploadedUrls = new Map<string, Awaited<ReturnType<typeof uploadImage>>>();
 
     async function mirrorFileUrl(documentId: string, sourceRef: string) {
       let map = fileMaps.get(documentId);
@@ -182,6 +175,7 @@ export async function POST(request: Request) {
     }
 
     for (const row of rows) {
+      if (Date.now() - startedAt > 35000) break;
       try {
         let patch: Record<string, unknown> = { status: "resolved", updated_at: new Date().toISOString() };
         if (row.asset_type === "image") {
@@ -191,20 +185,42 @@ export async function POST(request: Request) {
             continue;
           }
 
-          const fileRef = row.label || row.source_ref;
-          const enrichedUrl = normalizeDirectUrl(row.metadata?.enrichment_url);
-          const mirrorMappedUrl = await mirrorFileUrl(row.source_document_id, fileRef);
-          const linkedMappedUrl = enrichedUrl || mirrorMappedUrl ? null : await linkedTargetFileUrl(row.metadata?.linked_target, fileRef);
-          const directUrl = enrichedUrl || mirrorMappedUrl || linkedMappedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
-          if (!directUrl) throw new Error("source image file is not recoverable from current or linked mirror document");
-          const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
-          const resolvedFrom = enrichedUrl ? "raw-file-map" : mirrorMappedUrl ? "mirror-img-alt" : linkedMappedUrl ? "linked-document-img-alt" : "source";
+          const refs = [row.source_ref, row.label || ""].filter(Boolean);
+          const local = await mirrorFileUrl(row.source_document_id, row.label || row.source_ref);
+          const candidates = [...new Set([
+            normalizeDirectUrl(row.metadata?.enrichment_url), local,
+            ...findNamuAssetCandidates(refs, clusterMaps),
+            normalizeDirectUrl(row.source_ref), normalizeDirectUrl(row.metadata?.url),
+          ].filter((url): url is string => Boolean(url)))];
+          const errors: string[] = [];
+          let uploaded: Awaited<ReturnType<typeof uploadImage>> | undefined;
+          let directUrl = "";
+          const tryCandidates = async (urls: string[]) => {
+            for (const url of urls) {
+              if (Date.now() - startedAt > 45000) break;
+              try {
+                uploaded = uploadedUrls.get(url) || await uploadImage(url, rootTitle, row.source_title);
+                uploadedUrls.set(url, uploaded);
+                directUrl = url;
+                break;
+              } catch (error) { errors.push(error instanceof Error ? error.message : "download failed"); }
+            }
+          };
+          await tryCandidates(candidates);
+          if (!uploaded && Date.now() - startedAt < 35000) {
+            try {
+              const linked = await linkedTargetFileUrl(row.metadata?.linked_target, row.label || row.source_ref);
+              if (linked && !candidates.includes(linked)) await tryCandidates([linked]);
+            } catch (error) { errors.push(error instanceof Error ? error.message : "linked document failed"); }
+          }
+          if (!uploaded) throw new Error(errors.join("; ") || "No downloadable image candidate found");
+          const resolvedFrom = "cluster-candidate-download";
           patch = {
             ...patch,
             resolved_url: uploaded.publicUrl,
             storage_path: uploaded.path,
-            confidence: linkedMappedUrl ? 0.99 : enrichedUrl || mirrorMappedUrl ? 1 : 0.9,
-            metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes, resolved_from: resolvedFrom },
+            confidence: 0.99,
+            metadata: { ...row.metadata, original_url: directUrl, content_type: uploaded.contentType, bytes: uploaded.bytes, resolved_from: resolvedFrom, resolution_error: null },
           };
         } else if (row.asset_type === "video") {
           const videoId = typeof row.metadata?.video_id === "string" ? row.metadata.video_id : null;
@@ -231,8 +247,9 @@ export async function POST(request: Request) {
     }
 
     const remaining = await db(`source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&status=eq.pending&select=id`) as { id: string }[];
-    return NextResponse.json({ ok: true, rootTitle, processed: rows.length, resolved: resolved.length, skipped: skipped.length, unresolved, remaining: remaining.length });
+    return NextResponse.json({ ok: true, rootTitle, processed: resolved.length + skipped.length + unresolved.length, reusedStoredMedia, resolved: resolved.length, skipped: skipped.length, unresolved, remaining: remaining.length });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown asset resolution error" }, { status: 500 });
   }
 }
+

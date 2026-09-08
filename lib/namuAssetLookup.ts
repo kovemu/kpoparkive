@@ -72,12 +72,15 @@ export function createNamuAssetLookup(assets: NamuAssetMap) {
     if (assets[file]) return assets[file];
     const normalized = normalizeNamuFileRef(file);
     if (assets[normalized]) return assets[normalized];
-    return unique(canonical.get(normalized.toLowerCase()))
-      || unique(tokenized.get(tokenSignature(normalized)))
-      || unique(compact.get(compactSignature(normalized)));
+    for (const candidates of [canonical.get(normalized.toLowerCase()), tokenized.get(tokenSignature(normalized)), compact.get(compactSignature(normalized))]) {
+      // A weaker signature must not resolve a collision at a stronger level.
+      if (candidates?.size) return unique(candidates);
+    }
+    return undefined;
   };
 }
 
 export function findNamuAsset(assets: NamuAssetMap, file: string) {
   return createNamuAssetLookup(assets)(file);
 }
+

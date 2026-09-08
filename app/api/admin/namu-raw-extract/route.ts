@@ -1,3 +1,4 @@
+import { hydrateNamuStoredMedia } from "../../../../lib/namuStoredMediaHydrate";
 import { NextResponse } from "next/server";
 import { buildNamuMirrorImportArtifact, NAMU_RENDER_ARTIFACT_VERSION } from "../../../../lib/namuMirrorImportArtifact";
 import type { RenderedFileMap } from "../../../../lib/namuRawSource";
@@ -224,6 +225,8 @@ export async function POST(request: Request) {
       clusterAssetHintError = error instanceof Error ? error.message : "cluster asset hint hydration failed";
     }
 
+    const reusedStoredMedia = await hydrateNamuStoredMedia(db, rootTitle, SUPABASE_URL);
+
     const extracted = results.filter((result) => result.status === "extracted");
     const weightedRaw = extracted.reduce((sum, result) => sum + result.rawCharacters, 0);
     const weightedRendered = extracted.reduce((sum, result) => sum + result.renderedCharacters, 0);
@@ -247,6 +250,7 @@ export async function POST(request: Request) {
       internalLinks: extracted.reduce((sum, result) => sum + result.internalLinks, 0),
       clusterRenderedFiles: Object.keys(clusterRenderedFileMap).length,
       clusterAssetHints,
+      reusedStoredMedia,
       clusterAssetHintError,
       estimatedRawCoverage: denominator ? Math.round((weightedRaw / denominator) * 1000) / 10 : 0,
       results,
@@ -255,3 +259,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown raw/render artifact extraction error" }, { status: 500 });
   }
 }
+

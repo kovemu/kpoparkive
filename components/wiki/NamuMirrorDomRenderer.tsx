@@ -417,7 +417,7 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
     const file = alt.match(/^(?:파일|File):(.+)$/i)?.[1] || (/\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt.trim()) ? alt.trim() : undefined);
     const resolved = file ? findNamuAsset(assets, file) : undefined;
     const fallback = normalizeMediaUrl(node.getAttribute("data-original") || node.getAttribute("data-src") || node.getAttribute("src"));
-    const src = resolved || fallback;
+    const src = resolved || (fallback ? assets[fallback] : undefined) || fallback;
     if (!src) return file ? <span key={key} className={styles.unresolvedImage}>[{displayFileRef(file)}]</span> : null;
     return <img {...common} src={src} alt={file ? displayFileRef(file) : alt} loading="lazy" style={{ maxWidth: "100%", height: "auto", ...common.style }} />;
   }

@@ -149,12 +149,15 @@ export function extractRenderedFileMap(html: string): RenderedFileMap {
   for (const image of root.querySelectorAll("img")) {
     const alt = decodeEntities(image.getAttribute("alt") || "").trim();
     const match = alt.match(/^(?:파일|File):(.+)$/i);
-    if (!match) continue;
-    const file = normalizeFileKey(match[1]);
+    const bare = /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt) ? alt : "";
+    if (!match && !bare) continue;
+    const file = normalizeFileKey(match?.[1] || bare);
     const serialized = image.toString();
     const embeddedHint = serialized.match(/(?:https?:)?\/\/file\.namu\.moe\/file\/[a-z0-9]+/i)?.[0] || "";
-    const src = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || embeddedHint;
-    const url = normalizeMediaUrl(src);
+    const candidates = [image.getAttribute("data-original"), image.getAttribute("data-src"),
+      ...(image.getAttribute("srcset") || "").split(",").map(value => value.trim().split(/\s+/)[0]),
+      image.getAttribute("src"), embeddedHint];
+    const url = candidates.map(value => normalizeMediaUrl(value || "")).find(Boolean);
     if (file && url && !map[file]) map[file] = url;
   }
   return map;
@@ -210,3 +213,4 @@ export function extractMirrorRawBundle(html: string): MirrorRawBundle {
     estimatedRawCoverage: denominator ? Math.round((rawCharacters / denominator) * 1000) / 10 : 0,
   };
 }
+

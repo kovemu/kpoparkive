@@ -1,3 +1,4 @@
+import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 import { notFound } from "next/navigation";
 import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
@@ -105,12 +106,7 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
     }
   }
   for (const [key, url] of Object.entries(bundle.renderedFileMap)) assets[fileKey(key)] = url;
-  for (const row of assetRows) {
-    const url = usableAssetUrl(row);
-    if (!url) continue;
-    assets[fileKey(row.source_ref)] = url;
-    if (row.label) assets[fileKey(row.label)] = url;
-  }
+  Object.assign(assets, buildNamuResolvedAssetMap(assetRows, assets));
 
   // Mirror/file queue names are not always byte-identical. For example the raw
   // document may say "RESCENE 로고(Pretty Girl).svg" while enrichment returns
@@ -184,3 +180,4 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
 function Metric({ label, value }: { label: string; value: string }) {
   return <div style={{ border: "1px solid #d7dde5", borderRadius: 8, padding: 14, background: "white" }}><div style={{ fontSize: 12, color: "#667085" }}>{label}</div><div style={{ marginTop: 4, fontSize: 18, fontWeight: 700 }}>{value}</div></div>;
 }
+

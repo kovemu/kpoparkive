@@ -1,3 +1,4 @@
+import { hydrateNamuStoredMedia } from "../../../../lib/namuStoredMediaHydrate";
 import { NextResponse } from "next/server";
 import { fetchMirrorDocument, shouldCrawlTitle, type RelationCandidate } from "../../../../lib/namuMirror";
 import { buildNamuMirrorImportArtifact, NAMU_RENDER_ARTIFACT_VERSION } from "../../../../lib/namuMirrorImportArtifact";
@@ -362,7 +363,9 @@ export async function POST(request: Request) {
     });
 
     const fetchedResults = results.filter((r) => r.status === "fetched");
+    const reusedStoredMedia = await hydrateNamuStoredMedia(db, rootTitle, SUPABASE_URL);
     return NextResponse.json({
+      reusedStoredMedia,
       ok: true,
       runId,
       extractionVersion: EXTRACTION_VERSION,
@@ -384,3 +387,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown import error" }, { status: 500 });
   }
 }
+
