@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
 import NamuRawRenderer from "../../../../components/wiki/NamuRawRenderer";
+import { createNamuAssetLookup } from "../../../../lib/namuAssetLookup";
 import { parseNamuHybridSegments } from "../../../../lib/namuHybrid";
 import { buildNamuMirrorImportArtifact, NAMU_RENDER_ARTIFACT_VERSION } from "../../../../lib/namuMirrorImportArtifact";
 import { parseNamuRawCanonical } from "../../../../lib/namuRawGrammar";
@@ -109,6 +110,17 @@ export default async function NamuRawPreviewPage({ params }: { params: Promise<{
     if (!url) continue;
     assets[fileKey(row.source_ref)] = url;
     if (row.label) assets[fileKey(row.label)] = url;
+  }
+
+  // Mirror/file queue names are not always byte-identical. For example the raw
+  // document may say "RESCENE 로고(Pretty Girl).svg" while enrichment returns
+  // "Pretty Girl(RESCENE) 로고.svg". Reconcile every source reference through a
+  // collision-aware canonical/token signature resolver, then materialize the
+  // alias into the normal exact-key map consumed by both renderers.
+  const assetLookup = createNamuAssetLookup(assets);
+  for (const ref of bundle.fileRefs) {
+    const url = assetLookup(ref);
+    if (url && !assets[fileKey(ref)]) assets[fileKey(ref)] = url;
   }
 
   return (
