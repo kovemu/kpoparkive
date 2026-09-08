@@ -8,7 +8,7 @@ import {
 } from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v7-condition-aware";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v8-inline-if";
 
 export type NamuRenderManifest = {
   version: string;
@@ -29,6 +29,9 @@ export type NamuRenderManifest = {
   syntaxRepair: NamuMirrorSyntaxRepairReport;
   rawGrammar: ReturnType<typeof mergeNamuRawGrammarAnalyses> & {
     renderNormalizedCodeBlocks: number;
+    inlineConditionalMacrosEvaluated: number;
+    inlineConditionalMacrosIncluded: number;
+    inlineConditionalMacrosExcluded: number;
     expandedIncludeResiduesRepaired: number;
     bareImageAltsNormalized: number;
     floatClassesAnnotated: number;
@@ -141,6 +144,9 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   const rawGrammar = {
     ...mergeNamuRawGrammarAnalyses(rawAnalyses),
     renderNormalizedCodeBlocks: renderNormalized.normalizedBlocks,
+    inlineConditionalMacrosEvaluated: renderNormalized.conditionalMacrosEvaluated,
+    inlineConditionalMacrosIncluded: renderNormalized.conditionalMacrosIncluded,
+    inlineConditionalMacrosExcluded: renderNormalized.conditionalMacrosExcluded,
     expandedIncludeResiduesRepaired: includeNormalized.repaired,
     bareImageAltsNormalized: imageAltNormalized.repaired,
     floatClassesAnnotated: floatAnnotated.repaired,
