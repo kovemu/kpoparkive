@@ -4,7 +4,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const basePath = path.resolve("scripts/namu-chrome-capture-helper-v8.mjs");
-const base = fs.readFileSync(basePath, "utf8");
+// Windows Git checkouts can materialize the v8 source with CRLF line endings.
+// v9 patches source text before importing it, so normalize EOLs first instead
+// of depending on the checkout's core.autocrlf setting.
+const base = fs.readFileSync(basePath, "utf8").replace(/\r\n?/g, "\n");
 
 const oldBlock = String.raw`async function kpopKnownAssetUrls(rootTitle) {
   const rows = await db(
