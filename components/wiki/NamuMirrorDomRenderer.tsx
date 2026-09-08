@@ -1,5 +1,7 @@
 import React from "react";
 import { HTMLElement, parse, type Node } from "node-html-parser";
+import { findNamuAsset, normalizeNamuFileRef } from "../../lib/namuAssetLookup";
+import { evaluateNamuCondition } from "../../lib/namuCondition";
 import { parseNamuRaw } from "../../lib/namuRawParser";
 import NamuRawRenderer from "./NamuRawRenderer";
 import { NamuTabContent, NamuTabControl, NamuTabProvider } from "./NamuTabContext";
@@ -12,7 +14,7 @@ type Theme = {
   foreground: string;
 };
 
-const RENDERER_SCOPE = '[data-namu-renderer="mirror-dom-v3-hybrid"]';
+const RENDERER_SCOPE = '[data-namu-renderer="mirror-dom-v4-condition-aware"]';
 
 const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   display: "display",
@@ -57,6 +59,9 @@ const SAFE_STYLE_PROPERTIES: Record<string, keyof React.CSSProperties> = {
   "font-family": "fontFamily",
   font: "font",
   "line-height": "lineHeight",
+  "letter-spacing": "letterSpacing",
+  "text-decoration": "textDecoration",
+  cursor: "cursor",
   flex: "flex",
   "flex-grow": "flexGrow",
   "flex-shrink": "flexShrink",
@@ -156,17 +161,8 @@ function normalizeMediaUrl(value: string | undefined) {
   return undefined;
 }
 
-function normalizeFileRef(value: string) {
-  return decodeEntities(value).normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
-}
-
-function findAsset(assets: AssetMap, file: string) {
-  const normalized = normalizeFileRef(file);
-  if (assets[normalized]) return assets[normalized];
-  for (const [key, url] of Object.entries(assets)) {
-    if (normalizeFileRef(key) === normalized) return url;
-  }
-  return undefined;
+function displayFileRef(value: string) {
+  return normalizeNamuFileRef(decodeEntities(value));
 }
 
 function safeDecode(value: string) {
@@ -197,7 +193,7 @@ function internalHref(value: string | undefined) {
 
 function looksLikeNamuRaw(value: string) {
   const source = decodeEntities(value).trimStart();
-  return /^#![a-z]+\b/i.test(source) || /^\|\|/m.test(source) || /\[\[[^\]]+\]\]/.test(source) || /\{\{\{/.test(source);
+  return /^#![a-z]+\b/i.test(source) || /^\|\|/m.test(source) || /\[\[[\s\S]*?\]\]/.test(source) || /\{\{\{/.test(source);
 }
 
 function looksLikeControlResidue(value: string) {
@@ -252,7 +248,8 @@ function extractPreCodeSource(node: HTMLElement) {
     const match = String(candidate || "").match(/^\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*$/i);
     if (match) return decodeEntities(match[1]);
   }
-  return "";
+  const text = decodeEntities(node.textContent || "").trim();
+  return looksLikeNamuRaw(text) ? text : "";
 }
 
 function extractNamuStyleBlocks(html: string) {
@@ -320,7 +317,7 @@ function renderRawCode(source: string, assets: AssetMap, theme: Theme, key: stri
   const args = bare[2].trim();
   const body = bare[3] || "";
   if (kind === "html" || kind === "style") return null;
-  if (kind === "if") return null;
+  if (kind === "if" && evaluateNamuCondition(args) !== true) return null;
 
   const sourceClass = directiveClass(args);
   const sourceStyle = directiveStyle(args, theme);
@@ -356,12 +353,7 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
   if (!(node instanceof HTMLElement)) {
     const text = decodeEntities(node.textContent || "");
     if (!text) return null;
-    if (looksLikeControlResidue(text)) {
-      if (/#!if\b/i.test(text)) return null;
-      const nodes = parseNamuRaw(text);
-      const useful = nodes.some((entry) => entry.type !== "raw-control");
-      return useful ? <NamuRawRenderer key={key} nodes={nodes} assets={assets} /> : null;
-    }
+    if (looksLikeControlResidue(text)) return renderRawCode(text, assets, theme, key);
     return <React.Fragment key={key}>{text}</React.Fragment>;
   }
   const tag = node.tagName.toLowerCase();
@@ -422,12 +414,12 @@ function renderNode(node: Node, assets: AssetMap, theme: Theme, key: string): Re
   }
   if (tag === "img") {
     const alt = decodeEntities(node.getAttribute("alt") || "");
-    const file = alt.match(/^(?:파일|File):(.+)$/i)?.[1];
-    const resolved = file ? findAsset(assets, file) : undefined;
+    const file = alt.match(/^(?:파일|File):(.+)$/i)?.[1] || (/\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt.trim()) ? alt.trim() : undefined);
+    const resolved = file ? findNamuAsset(assets, file) : undefined;
     const fallback = normalizeMediaUrl(node.getAttribute("data-original") || node.getAttribute("data-src") || node.getAttribute("src"));
     const src = resolved || fallback;
-    if (!src) return file ? <span key={key} className={styles.unresolvedImage}>[{normalizeFileRef(file)}]</span> : null;
-    return <img {...common} src={src} alt={file ? normalizeFileRef(file) : alt} loading="lazy" style={{ maxWidth: "100%", height: "auto", ...common.style }} />;
+    if (!src) return file ? <span key={key} className={styles.unresolvedImage}>[{displayFileRef(file)}]</span> : null;
+    return <img {...common} src={src} alt={file ? displayFileRef(file) : alt} loading="lazy" style={{ maxWidth: "100%", height: "auto", ...common.style }} />;
   }
   if (tag === "iframe") {
     const src = youtubeEmbed(node.getAttribute("src"));
@@ -451,7 +443,7 @@ export default function NamuMirrorDomRenderer({ html, assets = {}, templateCss =
     "--namu-theme-fg": theme.foreground,
     "--article-background-color": "#fff",
   } as React.CSSProperties;
-  return <NamuTabProvider><div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v3-hybrid">
+  return <NamuTabProvider><div className={styles.root} style={themeStyle} data-namu-renderer="mirror-dom-v4-condition-aware">
     {documentCss ? <style>{documentCss}</style> : null}
     {article.childNodes.map((node, index) => renderNode(node, assets, theme, `mirror-${index}`))}
   </div></NamuTabProvider>;
