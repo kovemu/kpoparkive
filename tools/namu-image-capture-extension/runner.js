@@ -1,6 +1,9 @@
 const KPOP_RUNNER_HELPER = "http://127.0.0.1:43117";
 const KPOP_RUNNER_DOC_CONCURRENCY = 2;
-const KPOP_RUNNER_MEDIA_CONCURRENCY = 6;
+const KPOP_RUNNER_MEDIA_CONCURRENCY = 4;
+const KPOP_RUNNER_HELPER_RETRIES = 6;
+const KPOP_RUNNER_ASSET_RETRIES = 5;
+const KPOP_RUNNER_BACKOFF_MS = [1200, 2500, 5000, 10000, 20000, 30000];
 const runnerStatusNode = document.getElementById("status");
 let runnerKnownAssetUrls = new Set();
 let runnerRootTitle = "";
@@ -15,22 +18,43 @@ function runnerNormalizeUrl(value) {
   catch { return String(value || "").trim(); }
 }
 
-async function runnerJson(path, init = {}) {
-  const response = await fetch(`${KPOP_RUNNER_HELPER}${path}`, {
-    cache: "no-store",
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init.headers || {}) },
-  });
-  const text = await response.text();
-  let body;
-  try { body = text ? JSON.parse(text) : {}; }
-  catch { body = { error: text }; }
-  if (!response.ok) throw new Error(body?.error || `helper HTTP ${response.status}`);
-  return body;
+function runnerTransientError(value) {
+  const text = String(value?.message || value || "");
+  return /(?:Supabase|storage upload|Bad Gateway|Gateway Time-out|Web server is down|SSL handshake failed|DatabaseTimeout|statement timeout|canceling statement|\b(?:500|502|503|504|520|521|522|523|524|525|544)\b|Failed to fetch|network|ECONN|ETIMEDOUT|fetch failed)/i.test(text);
 }
 
 async function runnerWait(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runnerJson(path, init = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < KPOP_RUNNER_HELPER_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(`${KPOP_RUNNER_HELPER}${path}`, {
+        cache: "no-store",
+        ...init,
+        headers: { "Content-Type": "application/json", ...(init.headers || {}) },
+      });
+      const text = await response.text();
+      let body;
+      try { body = text ? JSON.parse(text) : {}; }
+      catch { body = { error: text }; }
+      if (response.ok) return body;
+
+      const error = new Error(body?.error || `helper HTTP ${response.status}`);
+      lastError = error;
+      if (!runnerTransientError(error) || attempt === KPOP_RUNNER_HELPER_RETRIES - 1) throw error;
+    } catch (error) {
+      lastError = error;
+      if (!runnerTransientError(error) || attempt === KPOP_RUNNER_HELPER_RETRIES - 1) throw error;
+    }
+
+    const delay = KPOP_RUNNER_BACKOFF_MS[Math.min(attempt, KPOP_RUNNER_BACKOFF_MS.length - 1)] + Math.floor(Math.random() * 350);
+    runnerSetStatus(`Supabase/helper temporarily unavailable\nRetrying in ${Math.round(delay / 1000)}s...`);
+    await runnerWait(delay);
+  }
+  throw lastError || new Error("helper request failed after retries");
 }
 
 async function runnerWaitForDocument(tabId, timeoutMs = 30000) {
@@ -63,6 +87,26 @@ function runnerRememberAsset(asset) {
   for (const url of asset?.urls || []) runnerKnownAssetUrls.add(runnerNormalizeUrl(url));
 }
 
+async function runnerCaptureOneAssetWithRetry(prep, asset) {
+  let lastError = null;
+  for (let attempt = 0; attempt < KPOP_RUNNER_ASSET_RETRIES; attempt += 1) {
+    try {
+      return await captureOneAsset({
+        rootTitle: prep.rootTitle,
+        sourceTitle: prep.sourceTitle,
+        pageUrl: prep.pageUrl,
+        asset,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!runnerTransientError(error) || attempt === KPOP_RUNNER_ASSET_RETRIES - 1) throw error;
+      const delay = KPOP_RUNNER_BACKOFF_MS[Math.min(attempt, KPOP_RUNNER_BACKOFF_MS.length - 1)] + Math.floor(Math.random() * 350);
+      await runnerWait(delay);
+    }
+  }
+  throw lastError || new Error("asset capture failed after retries");
+}
+
 async function runnerCaptureAssets(prep) {
   const assets = (prep.assets || []).filter((asset) => !runnerAssetAlreadyKnown(asset));
   const result = {
@@ -81,12 +125,7 @@ async function runnerCaptureAssets(prep) {
       if (index >= assets.length) return;
       const asset = assets[index];
       try {
-        const item = await captureOneAsset({
-          rootTitle: prep.rootTitle,
-          sourceTitle: prep.sourceTitle,
-          pageUrl: prep.pageUrl,
-          asset,
-        });
+        const item = await runnerCaptureOneAssetWithRetry(prep, asset);
         result.rejected += Number(item.rejected || 0);
         if (item.status === "resolved") {
           result.resolved += 1;
@@ -157,7 +196,17 @@ function runnerBadge(job) {
 
 async function runnerWorker(workerIndex) {
   while (!runnerStopped) {
-    const claim = await runnerJson("/clone/claim", { method: "POST", body: "{}" });
+    let claim;
+    try {
+      claim = await runnerJson("/clone/claim", { method: "POST", body: "{}" });
+    } catch (error) {
+      if (runnerTransientError(error)) {
+        await runnerWait(5000);
+        continue;
+      }
+      throw error;
+    }
+
     const job = claim.job || {};
     runnerBadge(job);
     runnerSetStatus(`Worker ${workerIndex + 1}\n${job.processed || 0}/${job.maxDocs || 0} processed\n${job.queued || 0} queued · ${job.leased || 0} active\n${job.failed || 0} failed`);
