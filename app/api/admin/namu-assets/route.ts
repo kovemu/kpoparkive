@@ -60,6 +60,10 @@ function canonicalFileKey(value: string) {
   return normalizedFileName(value).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function isUsableCandidate(url: string | null | undefined): url is string {
+  return typeof url === "string" && Boolean(url) && !isNamuNonPayloadAssetUrl(url);
+}
+
 function expandCandidateList(values: Array<string | null | undefined>) {
   const output: string[] = [];
   for (const value of values) {
@@ -267,7 +271,7 @@ export async function POST(request: Request) {
             normalizeDirectUrl(row.metadata?.enrichment_url), local,
             ...findNamuAssetCandidates(refs, clusterMaps),
             normalizeDirectUrl(row.source_ref), normalizeDirectUrl(row.metadata?.url),
-          ].filter((url): url is string => Boolean(url) && !isNamuNonPayloadAssetUrl(url));
+          ].filter(isUsableCandidate);
           const candidates = expandCandidateList(directSeeds);
           const errors: string[] = [];
           let uploaded = uploadedFiles.get(fileKey);
