@@ -50,6 +50,28 @@ captureButton.addEventListener("click", async () => {
       `Rejected candidates: ${result.rejected}`,
       `Failed files: ${result.failed}`,
     ];
+
+    if (result.debug) {
+      lines.push(
+        "",
+        "DOM diagnostics:",
+        `- roots: ${result.debug.roots ?? 0}`,
+        `- img elements: ${result.debug.images ?? 0}`,
+        `- picture sources: ${result.debug.pictureSources ?? 0}`,
+        `- CSS image surfaces: ${result.debug.backgroundSurfaces ?? 0}`,
+        `- file-like links: ${result.debug.fileLinks ?? 0}`,
+        `- labeled assets: ${result.debug.labeledAssets ?? 0}`,
+      );
+      const samples = (result.debug.unlabeledSamples || []).slice(0, 4);
+      if (samples.length) {
+        lines.push("", "Unlabeled samples:");
+        for (const sample of samples) {
+          const label = sample.alt || sample.title || "(no label)";
+          lines.push(`- ${label} | ${String(sample.src || "").slice(0, 100)}`);
+        }
+      }
+    }
+
     if (failed.length) {
       lines.push("", "Failures:");
       for (const item of failed) lines.push(`- ${item.fileName}: ${item.error}`);
