@@ -50,13 +50,20 @@ function normalizedFileName(value: string) {
   return value.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
 }
 
+function imageFileNameFromAlt(value: string) {
+  const alt = value.normalize("NFKC").trim();
+  const explicit = alt.match(/^(?:파일|File):(.+)$/i)?.[1]?.trim();
+  if (explicit) return explicit;
+  return /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(alt) ? alt : null;
+}
+
 function extractFileMap(rawHtml: string) {
   const root = parse(rawHtml || "");
   const map = new Map<string, string>();
   for (const image of root.querySelectorAll("img")) {
-    const alt = image.getAttribute("alt") || "";
-    if (!/^(?:파일|File):/i.test(alt)) continue;
-    const key = normalizedFileName(alt);
+    const fileName = imageFileNameFromAlt(image.getAttribute("alt") || "");
+    if (!fileName) continue;
+    const key = normalizedFileName(fileName);
     const rawUrl = image.getAttribute("data-original") || image.getAttribute("data-src") || image.getAttribute("src") || "";
     const url = normalizeDirectUrl(rawUrl);
     if (key && url && !map.has(key)) map.set(key, url);
@@ -68,7 +75,7 @@ async function fetchMirrorDocumentFileMap(title: string) {
   const response = await fetch(`${NAMU_MIRROR}/w/${encodeURIComponent(title)}`, {
     cache: "no-store",
     redirect: "follow",
-    headers: { "User-Agent": "KpoparkiveAssetResolver/0.7 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
+    headers: { "User-Agent": "KpoparkiveAssetResolver/0.8 (+https://kpoparkive.vercel.app)", Accept: "text/html" },
   });
   if (!response.ok) throw new Error(`linked mirror fetch ${response.status}: ${title}`);
   return extractFileMap(await response.text());
@@ -109,7 +116,7 @@ async function classifyInternalTarget(target: string, rootTitle: string) {
 
 async function uploadImage(url: string, rootTitle: string, sourceTitle: string) {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.7", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "KpoparkiveAssetResolver/0.8", Referer: `${NAMU_MIRROR}/` }, redirect: "follow" });
   if (!response.ok) throw new Error(`image fetch ${response.status}`);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   if (!contentType.startsWith("image/")) throw new Error(`not an image: ${contentType}`);
@@ -184,9 +191,10 @@ export async function POST(request: Request) {
             continue;
           }
 
+          const fileRef = row.label || row.source_ref;
           const enrichedUrl = normalizeDirectUrl(row.metadata?.enrichment_url);
-          const mirrorMappedUrl = await mirrorFileUrl(row.source_document_id, row.source_ref);
-          const linkedMappedUrl = enrichedUrl || mirrorMappedUrl ? null : await linkedTargetFileUrl(row.metadata?.linked_target, row.source_ref);
+          const mirrorMappedUrl = await mirrorFileUrl(row.source_document_id, fileRef);
+          const linkedMappedUrl = enrichedUrl || mirrorMappedUrl ? null : await linkedTargetFileUrl(row.metadata?.linked_target, fileRef);
           const directUrl = enrichedUrl || mirrorMappedUrl || linkedMappedUrl || normalizeDirectUrl(row.source_ref) || normalizeDirectUrl(row.metadata?.url);
           if (!directUrl) throw new Error("source image file is not recoverable from current or linked mirror document");
           const uploaded = await uploadImage(directUrl, rootTitle, row.source_title);
