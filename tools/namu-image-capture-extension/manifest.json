@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.2.0",
-  "description": "Capture the final rendered NamuWiki article DOM and image bytes from a page opened in your normal Chrome.",
+  "version": "0.3.0",
+  "description": "Capture the final rendered NamuWiki article DOM, computed layout snapshot and image bytes from a page opened in your normal Chrome.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "https://namu.wiki/*",

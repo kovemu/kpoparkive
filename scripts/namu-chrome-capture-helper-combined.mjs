@@ -7,8 +7,8 @@ const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
 const ASSET_WORKER_PORT = PORT + 1;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
-const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-dom-v1";
+const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;
+const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v2";
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -105,12 +105,14 @@ async function saveRenderedDocument(payload) {
   const rootTitle = String(payload?.rootTitle || "").normalize("NFKC").trim();
   const sourceTitle = String(payload?.sourceTitle || "").normalize("NFKC").trim();
   const articleHtml = String(payload?.articleHtml || "");
+  const styleCss = String(payload?.styleCss || "");
   const pageUrl = validateNamuPageUrl(payload?.pageUrl);
   const captureVersion = String(payload?.captureVersion || DOCUMENT_CAPTURE_VERSION).trim() || DOCUMENT_CAPTURE_VERSION;
 
   if (!rootTitle || !sourceTitle) throw new Error("document capture is missing rootTitle/sourceTitle");
   if (articleHtml.length < 200) throw new Error("rendered article HTML is unexpectedly small");
   if (!/<(?:article|main)\b/i.test(articleHtml)) throw new Error("rendered capture does not contain an article/main root");
+  if (captureVersion !== DOCUMENT_CAPTURE_VERSION) throw new Error(`capture version mismatch: expected ${DOCUMENT_CAPTURE_VERSION}, got ${captureVersion}`);
 
   const docs = await db(
     `source_documents?source=eq.namu_mirror` +
@@ -123,12 +125,15 @@ async function saveRenderedDocument(payload) {
 
   const capturedAt = new Date().toISOString();
   const articleBytes = Buffer.byteLength(articleHtml, "utf8");
+  const styleBytes = Buffer.byteLength(styleCss, "utf8");
   const meta = {
     ...(payload?.meta && typeof payload.meta === "object" ? payload.meta : {}),
     page_url: pageUrl,
     page_title: String(payload?.pageTitle || ""),
     article_bytes: articleBytes,
+    style_bytes: styleBytes,
     captured_by: "normal-chrome-extension",
+    presentation_mode: "final-dom-plus-computed-layout",
   };
 
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
@@ -136,6 +141,7 @@ async function saveRenderedDocument(payload) {
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({
       source_browser_article_html: articleHtml,
+      source_browser_style_css: styleCss || null,
       source_browser_capture_meta: meta,
       source_browser_capture_version: captureVersion,
       source_browser_captured_at: capturedAt,
@@ -143,7 +149,7 @@ async function saveRenderedDocument(payload) {
   });
 
   stats.documentsSaved += 1;
-  console.log(`BROWSER DOM SAVED ${sourceTitle} -> ${(articleBytes / 1024).toFixed(1)} KB`);
+  console.log(`BROWSER ARTIFACT SAVED ${sourceTitle} -> HTML ${(articleBytes / 1024).toFixed(1)} KB + CSS ${(styleBytes / 1024).toFixed(1)} KB`);
   return {
     ok: true,
     status: "saved",
@@ -152,7 +158,10 @@ async function saveRenderedDocument(payload) {
     captureVersion,
     capturedAt,
     articleBytes,
+    styleBytes,
     nodeCount: Number(meta.nodeCount || 0),
+    styledNodes: Number(meta.styledNodes || 0),
+    pseudoRuleCount: Number(meta.pseudoRuleCount || 0),
     imageCount: Number(meta.imageCount || 0),
     tableCount: Number(meta.tableCount || 0),
   };
@@ -220,7 +229,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/health") {
     json(res, 200, {
       ok: true,
-      service: "kpoparkive-namu-chrome-capture-combined",
+      service: "kpoparkive-namu-chrome-capture-combined-v2",
       port: PORT,
       assetWorkerPort: ASSET_WORKER_PORT,
       supabaseHost: SUPABASE_HOST,
@@ -265,9 +274,10 @@ process.on("SIGINT", () => { shutdown(); process.exit(0); });
 process.on("SIGTERM", () => { shutdown(); process.exit(0); });
 
 server.listen(PORT, HOST, () => {
-  console.log("Kpoparkive Namu Chrome capture helper v4 (DOM + images)");
+  console.log("Kpoparkive Namu Chrome capture helper v5 (DOM + computed layout + images)");
   console.log(`Listening on http://${HOST}:${PORT}`);
   console.log(`Image worker proxy: http://${HOST}:${ASSET_WORKER_PORT}`);
   console.log(`Supabase: ${SUPABASE_HOST}`);
-  console.log("Capture now stores the final rendered article DOM plus verified image bytes.");
+  console.log(`Artifact format: ${DOCUMENT_CAPTURE_VERSION}`);
+  console.log("Capture stores the final rendered DOM, computed styles/layout snapshot, pseudo-element CSS and verified image bytes.");
 });

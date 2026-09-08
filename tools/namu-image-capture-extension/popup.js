@@ -12,9 +12,10 @@ async function refreshHealth() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-health" });
     if (response?.ok) {
+      const suffix = response.documentCapture ? ` · ${response.documentCapture}` : "";
       health.textContent = response.supabaseHost
-        ? `Local helper: connected (${response.supabaseHost})`
-        : "Local helper: connected";
+        ? `Local helper: connected (${response.supabaseHost})${suffix}`
+        : `Local helper: connected${suffix}`;
       health.className = "ok";
     } else {
       health.textContent = "Local helper: not running";
@@ -27,10 +28,15 @@ async function refreshHealth() {
 }
 
 function formatBrowserDom(browserDom) {
-  if (!browserDom) return "Browser DOM: not captured";
-  if (!browserDom.ok) return `Browser DOM: FAILED (${browserDom.error || "unknown error"})`;
-  const kb = Number(browserDom.articleBytes || 0) / 1024;
-  return `Browser DOM: SAVED${kb > 0 ? ` (${kb.toFixed(1)} KB)` : ""}`;
+  if (!browserDom) return "Browser artifact: not captured";
+  if (!browserDom.ok) return `Browser artifact: FAILED (${browserDom.error || "unknown error"})`;
+  const htmlKb = Number(browserDom.articleBytes || 0) / 1024;
+  const styleKb = Number(browserDom.styleBytes || 0) / 1024;
+  const details = [];
+  if (htmlKb > 0) details.push(`HTML ${htmlKb.toFixed(1)} KB`);
+  if (styleKb > 0) details.push(`pseudo CSS ${styleKb.toFixed(1)} KB`);
+  if (browserDom.nodeCount) details.push(`${browserDom.nodeCount} nodes`);
+  return `Browser artifact: SAVED${details.length ? ` (${details.join(", ")})` : ""}`;
 }
 
 function formatResult(result, progress = null) {
@@ -97,13 +103,10 @@ captureButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
   captureButton.disabled = true;
-  setStatus("Capturing final rendered article DOM, then image bytes...\nKeep this popup open while capture is running.");
+  setStatus("Capturing final DOM + computed layout snapshot, then verified image bytes...\nKeep this popup open while capture is running.");
 
   try {
-    const prepared = await chrome.runtime.sendMessage({
-      type: "kpoparkive-prepare-capture",
-      rootTitle,
-    });
+    const prepared = await chrome.runtime.sendMessage({ type: "kpoparkive-prepare-capture", rootTitle });
     if (!prepared?.ok) throw new Error(prepared?.error || "Could not prepare capture.");
 
     const prep = prepared.result;
@@ -125,12 +128,7 @@ captureButton.addEventListener("click", async () => {
     for (let index = 0; index < prep.assets.length; index += 1) {
       const response = await chrome.runtime.sendMessage({
         type: "kpoparkive-capture-one-asset",
-        payload: {
-          rootTitle,
-          sourceTitle: prep.sourceTitle,
-          pageUrl: prep.pageUrl,
-          asset: prep.assets[index],
-        },
+        payload: { rootTitle, sourceTitle: prep.sourceTitle, pageUrl: prep.pageUrl, asset: prep.assets[index] },
       });
 
       if (!response?.ok) {
@@ -149,10 +147,7 @@ captureButton.addEventListener("click", async () => {
         else if (item.status === "failed") result.failed += 1;
       }
 
-      setStatus(
-        formatResult(result, { done: index + 1, total: prep.assets.length }),
-        result.browserDom?.ok || result.resolved > 0 ? "ok" : "",
-      );
+      setStatus(formatResult(result, { done: index + 1, total: prep.assets.length }), result.browserDom?.ok || result.resolved > 0 ? "ok" : "");
     }
 
     setStatus(formatResult(result), result.browserDom?.ok || result.resolved > 0 ? "ok" : "");

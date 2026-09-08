@@ -31,28 +31,17 @@ async function validateBlob(blob, declaredWidth = 0, declaredHeight = 0) {
   if (blob.size > MAX_BYTES) return { valid: false, reason: "image exceeds 8 MB" };
   const type = (blob.type || "").toLowerCase();
   if (type === "image/svg+xml") {
-    return {
-      valid: true,
-      width: declaredWidth || 0,
-      height: declaredHeight || 0,
-      visibleRatio: null,
-      colorRange: null,
-    };
+    return { valid: true, width: declaredWidth || 0, height: declaredHeight || 0, visibleRatio: null, colorRange: null };
   }
 
   let bitmap;
-  try {
-    bitmap = await createImageBitmap(blob);
-  } catch (error) {
-    return { valid: false, reason: `image decode failed: ${error?.message || error}` };
-  }
+  try { bitmap = await createImageBitmap(blob); }
+  catch (error) { return { valid: false, reason: `image decode failed: ${error?.message || error}` }; }
 
   try {
     const width = bitmap.width || declaredWidth || 0;
     const height = bitmap.height || declaredHeight || 0;
-    if (width < 8 || height < 8) {
-      return { valid: false, reason: `placeholder-sized image ${width}x${height}`, width, height };
-    }
+    if (width < 8 || height < 8) return { valid: false, reason: `placeholder-sized image ${width}x${height}`, width, height };
 
     const canvas = new OffscreenCanvas(32, 32);
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -71,14 +60,10 @@ async function validateBlob(blob, declaredWidth = 0, declaredHeight = 0) {
       minB = Math.min(minB, b); maxB = Math.max(maxB, b);
     }
     const visibleRatio = visible / (32 * 32);
-    if (visibleRatio < 0.002) {
-      return { valid: false, reason: "nearly fully transparent image", width, height, visibleRatio };
-    }
+    if (visibleRatio < 0.002) return { valid: false, reason: "nearly fully transparent image", width, height, visibleRatio };
     const colorRange = Math.max(maxR - minR, maxG - minG, maxB - minB);
     const alphaRange = maxA - minA;
-    if (visibleRatio > 0.98 && colorRange <= 1 && alphaRange <= 1) {
-      return { valid: false, reason: "uniform blank image", width, height, visibleRatio, colorRange };
-    }
+    if (visibleRatio > 0.98 && colorRange <= 1 && alphaRange <= 1) return { valid: false, reason: "uniform blank image", width, height, visibleRatio, colorRange };
     return { valid: true, width, height, visibleRatio, colorRange };
   } finally {
     bitmap.close?.();
@@ -111,6 +96,7 @@ async function sendRenderedDocument(documentCapture, rootTitle) {
       pageUrl: documentCapture.pageUrl,
       pageTitle: documentCapture.pageTitle,
       articleHtml: documentCapture.articleHtml,
+      styleCss: documentCapture.styleCss || "",
       captureVersion: documentCapture.captureVersion,
       meta: documentCapture.meta || {},
     }),
@@ -142,14 +128,10 @@ async function sendAsset(blob, meta) {
 
 async function prepareCapture(rootTitle) {
   const health = await helperHealth();
-  if (!health.ok) {
-    throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
-  }
+  if (!health.ok) throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) {
-    throw new Error("Open a NamuWiki document in this Chrome tab first.");
-  }
+  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) throw new Error("Open a NamuWiki document in this Chrome tab first.");
 
   let browserDom = { ok: false, error: "Rendered DOM capture was not attempted." };
   try {
@@ -179,20 +161,13 @@ async function captureOneAsset(payload) {
   const sourceTitle = String(payload?.sourceTitle || "").trim();
   const pageUrl = String(payload?.pageUrl || "");
   const asset = payload?.asset || {};
-  if (!sourceTitle || !pageUrl || !Array.isArray(asset.urls)) {
-    throw new Error("Capture asset payload is incomplete.");
-  }
+  if (!sourceTitle || !pageUrl || !Array.isArray(asset.urls)) throw new Error("Capture asset payload is incomplete.");
 
   let lastError = "no candidate succeeded";
   let rejected = 0;
   for (const candidate of unique(asset.urls).slice(0, 8)) {
     try {
-      const response = await fetch(candidate, {
-        credentials: "include",
-        cache: "force-cache",
-        referrer: pageUrl,
-        referrerPolicy: "strict-origin-when-cross-origin",
-      });
+      const response = await fetch(candidate, { credentials: "include", cache: "force-cache", referrer: pageUrl, referrerPolicy: "strict-origin-when-cross-origin" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
       if (!contentType.startsWith("image/")) throw new Error(`not image: ${contentType || "unknown MIME"}`);
@@ -243,15 +218,7 @@ async function captureOneAsset(payload) {
     }
   }
 
-  return {
-    status: "failed",
-    rejected,
-    detail: {
-      fileName: asset.fileName || `anonymous@${asset.domIndex ?? "?"}`,
-      status: "failed",
-      error: lastError,
-    },
-  };
+  return { status: "failed", rejected, detail: { fileName: asset.fileName || `anonymous@${asset.domIndex ?? "?"}`, status: "failed", error: lastError } };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -270,9 +237,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === "kpoparkive-helper-health") {
-    helperHealth()
-      .then((health) => sendResponse(health))
-      .catch(() => sendResponse({ ok: false }));
+    helperHealth().then((health) => sendResponse(health)).catch(() => sendResponse({ ok: false }));
     return true;
   }
 });

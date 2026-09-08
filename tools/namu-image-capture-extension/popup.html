@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Kpoparkive Capture</title>
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; width: 330px; background: #fff; color: #111; }
+    body { margin: 0; font-family: Arial, sans-serif; width: 340px; background: #fff; color: #111; }
     main { padding: 14px; }
     h1 { margin: 0 0 10px; font-size: 16px; }
     p { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: #555; }
@@ -14,7 +14,7 @@
     button { width: 100%; margin-top: 10px; padding: 9px 10px; border: 0; border-radius: 6px; background: #111; color: #fff; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     #health { margin-top: 9px; font-size: 11px; }
-    #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 260px; overflow: auto; }
+    #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 280px; overflow: auto; }
     .ok { color: #0a7a2f; }
     .bad { color: #b00020; }
   </style>
@@ -22,10 +22,10 @@
 <body>
   <main>
     <h1>Kpoparkive Namu Capture</h1>
-    <p>Open a NamuWiki document in normal Chrome. One capture stores the final rendered article DOM first, then downloads the page images through the same browser session.</p>
+    <p>Open a NamuWiki document in normal Chrome. One capture stores the final rendered DOM, computed layout/style snapshot, pseudo-elements and verified page images.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
-    <button id="capture">Capture DOM + images</button>
+    <button id="capture">Capture DOM + styles + images</button>
     <div id="health">Checking local helper...</div>
     <div id="status">Ready.</div>
   </main>

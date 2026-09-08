@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import NamuMirrorDomRenderer from "../../../../components/wiki/NamuMirrorDomRenderer";
+import NamuBrowserArtifactRenderer, { type BrowserArtifactAssetMap } from "../../../../components/wiki/NamuBrowserArtifactRenderer";
 import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
@@ -19,8 +19,8 @@ type BrowserSource = {
   id: string;
   source_title: string;
   root_title: string;
-  source_template_css: string | null;
   source_browser_article_html: string | null;
+  source_browser_style_css: string | null;
   source_browser_capture_meta: Record<string, unknown> | null;
   source_browser_capture_version: string | null;
   source_browser_captured_at: string | null;
@@ -34,13 +34,28 @@ type AssetRow = {
   metadata: Record<string, unknown> | null;
 };
 
+function browserAssetMap(rows: AssetRow[]) {
+  const base = buildNamuResolvedAssetMap(rows);
+  const output: BrowserArtifactAssetMap = { ...base };
+  for (const row of rows) {
+    const url = row.resolved_url;
+    if (!url) continue;
+    for (const key of [row.source_ref, row.label, row.metadata?.original_url, row.metadata?.enrichment_url]) {
+      if (typeof key !== "string" || !key.trim()) continue;
+      output[key] = url;
+      try { output[new URL(key, "https://namu.wiki").toString()] = url; } catch {}
+    }
+  }
+  return output;
+}
+
 export default async function NamuBrowserPreviewPage({ params }: { params: Promise<{ title: string }> }) {
   const { title: encodedTitle } = await params;
   const title = decodeURIComponent(encodedTitle);
 
   const docs = await db<BrowserSource[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-    `&select=id,source_title,root_title,source_template_css,source_browser_article_html,source_browser_capture_meta,source_browser_capture_version,source_browser_captured_at&limit=1`,
+    `&select=id,source_title,root_title,source_browser_article_html,source_browser_style_css,source_browser_capture_meta,source_browser_capture_version,source_browser_captured_at&limit=1`,
   );
   const source = docs[0];
   if (!source) notFound();
@@ -49,49 +64,56 @@ export default async function NamuBrowserPreviewPage({ params }: { params: Promi
     `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}` +
     `&asset_type=eq.image&select=source_ref,label,resolved_url,storage_path,metadata`,
   );
-  const assets = buildNamuResolvedAssetMap(assetRows);
+  const assets = browserAssetMap(assetRows);
   const browserHtml = source.source_browser_article_html?.trim() || "";
+  const styleCss = source.source_browser_style_css?.trim() || "";
   const meta = source.source_browser_capture_meta || {};
+  const capturedWidth = Number(meta.renderedWidth || 0) || null;
 
   return (
     <>
       <meta name="robots" content="noindex,nofollow,noarchive" />
       <header className="siteHeader">
         <a className="brand" href="/">Kpoparkive</a>
-        <div className="draftBadge">NAMU BROWSER DOM · FINAL RENDER CAPTURE</div>
+        <div className="draftBadge">NAMU BROWSER ARTIFACT · COMPUTED SNAPSHOT</div>
       </header>
-      <main className="articleShell" style={{ maxWidth: 1180, "--accent": "#fc6fcf" } as React.CSSProperties}>
+      <main className="articleShell" style={{ maxWidth: 1280, "--accent": "#fc6fcf" } as React.CSSProperties}>
         <div className="articleHeader">
           <div>
-            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Browser DOM › {source.source_title}</div>
+            <div className="breadcrumbs"><a href="/">Kpoparkive</a> › Browser Artifact › {source.source_title}</div>
             <h1>{source.source_title}</h1>
             <p>
-              This preview uses the final article DOM captured from normal Chrome after NamuWiki has already executed its templates and conditions. Images are replaced through the same Supabase asset map used by the importer.
+              This preview bypasses NamuMark reconstruction. It replays the final DOM and computed layout captured from normal Chrome after NamuWiki has already executed templates and conditions.
             </p>
             <p style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <a href={`/admin/namu-raw-preview/${encodeURIComponent(source.source_title)}`}>Open mirror DOM preview</a>
+              <a href={`/admin/namu-raw-preview/${encodeURIComponent(source.source_title)}`}>Open mirror reconstruction</a>
               <a href={`https://namu.wiki/w/${encodeURIComponent(source.source_title)}`} target="_blank" rel="noreferrer">Open original NamuWiki</a>
             </p>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
-          <Metric label="Presentation source" value={browserHtml ? "NORMAL CHROME DOM" : "NOT CAPTURED"} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "18px 0 26px" }}>
+          <Metric label="Presentation source" value={browserHtml ? "NORMAL CHROME ARTIFACT" : "NOT CAPTURED"} />
           <Metric label="Capture version" value={source.source_browser_capture_version || "—"} />
           <Metric label="Captured at" value={source.source_browser_captured_at ? new Date(source.source_browser_captured_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "—"} />
           <Metric label="Article bytes" value={String(meta.article_bytes || meta.articleBytes || "—")} />
+          <Metric label="Style bytes" value={String(meta.style_bytes || meta.styleBytes || "—")} />
           <Metric label="DOM nodes" value={String(meta.nodeCount || "—")} />
+          <Metric label="Styled nodes" value={String(meta.styledNodes || "—")} />
+          <Metric label="Pseudo rules" value={String(meta.pseudoRuleCount || "0")} />
           <Metric label="Resolved asset keys" value={String(Object.keys(assets).length)} />
         </div>
 
         {!browserHtml ? (
           <section style={{ padding: 20, border: "1px solid #d7dde5", borderRadius: 8, background: "#fff" }}>
-            No browser DOM has been captured for this document yet. Reload the unpacked Chrome extension, open this NamuWiki document in normal Chrome, and press <strong>Capture this page</strong>.
+            No browser artifact has been captured for this document yet. Reload the unpacked Chrome extension, open this NamuWiki document in normal Chrome, and press <strong>Capture DOM + images</strong>.
           </section>
         ) : (
           <section>
-            <h2 className="sectionTitle">Browser-rendered document preview</h2>
-            <NamuMirrorDomRenderer html={browserHtml} assets={assets} templateCss={source.source_template_css} />
+            <h2 className="sectionTitle">Browser artifact replay</h2>
+            <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 16 }}>
+              <NamuBrowserArtifactRenderer html={browserHtml} styleCss={styleCss} assets={assets} capturedWidth={capturedWidth} />
+            </div>
           </section>
         )}
 
@@ -105,5 +127,5 @@ export default async function NamuBrowserPreviewPage({ params }: { params: Promi
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div style={{ border: "1px solid #d7dde5", borderRadius: 8, padding: 14, background: "white" }}><div style={{ fontSize: 12, color: "#667085" }}>{label}</div><div style={{ marginTop: 4, fontSize: 17, fontWeight: 700, overflowWrap: "anywhere" }}>{value}</div></div>;
+  return <div style={{ border: "1px solid #d7dde5", borderRadius: 8, padding: 14, background: "white" }}><div style={{ fontSize: 12, color: "#667085" }}>{label}</div><div style={{ marginTop: 4, fontSize: 16, fontWeight: 700, overflowWrap: "anywhere" }}>{value}</div></div>;
 }
