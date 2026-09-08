@@ -173,22 +173,16 @@ function sanitizeArtifactHtml(html: string, assets: BrowserArtifactAssetMap) {
     }
   }
 
-  // Computed snapshots capture the CLOSED height of <details> and of every
-  // ancestor that contains it. Opening the native details then paints outside
-  // those frozen boxes instead of pushing later document sections down. Thaw
-  // both the details subtree's flow wrappers and the complete ancestor chain.
   for (const details of root.querySelectorAll("details")) {
-    for (const child of details.querySelectorAll("div,section,table,thead,tbody,tfoot,tr,td,th")) {
-      thawElementHeight(child);
+    for (const child of details.querySelectorAll("*")) {
+      const tag = String(child.tagName || "").toLowerCase();
+      if (!["img", "video", "iframe", "canvas", "svg"].includes(tag)) thawElementHeight(child);
     }
 
     let current: any = details;
     let depth = 0;
-    while (current && depth < 40) {
-      const tag = String(current.tagName || "").toLowerCase();
-      if (["details", "div", "section", "article", "main", "td", "th", "tr", "tbody", "thead", "tfoot", "table"].includes(tag)) {
-        thawElementHeight(current);
-      }
+    while (current && depth < 80) {
+      thawElementHeight(current);
       if (current.getAttribute?.("data-kpop-capture-root") === "true") break;
       current = current.parentNode;
       depth += 1;
@@ -227,17 +221,20 @@ export default function NamuBrowserArtifactRenderer({
       {pseudoCss ? <style dangerouslySetInnerHTML={{ __html: pseudoCss }} /> : null}
       <style dangerouslySetInnerHTML={{ __html: `
         [data-kpop-browser-artifact] details,
-        [data-kpop-browser-artifact] details > :not(summary) {
+        [data-kpop-browser-artifact] details > :not(summary),
+        [data-kpop-browser-artifact] *:has(> details),
+        [data-kpop-browser-artifact] *:has(details[open]) {
           height:auto !important;
           min-height:0 !important;
-          max-height:none !important;
-        }
-        [data-kpop-browser-artifact] :is(div,section,article,main,table,thead,tbody,tfoot,tr,td,th):has(details) {
-          height:auto !important;
           max-height:none !important;
           overflow:visible !important;
           overflow-x:visible !important;
           overflow-y:visible !important;
+        }
+        [data-kpop-browser-artifact] [data-kpop-capture-root="true"]:has(details[open]) {
+          height:auto !important;
+          max-height:none !important;
+          overflow:visible !important;
         }
         [data-kpop-browser-artifact] summary { cursor:pointer !important; }
         [data-kpop-browser-artifact] video { max-width:100%; }
