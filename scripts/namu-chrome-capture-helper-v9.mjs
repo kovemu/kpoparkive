@@ -46,9 +46,63 @@ const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_
     if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter) {
       kpopCloneState.processed += 1;`;
 
-if (!base.includes(oldBlock)) throw new Error("v8 helper changed; v9 known-media patch no longer matches");
-if (!base.includes(oldSkip)) throw new Error("v8 helper changed; v9 artifact-refresh patch no longer matches");
-const patched = base.replace(oldBlock, newBlock).replace(oldSkip, newSkip);
+const finalizeMarker = String.raw`function kpopFinalizeCloneIfDone() {
+  if (kpopCloneState.status !== "running") return;
+  if (kpopCloneState.processed >= kpopCloneState.maxDocs || (!kpopCloneState.queue.length && !kpopCloneState.leases.length)) {
+    kpopCloneState.status = "done";
+    kpopCloneState.finishedAt = new Date().toISOString();
+  }
+}`;
+
+const finalizeReplacement = String.raw`let kpopClaimInFlight = 0;
+let kpopClaimLock = Promise.resolve();
+
+function kpopFinalizeCloneIfDone() {
+  if (kpopCloneState.status !== "running") return;
+  if (kpopCloneState.processed >= kpopCloneState.maxDocs || (!kpopCloneState.queue.length && !kpopCloneState.leases.length && kpopClaimInFlight === 0)) {
+    kpopCloneState.status = "done";
+    kpopCloneState.finishedAt = new Date().toISOString();
+  }
+}`;
+
+const claimNameMarker = "async function kpopClaimCloneTask() {";
+const takeLeaseMarker = "\nfunction kpopTakeLease(leaseId) {";
+const claimWrapper = String.raw`
+async function kpopClaimCloneTask() {
+  const previous = kpopClaimLock;
+  let releaseLock;
+  kpopClaimLock = new Promise((resolve) => { releaseLock = resolve; });
+  await previous;
+  kpopClaimInFlight += 1;
+  try {
+    return await kpopClaimCloneTaskUnlocked();
+  } finally {
+    kpopClaimInFlight = Math.max(0, kpopClaimInFlight - 1);
+    kpopFinalizeCloneIfDone();
+    kpopSaveCloneState();
+    releaseLock();
+  }
+}
+
+function kpopTakeLease(leaseId) {`;
+
+for (const [label, marker] of [
+  ["known-media", oldBlock],
+  ["artifact-refresh", oldSkip],
+  ["clone-finalize", finalizeMarker],
+  ["claim-function", claimNameMarker],
+  ["claim-wrapper", takeLeaseMarker],
+]) {
+  if (!base.includes(marker)) throw new Error(`v8 helper changed; v9 ${label} patch no longer matches`);
+}
+
+let patched = base
+  .replace(oldBlock, newBlock)
+  .replace(oldSkip, newSkip)
+  .replace(finalizeMarker, finalizeReplacement)
+  .replace(claimNameMarker, "async function kpopClaimCloneTaskUnlocked() {")
+  .replace(takeLeaseMarker, claimWrapper);
+
 const tempPath = path.join(os.tmpdir(), `kpoparkive-namu-capture-v9-${process.pid}.mjs`);
 fs.writeFileSync(tempPath, patched, "utf8");
 const cleanup = () => { try { fs.unlinkSync(tempPath); } catch {} };
