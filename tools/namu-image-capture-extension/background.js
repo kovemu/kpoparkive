@@ -78,11 +78,11 @@ async function validateBlob(blob, declaredWidth = 0, declaredHeight = 0) {
 async function helperHealth() {
   try {
     const response = await fetch(`${HELPER}/health`, { cache: "no-store" });
-    if (!response.ok) return false;
+    if (!response.ok) return { ok: false };
     const json = await response.json();
-    return Boolean(json?.ok);
+    return { ok: Boolean(json?.ok), supabaseHost: json?.supabaseHost || "", stats: json?.stats || null };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 
@@ -103,7 +103,8 @@ async function sendAsset(blob, meta) {
 }
 
 async function captureCurrentTab(rootTitle) {
-  if (!await helperHealth()) {
+  const health = await helperHealth();
+  if (!health.ok) {
     throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
   }
 
@@ -124,6 +125,7 @@ async function captureCurrentTab(rootTitle) {
     rejected: 0,
     details: [],
     debug: extracted.debug || null,
+    helper: health,
   };
 
   for (const asset of extracted.assets) {
@@ -161,7 +163,17 @@ async function captureCurrentTab(rootTitle) {
 
         if (helper.status === "resolved") results.resolved += 1;
         else if (helper.status === "no_queue") results.noQueue += 1;
-        results.details.push({ fileName: asset.fileName, status: helper.status, bytes: helper.bytes, width: helper.width, height: helper.height });
+        results.details.push({
+          fileName: asset.fileName,
+          status: helper.status,
+          bytes: helper.bytes,
+          width: helper.width,
+          height: helper.height,
+          fileKey: helper.fileKey,
+          queueRows: helper.queueRows,
+          sampleKeys: helper.sampleKeys,
+          supabaseHost: helper.supabaseHost,
+        });
         done = true;
         break;
       } catch (error) {
@@ -185,7 +197,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === "kpoparkive-helper-health") {
-    helperHealth().then((ok) => sendResponse({ ok })).catch(() => sendResponse({ ok: false }));
+    helperHealth().then((health) => sendResponse(health)).catch(() => sendResponse({ ok: false }));
     return true;
   }
 });
