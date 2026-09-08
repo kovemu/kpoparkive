@@ -173,7 +173,16 @@ async function upsertCapture(meta, storagePath, contentType, width, height, byte
     capture_status: captureStatus,
     matched_queue_rows: matchedRows,
     captured_at: new Date().toISOString(),
-    metadata: { visual: meta.visual || null },
+    metadata: {
+      visual: meta.visual || null,
+      anonymous: Boolean(meta.anonymous),
+      semantic_file_name: meta.semanticFileName || null,
+      dom_index: Number.isFinite(Number(meta.domIndex)) ? Number(meta.domIndex) : null,
+      context_text: String(meta.contextText || "").slice(0, 2000),
+      heading: String(meta.heading || "").slice(0, 300),
+      alt: String(meta.alt || "").slice(0, 500),
+      title: String(meta.title || "").slice(0, 500),
+    },
   };
   await db("namu_capture_staging?on_conflict=root_title,canonical_key,source_url", {
     method: "POST",
@@ -287,7 +296,7 @@ const server = http.createServer(async (req, res) => {
       await upsertCapture(meta, staged.storagePath, contentType, width, height, bytes.length, "unmatched", 0);
       stats.noQueue += 1;
       stats.staged += 1;
-      console.log(`STAGED UNMATCHED ${meta.fileName} -> ${width}x${height}, ${(bytes.length / 1024).toFixed(1)} KB`);
+      console.log(`STAGED UNMATCHED ${meta.fileName} -> ${width}x${height}, ${(bytes.length / 1024).toFixed(1)} KB${meta.anonymous ? ` [DOM ${meta.domIndex}]` : ""}`);
       console.log(`  ${staged.storagePath}`);
       json(res, 200, { ok: true, status: "no_queue", staged: true, storagePath: staged.storagePath, fileName: meta.fileName, bytes: bytes.length, width, height, queueRowsVisible: cache.rows.length });
       return;
