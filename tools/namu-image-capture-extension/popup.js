@@ -4,7 +4,7 @@ const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
 const health = document.getElementById("health");
 const status = document.getElementById("status");
-let clonePoll = null;
+let pollTimer = null;
 
 function setStatus(text, kind = "") {
   status.textContent = text;
@@ -30,37 +30,41 @@ async function refreshHealth() {
   }
 }
 
-function formatCloneJob(job, includeHint = false) {
-  if (!job) return "Clone job: not started";
+function formatJob(job) {
+  if (!job || !job.id) return "Ready.";
+  const current = Array.isArray(job.current) ? job.current.filter(Boolean).join(" · ") : String(job.current || "");
   const lines = [
     `Root: ${job.rootTitle || "—"}`,
-    `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
-    `Captured documents: ${job.captured || 0}`,
+    `State: ${job.running ? "RUNNING" : job.done ? "DONE" : String(job.status || "IDLE").toUpperCase()}`,
     `Processed: ${job.processed || 0}/${job.maxDocs || 0}`,
+    `Captured: ${job.captured || 0}`,
+    `Reused: ${job.skipped || 0}`,
     `Queued: ${job.queued || 0}`,
-    `Depth: ${job.maxDepth || 0}`,
-    `Failed documents: ${job.failed || 0}`,
+    `Active workers: ${job.leased || 0}`,
+    `Failed: ${job.failed || 0}`,
   ];
-  if (job.current) lines.push(`Current: ${job.current}`);
-  if (job.lastMedia) lines.push(`Last media: ${job.lastMedia.resolved || 0} resolved · ${job.lastMedia.failed || 0} failed`);
-  if (includeHint && job.running) lines.push("", "Running in background. You can close this popup and use Chrome normally.");
+  if (current) lines.push(`Current: ${current}`);
+  if (job.lastMedia) {
+    lines.push(`Last media: ${job.lastMedia.resolved || 0} new · ${job.lastMedia.skippedKnown || 0} reused · ${job.lastMedia.failed || 0} failed`);
+  }
+  if (job.running) lines.push("", "You can close this popup and use Chrome normally.");
   if (Array.isArray(job.errors) && job.errors.length) {
     lines.push("", "Recent errors:");
-    for (const error of job.errors.slice(-5)) lines.push(`- ${error}`);
+    for (const error of job.errors.slice(-4)) lines.push(`- ${error}`);
   }
   return lines.join("\n");
 }
 
-async function pollCloneStatus() {
+async function pollStatus() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-fast-clone-status" });
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-clone-status" });
     if (!response?.ok) return;
     const job = response.job;
-    if (job?.running || job?.done) setStatus(formatCloneJob(job, true), job?.failed ? "" : "ok");
+    if (job?.id) setStatus(formatJob(job), job.failed ? "" : "ok");
     cloneButton.disabled = Boolean(job?.running);
-    if (!job?.running && clonePoll) {
-      clearInterval(clonePoll);
-      clonePoll = null;
+    if (!job?.running && pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
   } catch {}
 }
@@ -92,17 +96,17 @@ cloneButton.addEventListener("click", async () => {
   });
 
   cloneButton.disabled = true;
-  setStatus(`Starting background clone...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
+  setStatus(`Starting background import...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
 
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "kpoparkive-start-fast-clone",
+      type: "kpoparkive-start-helper-clone",
       options: { rootTitle, maxDepth, maxDocs },
     });
-    if (!response?.ok) throw new Error(response?.error || "Could not start clone.");
-    setStatus(formatCloneJob(response.job, true), "ok");
-    if (clonePoll) clearInterval(clonePoll);
-    clonePoll = setInterval(pollCloneStatus, 1000);
+    if (!response?.ok) throw new Error(response?.error || "Could not start import.");
+    setStatus(formatJob(response.job), "ok");
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollStatus, 1000);
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
     cloneButton.disabled = false;
@@ -110,4 +114,4 @@ cloneButton.addEventListener("click", async () => {
 });
 
 refreshHealth();
-pollCloneStatus();
+pollStatus();
