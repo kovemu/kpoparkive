@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.6.0",
-  "description": "Capture and recursively clone rendered NamuWiki document clusters with verified media from normal Chrome.",
+  "version": "0.7.0",
+  "description": "Resumable helper-owned NamuWiki cluster import with persistent Chrome runner and verified media.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
@@ -11,11 +11,11 @@
     "http://127.0.0.1:43117/*"
   ],
   "action": {
-    "default_title": "Capture NamuWiki page",
+    "default_title": "Import NamuWiki cluster",
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background-fast.js"
+    "service_worker": "background-controller.js"
   },
   "content_scripts": [
     {
