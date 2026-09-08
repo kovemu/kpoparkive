@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.7.1",
-  "description": "Resumable helper-owned NamuWiki cluster import with persistent Chrome runner and verified media.",
+  "version": "0.7.2",
+  "description": "Resumable helper-owned NamuWiki cluster import with TOC-priority crawling and verified media.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
