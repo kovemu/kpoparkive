@@ -12,9 +12,8 @@ if (!source.includes(combinedMarker) || !source.includes(v8Marker)) {
   throw new Error("v10 helper changed; v11 patch markers missing");
 }
 
-// Build the code injected into v10 using ordinary quoted lines rather than
-// nested template literals. The previous v11 escaped backticks into the
-// generated temporary module, which Node 24 then parsed as invalid syntax.
+// This remains the final compatibility wrapper for the legacy v10/v8 helper chain.
+// Transient Supabase failures must pause/retry instead of consuming clone attempts.
 const dbRetryPatch = [
   'const oldDbWithNoRetry = [',
   '  "async function db(pathname, init = {}) {",',
@@ -29,9 +28,9 @@ const dbRetryPatch = [
   '].join("\\n");',
   'const newDbWithRetry = [',
   '  "async function db(pathname, init = {}) {",',
-  '  "  const retryable = new Set([502, 503, 504, 520, 521, 522, 523, 524]);",',
+  '  "  const delays = [1200, 2500, 5000, 10000, 20000, 30000, 30000];",',
   '  "  let lastError = null;",',
-  '  "  for (let attempt = 0; attempt < 5; attempt += 1) {",',
+  '  "  for (let attempt = 0; attempt < delays.length; attempt += 1) {",',
   '  "    try {",',
   '  "      const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathname}`, {",',
   '  "        ...init,",',
@@ -39,24 +38,30 @@ const dbRetryPatch = [
   '  "      });",',
   '  "      const text = await response.text();",',
   '  "      if (response.ok) return text ? JSON.parse(text) : null;",',
+  '  "      const transientBody = /(?:57014|statement timeout|canceling statement|DatabaseTimeout|Bad Gateway|Gateway Time-out|Web server is down|SSL handshake failed)/i.test(text);",',
+  '  "      const retryable = response.status >= 502 || response.status === 500 && transientBody || response.status === 408 || response.status === 429;",',
   '  "      const error = new Error(`Supabase ${response.status}: ${text}`);",',
-  '  "      if (!retryable.has(response.status) || attempt === 4) throw error;",',
   '  "      lastError = error;",',
+  '  "      if (!retryable || attempt === delays.length - 1) throw error;",',
   '  "    } catch (error) {",',
   '  "      lastError = error;",',
-  '  "      if (attempt === 4) throw error;",',
+  '  "      const message = String(error?.message || error || \\\"\\\");",',
+  '  "      const networkish = /(?:fetch failed|Failed to fetch|ECONN|ETIMEDOUT|ECONNRESET|network|socket|TLS|SSL)/i.test(message);",',
+  '  "      if (!networkish && !/Supabase \\d{3}:/.test(message) || attempt === delays.length - 1) throw error;",',
   '  "    }",',
-  '  "    const delay = [350, 800, 1600, 3200, 5000][attempt] + Math.floor(Math.random() * 250);",',
+  '  "    const delay = delays[attempt] + Math.floor(Math.random() * 400);",',
+  '  "    console.warn(`SUPABASE TRANSIENT OUTAGE: retry ${attempt + 1}/${delays.length - 1} in ${Math.round(delay / 1000)}s`);",',
   '  "    await new Promise((resolve) => setTimeout(resolve, delay));",',
   '  "  }",',
   '  "  throw lastError || new Error(\\"Supabase request failed after retries\\");",',
   '  "}",',
   '].join("\\n");',
-  'combined = mustReplace(combined, oldDbWithNoRetry, newDbWithRetry, "Supabase 5xx retry/backoff");',
+  'combined = mustReplace(combined, oldDbWithNoRetry, newDbWithRetry, "Supabase transient outage retry/backoff");',
   '',
 ].join("\n");
 
 const mediaRetryPatch = [
+  'v8 = mustReplace(v8, "const KPOP_CLONE_MAX_RETRIES = 2;", "const KPOP_CLONE_MAX_RETRIES = 6;", "clone retry budget");',
   'const oldCompleteTask = [',
   '  "async function kpopCompleteCloneTask(payload) {",',
   '  "  if (kpopCloneState.status !== \\\"running\\\") return kpopPublicCloneState();",',
@@ -111,7 +116,7 @@ source = source
   .replace(combinedMarker, dbRetryPatch + combinedMarker)
   .replace(v8Marker, mediaRetryPatch + v8Marker)
   .replaceAll("kpoparkive-namu-chrome-capture-helper-v10", "kpoparkive-namu-chrome-capture-helper-v11")
-  .replaceAll("helper v10 (global Namu document registry)", "helper v11 (global registry + resilient media retries)");
+  .replaceAll("helper v10 (global Namu document registry)", "helper v11 (global registry + transient outage backoff)");
 
 const tempPath = path.join(os.tmpdir(), `kpoparkive-namu-capture-v11-${process.pid}.mjs`);
 fs.writeFileSync(tempPath, source, "utf8");
