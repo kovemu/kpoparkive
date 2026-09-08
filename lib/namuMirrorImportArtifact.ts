@@ -8,7 +8,7 @@ import {
 } from "./namuRawGrammar";
 import { extractMirrorRawBundle, type MirrorRawBundle, type RenderedFileMap } from "./namuRawSource";
 
-export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v6-layout-semantics";
+export const NAMU_RENDER_ARTIFACT_VERSION = "namu-mirror-render-artifact-v7-condition-aware";
 
 export type NamuRenderManifest = {
   version: string;
@@ -86,13 +86,6 @@ function hasFloatRight(style: string | undefined) {
   return /(?:^|;)\s*float\s*:\s*right\b/i.test(style || "");
 }
 
-/**
- * namu.moe frequently emits article images with a bare filename in alt= rather
- * than the canonical "파일:" prefix. The source asset queue, however, is keyed
- * by Namu file references. Normalize only obvious image-filename alts inside the
- * derived render artifact so the renderer can resolve them through the same
- * imported asset map. raw_html/source_wikitext stay untouched.
- */
 function normalizeBareImageAltsForRender(html: string) {
   let repaired = 0;
   const output = String(html || "").replace(
@@ -119,12 +112,6 @@ function withSemanticClass(tag: string, className: string) {
   return tag.replace(/>$/, ` class="${className}">`);
 }
 
-/**
- * The DOM renderer intentionally sanitizes inline styles and does not pass the
- * CSS float property through React. Preserve the source layout intent as a safe
- * semantic class in the derived artifact instead. This restores Namu infoboxes
- * and other floated side tables without relaxing the renderer's style policy.
- */
 function annotateFloatClassesForRender(html: string) {
   let repaired = 0;
   const output = String(html || "").replace(/<[a-z][a-z0-9-]*\b[^>]*>/gi, (tag) => {
@@ -141,27 +128,10 @@ export function buildNamuMirrorImportArtifact(html: string): NamuMirrorImportArt
   const rawArticleHtml = extractExactArticleHtml(html || "");
   const rawBundle = extractMirrorRawBundle(html || "");
 
-  // Phase 1: repair only syntax leaked by the partial mirror renderer. Raw
-  // <pre><code> blocks are protected by this pass and canonical source remains untouched.
   const mirrorNormalized = normalizeNamuMirrorHtmlWithReport(rawArticleHtml);
-
-  // Phase 2: source_article_html is a derived render artifact. Normalize only
-  // structural boundaries inside its raw code blocks so renderer and importer
-  // parse exactly the same Namu grammar. source_wikitext/raw_html remain intact.
   const renderNormalized = normalizeNamuRawCodeBlocksForRender(mirrorNormalized.html);
-
-  // Phase 3: [include(...)] is Namu control syntax. A partial mirror can leave
-  // the invocation in front of the HTML it already expanded. Remove only that
-  // duplicated control token when a block-level expansion is immediately next.
   const includeNormalized = repairExpandedIncludeResiduesForRender(renderNormalized.html);
-
-  // Phase 4: make bare mirror image alts canonical Namu file references in the
-  // derived artifact. This is importer-wide and lets enriched assets participate
-  // in the exact same filename resolution path as canonical Namu file links.
   const imageAltNormalized = normalizeBareImageAltsForRender(includeNormalized.html);
-
-  // Phase 5: retain layout semantics that the renderer deliberately removes from
-  // raw inline CSS. The class is safe, importer-owned, and reusable across groups.
   const floatAnnotated = annotateFloatClassesForRender(imageAltNormalized.html);
   const articleHtml = floatAnnotated.html;
 
