@@ -186,23 +186,40 @@ async function waitForGlobalVerificationClear(context, preferredPage = null, gra
 
 async function openWikiPage(page, url) {
   const context = ACTIVE_CONTEXT || page.context();
-  await waitForGlobalVerificationClear(context, page, 700);
+  await waitForGlobalVerificationClear(context, page, 500);
 
+  console.log(\`  navigation start: \${url}\`);
   let response;
   try {
-    response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // NamuWiki can keep DOMContentLoaded pending for a long time because of
+    // dynamic scripts. We only need the navigation to commit, then inspect DOM
+    // readiness ourselves. This avoids apparently frozen workers on pages that
+    // are already visibly rendered in Chrome.
+    response = await page.goto(url, { waitUntil: "commit", timeout: 15000 });
+    console.log(\`  navigation committed: HTTP \${response?.status?.() ?? "?"}\`);
   } catch (error) {
-    await waitForGlobalVerificationClear(context, page, 3000);
+    console.log(\`  navigation commit error: \${error instanceof Error ? error.message : String(error)}\`);
+    await waitForGlobalVerificationClear(context, page, 1800);
     if (!/^https:\\/\\/(?:www\\.)?namu\\.wiki\\//i.test(page.url())) throw error;
   }
 
-  // Visual verification may be injected after the article is already visible.
-  await waitForGlobalVerificationClear(context, page, 5000);
+  // Wait briefly for a usable DOM, but never stall indefinitely waiting for all
+  // page scripts. A visible article with a body is enough for image extraction.
+  try {
+    await page.waitForFunction(
+      () => Boolean(document.body) && document.readyState !== "loading",
+      null,
+      { timeout: 8000 },
+    );
+    console.log(\`  DOM usable: \${await page.title().catch(() => "(no title)")}\`);
+  } catch {
+    console.log("  DOM readiness timeout; continuing with currently rendered DOM.");
+  }
 
-  // Do not auto-scroll the whole document here. The importer reads src,
-  // currentSrc, data-src and data-original directly from the DOM, so a long
-  // scripted scroll only adds requests and frequently trips verification.
-  await page.waitForTimeout(700);
+  // Visual verification may be injected just after navigation. Observe a short
+  // grace window and hard-pause only when an actually visible challenge exists.
+  await waitForGlobalVerificationClear(context, page, 2200);
+  await page.waitForTimeout(500);
   return response;
 }
 
@@ -219,23 +236,23 @@ source = source.replace(contextPattern, `$1\n  ACTIVE_CONTEXT = context;`);
 
 source = source.replace(
   "async function downloadThroughBrowser(downloadPage, validatorPage, url, referer) {",
-  `async function downloadThroughBrowser(downloadPage, validatorPage, url, referer) {\n  if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, downloadPage, 1000);`,
+  `async function downloadThroughBrowser(downloadPage, validatorPage, url, referer) {\n  if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, downloadPage, 700);`,
 );
 source = source.replace(
   "  if (!response) throw new Error(\"browser download produced no response\");",
-  `  if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, downloadPage, 2200);\n  if (!response) throw new Error("browser download produced no response");`,
+  `  if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, downloadPage, 1200);\n  if (!response) throw new Error("browser download produced no response");`,
 );
 
 source = source.replace(
   "    for (let index = 0; index < selected.length; index += 1) {",
-  `    for (let index = 0; index < selected.length; index += 1) {\n      if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, sourcePage, 900);`,
+  `    for (let index = 0; index < selected.length; index += 1) {\n      if (ACTIVE_CONTEXT) await waitForGlobalVerificationClear(ACTIVE_CONTEXT, sourcePage, 500);`,
 );
 
 // Make each expensive phase visible in the console. If a future page stalls we
 // can tell whether it is navigation, DOM extraction, candidate download or upload.
 source = source.replace(
   "    await openWikiPage(sourcePage, url);\n    const entries = await extractPageImages(sourcePage);",
-  `    await openWikiPage(sourcePage, url);\n    console.log(\`  source page ready: \${title}\`);\n    const entries = await extractPageImages(sourcePage);\n    console.log(\`  DOM image entries: \${entries.length}\`);`,
+  `    await openWikiPage(sourcePage, url);\n    console.log(\`  source page ready: \${title}\`);\n    const entries = await Promise.race([\n      extractPageImages(sourcePage),\n      new Promise((_, reject) => setTimeout(() => reject(new Error("DOM image extraction timed out after 10s")), 10000)),\n    ]);\n    console.log(\`  DOM image entries: \${entries.length}\`);`,
 );
 source = source.replace(
   "          const candidates = source.map.get(fileKey) || [];",
