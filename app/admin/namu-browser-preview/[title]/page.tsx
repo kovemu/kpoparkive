@@ -2,8 +2,9 @@ import { notFound } from "next/navigation";
 import NamuBrowserArtifactRenderer, { type BrowserArtifactAssetMap } from "../../../../components/wiki/NamuBrowserArtifactRenderer";
 import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim();
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const BUCKET = "wiki-media";
 
 async function db<T>(path: string): Promise<T> {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -34,18 +35,49 @@ type AssetRow = {
   metadata: Record<string, unknown> | null;
 };
 
-function browserAssetMap(rows: AssetRow[]) {
-  const base = buildNamuResolvedAssetMap(rows);
-  const output: BrowserArtifactAssetMap = { ...base };
+type CaptureRow = {
+  source_url: string | null;
+  storage_path: string | null;
+  captured_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+function publicStorageUrl(storagePath: string) {
+  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath.replace(/^\/+/, "")}`;
+}
+
+function addAssetKey(output: BrowserArtifactAssetMap, key: unknown, url: string, overwrite = false) {
+  if (typeof key !== "string" || !key.trim()) return;
+  const raw = key.trim();
+  if (overwrite || !output[raw]) output[raw] = url;
+  try {
+    const absolute = new URL(raw, "https://namu.wiki").toString();
+    if (overwrite || !output[absolute]) output[absolute] = url;
+  } catch {}
+}
+
+function browserAssetMap(rows: AssetRow[], captures: CaptureRow[]) {
+  const output: BrowserArtifactAssetMap = { ...buildNamuResolvedAssetMap(rows) };
+
   for (const row of rows) {
     const url = row.resolved_url;
     if (!url) continue;
     for (const key of [row.source_ref, row.label, row.metadata?.original_url, row.metadata?.enrichment_url]) {
-      if (typeof key !== "string" || !key.trim()) continue;
-      output[key] = url;
-      try { output[new URL(key, "https://namu.wiki").toString()] = url; } catch {}
+      addAssetKey(output, key, url);
     }
   }
+
+  // Browser staging is the canonical fallback for one-click cloning. It maps
+  // the exact CDN URL seen in the rendered DOM to the bytes captured from the
+  // user's normal Chrome session, even when no semantic queue row existed.
+  // Rows arrive newest first, so do not let older captures overwrite them.
+  for (const row of captures) {
+    if (!row.storage_path) continue;
+    const url = publicStorageUrl(row.storage_path);
+    addAssetKey(output, row.source_url, url);
+    addAssetKey(output, row.metadata?.original_url, url);
+  }
+
   return output;
 }
 
@@ -60,11 +92,19 @@ export default async function NamuBrowserPreviewPage({ params }: { params: Promi
   const source = docs[0];
   if (!source) notFound();
 
-  const assetRows = await db<AssetRow[]>(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}` +
-    `&asset_type=eq.image&select=source_ref,label,resolved_url,storage_path,metadata`,
-  );
-  const assets = browserAssetMap(assetRows);
+  const [assetRows, captureRows] = await Promise.all([
+    db<AssetRow[]>(
+      `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}` +
+      `&asset_type=eq.image&select=source_ref,label,resolved_url,storage_path,metadata`,
+    ),
+    db<CaptureRow[]>(
+      `namu_capture_staging?root_title=eq.${encodeURIComponent(source.root_title)}` +
+      `&source_title=eq.${encodeURIComponent(source.source_title)}` +
+      `&storage_path=not.is.null&select=source_url,storage_path,captured_at,metadata&order=captured_at.desc&limit=1000`,
+    ),
+  ]);
+
+  const assets = browserAssetMap(assetRows, captureRows);
   const browserHtml = source.source_browser_article_html?.trim() || "";
   const styleCss = source.source_browser_style_css?.trim() || "";
   const meta = source.source_browser_capture_meta || {};
