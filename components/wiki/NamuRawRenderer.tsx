@@ -1,5 +1,6 @@
 import React from "react";
 import { findNamuAsset, normalizeNamuFileRef } from "../../lib/namuAssetLookup";
+import { evaluateNamuCondition } from "../../lib/namuCondition";
 import type { NamuInline, NamuRawCell, NamuRawNode, NamuRawTableMeta } from "../../lib/namuRawParser";
 import styles from "./NamuRawRenderer.module.css";
 
@@ -30,7 +31,6 @@ function imageStyle(width?: string, height?: string): React.CSSProperties {
   return style;
 }
 
-// Inline rendering intentionally mirrors the recursive source nesting.
 function nestedInlineChildren(node: NamuInline): NamuInline[] | undefined {
   if (node.type === "link" || node.type === "footnote" || node.type === "strong" || node.type === "em" || node.type === "size" || node.type === "color" || node.type === "span") return node.children;
   return undefined;
@@ -220,17 +220,10 @@ function tableStyle(meta?: NamuRawTableMeta): React.CSSProperties {
     color: meta?.color,
     borderColor: meta?.borderColor,
   };
-
   if (meta?.borderColor) style.border = `2px solid ${meta.borderColor}`;
   return style;
 }
 
-/**
- * Keep the wrapper from changing Namu's table geometry. A fixed/auto source
- * table should stay shrink-wrapped, while tablewidth=100% continues to fill the
- * document. Alignment is applied to the wrapper so overflow handling does not
- * create a full-width block around narrow infobox/navigation tables.
- */
 function tableWrapStyle(meta?: NamuRawTableMeta): React.CSSProperties {
   const width = meta?.width || "fit-content";
   const style: React.CSSProperties = { width, maxWidth: "100%" };
@@ -282,6 +275,10 @@ function NodeList({ nodes, assets, footnotes }: { nodes: NamuRawNode[]; assets: 
       if (node.type === "quote") return <blockquote key={index} className={styles.quote}><NodeList nodes={node.children} assets={assets} footnotes={footnotes} /></blockquote>;
       if (node.type === "directive") {
         if (node.kind === "html" || !node.children.length) return null;
+        if (node.kind === "if") {
+          const result = evaluateNamuCondition(node.args);
+          if (result !== true) return null;
+        }
         if (node.kind === "folding") {
           return <details key={index} className={styles.folding}>
             <summary>{node.title || "Details"}</summary>
