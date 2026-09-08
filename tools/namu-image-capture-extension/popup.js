@@ -1,7 +1,11 @@
 const rootInput = document.getElementById("root");
 const captureButton = document.getElementById("capture");
+const cloneButton = document.getElementById("clone");
+const depthInput = document.getElementById("depth");
+const maxDocsInput = document.getElementById("maxDocs");
 const health = document.getElementById("health");
 const status = document.getElementById("status");
+let clonePoll = null;
 
 function setStatus(text, kind = "") {
   status.textContent = text;
@@ -36,6 +40,7 @@ function formatBrowserDom(browserDom) {
   if (htmlKb > 0) details.push(`HTML ${htmlKb.toFixed(1)} KB`);
   if (styleKb > 0) details.push(`pseudo CSS ${styleKb.toFixed(1)} KB`);
   if (browserDom.nodeCount) details.push(`${browserDom.nodeCount} nodes`);
+  if (browserDom.internalLinkCount != null) details.push(`${browserDom.internalLinkCount} links`);
   return `Browser artifact: SAVED${details.length ? ` (${details.join(", ")})` : ""}`;
 }
 
@@ -89,8 +94,47 @@ function formatResult(result, progress = null) {
   return lines.join("\n");
 }
 
-chrome.storage.local.get(["kpoparkiveRootTitle"]).then((stored) => {
+function formatCloneJob(job) {
+  if (!job) return "Clone job: not started";
+  const lines = [
+    `Clone root: ${job.rootTitle || "—"}`,
+    `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
+    `Captured documents: ${job.captured || 0}`,
+    `Processed: ${job.processed || 0}/${job.maxDocs || 0}`,
+    `Queued: ${job.queued || 0}`,
+    `Depth: ${job.maxDepth || 0}`,
+    `Failed documents: ${job.failed || 0}`,
+  ];
+  if (job.current) lines.push(`Current: ${job.current}`);
+  if (job.lastMedia) {
+    lines.push(`Last media: ${job.lastMedia.resolved || 0} resolved · ${job.lastMedia.failed || 0} failed`);
+  }
+  if (Array.isArray(job.errors) && job.errors.length) {
+    lines.push("", "Recent errors:");
+    for (const error of job.errors.slice(-5)) lines.push(`- ${error}`);
+  }
+  return lines.join("\n");
+}
+
+async function pollCloneStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-recursive-clone-status" });
+    if (!response?.ok) return;
+    const job = response.job;
+    if (job?.running || job?.done) setStatus(formatCloneJob(job), job?.failed ? "" : "ok");
+    cloneButton.disabled = Boolean(job?.running);
+    captureButton.disabled = Boolean(job?.running);
+    if (!job?.running && clonePoll) {
+      clearInterval(clonePoll);
+      clonePoll = null;
+    }
+  } catch {}
+}
+
+chrome.storage.local.get(["kpoparkiveRootTitle", "kpoparkiveCloneDepth", "kpoparkiveCloneMaxDocs"]).then((stored) => {
   if (stored.kpoparkiveRootTitle) rootInput.value = stored.kpoparkiveRootTitle;
+  if (stored.kpoparkiveCloneDepth != null) depthInput.value = String(stored.kpoparkiveCloneDepth);
+  if (stored.kpoparkiveCloneMaxDocs != null) maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs);
 });
 
 rootInput.addEventListener("change", () => {
@@ -99,11 +143,15 @@ rootInput.addEventListener("change", () => {
   chrome.storage.local.set({ kpoparkiveRootTitle: value });
 });
 
+depthInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneDepth: Number(depthInput.value || 1) }));
+maxDocsInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 25) }));
+
 captureButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
   captureButton.disabled = true;
-  setStatus("Capturing final DOM + computed layout snapshot, then verified image bytes...\nKeep this popup open while capture is running.");
+  cloneButton.disabled = true;
+  setStatus("Capturing final DOM + computed layout snapshot, link graph and verified image bytes...\nKeep this popup open while capture is running.");
 
   try {
     const prepared = await chrome.runtime.sendMessage({ type: "kpoparkive-prepare-capture", rootTitle });
@@ -155,8 +203,39 @@ captureButton.addEventListener("click", async () => {
     setStatus(error?.message || String(error), "bad");
   } finally {
     captureButton.disabled = false;
+    cloneButton.disabled = false;
     refreshHealth();
   }
 });
 
+cloneButton.addEventListener("click", async () => {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 1));
+  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 25) || 25));
+  await chrome.storage.local.set({
+    kpoparkiveRootTitle: rootTitle,
+    kpoparkiveCloneDepth: maxDepth,
+    kpoparkiveCloneMaxDocs: maxDocs,
+  });
+  cloneButton.disabled = true;
+  captureButton.disabled = true;
+  setStatus(`Starting recursive clone...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "kpoparkive-start-recursive-clone",
+      options: { rootTitle, maxDepth, maxDocs },
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not start recursive clone.");
+    setStatus(formatCloneJob(response.job), "ok");
+    if (clonePoll) clearInterval(clonePoll);
+    clonePoll = setInterval(pollCloneStatus, 1000);
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+    cloneButton.disabled = false;
+    captureButton.disabled = false;
+  }
+});
+
 refreshHealth();
+pollCloneStatus();
