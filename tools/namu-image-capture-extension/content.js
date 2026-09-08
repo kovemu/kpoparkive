@@ -25,35 +25,48 @@ function sourceTitleFromLocation() {
   return decodeMaybe(match[1]);
 }
 
-function extractFileNameFromString(value) {
+function semanticFileNameFromString(value, allowPlain = true) {
   const raw = decodeMaybe(String(value || "").normalize("NFKC"));
   const prefixed = raw.match(/(?:파일|File):([^?#"'<>\n]+?\.(?:jpe?g|png|gif|webp|avif|svg))(?:$|[?#&\s"'<>])/i);
   if (prefixed) return normalizeFileName(prefixed[1]);
 
-  const pathish = raw.match(/([^/?#"'<>\n]+?\.(?:jpe?g|png|gif|webp|avif|svg))(?:$|[?#&\s"'<>])/i);
-  if (pathish) return normalizeFileName(pathish[1]);
+  if (!allowPlain) return "";
+  const trimmed = raw.trim();
+  if (!trimmed || /^https?:\/\//i.test(trimmed) || /(?:^|\/)i\.namu\.wiki\/i\//i.test(trimmed)) return "";
+  if (/[\\/]/.test(trimmed)) return "";
+  if (looksLikeFileName(trimmed)) return normalizeFileName(trimmed);
   return "";
 }
 
 function semanticStringsForElement(element) {
   const values = [];
   let current = element;
-  for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
+  for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
     if (!(current instanceof Element)) continue;
-    for (const name of ["alt", "title", "aria-label", "href", "src", "data-src", "data-original", "data-filename", "data-file-name", "data-file", "data-name"]) {
+
+    for (const name of ["alt", "title", "aria-label", "data-filename", "data-file-name", "data-file", "data-name"]) {
       const value = current.getAttribute?.(name);
-      if (value) values.push(value);
+      if (value) values.push({ value, allowPlain: true });
     }
+
+    const href = current.getAttribute?.("href") || "";
+    if (href && /(?:파일|File)(?::|%3A)/i.test(decodeMaybe(href))) {
+      values.push({ value: href, allowPlain: false });
+    }
+
     for (const attr of Array.from(current.attributes || [])) {
+      const name = attr.name.toLowerCase();
+      if (["src", "srcset", "data-src", "data-original", "style"].includes(name)) continue;
       const value = attr.value || "";
-      if (/(?:파일|File):/i.test(value) || looksLikeFileName(value)) values.push(value);
+      if (/(?:파일|File):/i.test(decodeMaybe(value))) values.push({ value, allowPlain: false });
     }
+
     if (depth <= 2) {
       const text = (current.textContent || "").replace(/\s+/g, " ").trim();
-      if (text && text.length <= 240) values.push(text);
+      if (text && text.length <= 240) values.push({ value: text, allowPlain: true });
     }
   }
-  return unique(values);
+  return values;
 }
 
 function urlsFromSrcset(srcset, baseUrl) {
@@ -104,13 +117,9 @@ function collectOpenRoots() {
   return roots;
 }
 
-function fileNameForElement(element, urls = []) {
-  for (const value of semanticStringsForElement(element)) {
-    const fileName = extractFileNameFromString(value);
-    if (fileName) return fileName;
-  }
-  for (const url of urls) {
-    const fileName = extractFileNameFromString(url);
+function fileNameForElement(element) {
+  for (const entry of semanticStringsForElement(element)) {
+    const fileName = semanticFileNameFromString(entry.value, entry.allowPlain);
     if (fileName) return fileName;
   }
   return "";
@@ -165,7 +174,7 @@ function extractAssets() {
     for (const image of images) {
       const urls = urlsForImage(image);
       if (!urls.length) continue;
-      const fileName = fileNameForElement(image, urls);
+      const fileName = fileNameForElement(image);
       if (fileName) {
         addAsset(fileName, urls, image.naturalWidth || 0, image.naturalHeight || 0);
       } else if (unlabeledSamples.length < 12) {
@@ -179,12 +188,9 @@ function extractAssets() {
       }
     }
 
-    // Some Namu layouts attach the semantic file link to a wrapper rather than
-    // directly around the <img>. Scan file-like links independently and collect
-    // descendant images/backgrounds from them.
     for (const anchor of Array.from(root.querySelectorAll?.("a[href]") || [])) {
       const href = anchor.getAttribute("href") || "";
-      const fileName = extractFileNameFromString(href) || fileNameForElement(anchor, []);
+      const fileName = semanticFileNameFromString(href, false) || fileNameForElement(anchor);
       if (!fileName) continue;
       fileLinkCount += 1;
       const urls = [];
@@ -193,12 +199,11 @@ function extractAssets() {
       addAsset(fileName, unique(urls));
     }
 
-    // Catch image surfaces implemented as CSS backgrounds.
     for (const element of Array.from(root.querySelectorAll?.('[style*="background" i], [style*="url(" i]') || [])) {
       const urls = cssBackgroundUrls(element);
       if (!urls.length) continue;
       backgroundCount += 1;
-      const fileName = fileNameForElement(element, urls);
+      const fileName = fileNameForElement(element);
       if (fileName) addAsset(fileName, urls);
       else if (unlabeledSamples.length < 12) {
         unlabeledSamples.push({ tag: element.tagName, alt: "", title: element.getAttribute("title") || "", src: urls[0] || "", parent: element.parentElement?.tagName || "" });
