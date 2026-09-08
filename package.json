@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "namu:image-worker": "node scripts/namu-browser-image-worker-safe.mjs",
-    "namu:capture-helper": "node scripts/namu-chrome-capture-helper-combined.mjs"
+    "namu:capture-helper": "node scripts/namu-chrome-capture-helper-v8.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
