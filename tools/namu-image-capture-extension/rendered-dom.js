@@ -1,4 +1,4 @@
-const KPOP_CAPTURE_VERSION = "chrome-rendered-artifact-v2";
+const KPOP_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
 
 const KPOP_COMPUTED_STYLE_PROPERTIES = [
   "display", "box-sizing", "position", "top", "right", "bottom", "left", "float", "clear",
@@ -35,31 +35,6 @@ function kpopSourceTitleFromLocation() {
   return kpopDecodeMaybe(match[1]);
 }
 
-function kpopScorePresentationRoot(element) {
-  if (!(element instanceof Element)) return -1;
-  const textLength = (element.textContent || "").replace(/\s+/g, " ").trim().length;
-  const tables = element.querySelectorAll("table").length;
-  const images = element.querySelectorAll("img").length;
-  const headings = element.querySelectorAll("h1,h2,h3,h4,h5,h6").length;
-  return textLength + tables * 900 + images * 180 + headings * 300;
-}
-
-function kpopFindPresentationRoot() {
-  const articles = Array.from(document.querySelectorAll("article"));
-  if (articles.length) {
-    articles.sort((a, b) => kpopScorePresentationRoot(b) - kpopScorePresentationRoot(a));
-    return { element: articles[0], selector: "article:max-score" };
-  }
-
-  for (const selector of ["main", "[role='main']"]) {
-    const candidates = Array.from(document.querySelectorAll(selector));
-    if (!candidates.length) continue;
-    candidates.sort((a, b) => kpopScorePresentationRoot(b) - kpopScorePresentationRoot(a));
-    if (kpopScorePresentationRoot(candidates[0]) > 1000) return { element: candidates[0], selector: `${selector}:max-score` };
-  }
-  return null;
-}
-
 function kpopAbsoluteUrl(value) {
   const raw = String(value || "").trim();
   if (!raw || /^(?:data|blob|javascript):/i.test(raw)) return "";
@@ -69,6 +44,127 @@ function kpopAbsoluteUrl(value) {
   } catch {
     return "";
   }
+}
+
+function kpopIsContentImage(image) {
+  if (!(image instanceof HTMLImageElement)) return false;
+  const raw = image.currentSrc || image.getAttribute("src") || image.getAttribute("data-src") || image.getAttribute("data-original") || "";
+  try {
+    const url = new URL(raw, location.href);
+    return url.hostname === "i.namu.wiki" && url.pathname.startsWith("/i/");
+  } catch {
+    return false;
+  }
+}
+
+function kpopElementMetrics(element) {
+  const textLength = (element.textContent || "").replace(/\s+/g, " ").trim().length;
+  const tables = element.querySelectorAll("table").length;
+  const images = element.querySelectorAll("img").length;
+  let contentImages = 0;
+  for (const image of element.querySelectorAll("img")) if (kpopIsContentImage(image)) contentImages += 1;
+  const headings = element.querySelectorAll("h1,h2,h3,h4,h5,h6").length;
+  const nodes = element.querySelectorAll("*").length;
+  const rect = element.getBoundingClientRect();
+  let visible = false;
+  try {
+    const style = getComputedStyle(element);
+    visible = style.display !== "none" && style.visibility !== "hidden" && rect.width > 80 && rect.height > 80;
+  } catch {}
+  const score = textLength + tables * 1800 + contentImages * 500 + images * 60 + headings * 450;
+  return { textLength, tables, images, contentImages, headings, nodes, width: rect.width, height: rect.height, visible, score };
+}
+
+function kpopDescribeElement(element) {
+  const tag = element.tagName.toLowerCase();
+  const id = element.id ? `#${element.id}` : "";
+  const classes = Array.from(element.classList || []).slice(0, 3).map((name) => `.${name}`).join("");
+  return `${tag}${id}${classes}`.slice(0, 220);
+}
+
+function kpopCollectRootCandidates() {
+  const set = new Set();
+  const addAncestors = (element) => {
+    let current = element;
+    for (let depth = 0; current && depth < 22; depth += 1, current = current.parentElement) {
+      if (!(current instanceof Element)) continue;
+      if (["DIV", "SECTION", "ARTICLE", "MAIN"].includes(current.tagName) || current.getAttribute("role") === "main") set.add(current);
+      if (current === document.body) break;
+    }
+  };
+
+  for (const table of document.querySelectorAll("table")) addAncestors(table);
+  for (const heading of document.querySelectorAll("h1,h2,h3,h4,h5,h6")) addAncestors(heading);
+  for (const image of document.querySelectorAll("img")) if (kpopIsContentImage(image)) addAncestors(image);
+  for (const element of document.querySelectorAll("article,main,[role='main']")) set.add(element);
+  return [...set];
+}
+
+function kpopFindPresentationRoot() {
+  const semantic = Array.from(document.querySelectorAll("article,main,[role='main']"))
+    .map((element) => ({ element, metrics: kpopElementMetrics(element) }))
+    .filter((entry) => entry.metrics.visible && entry.metrics.score > 1200)
+    .sort((a, b) => b.metrics.score - a.metrics.score);
+  if (semantic.length) {
+    const best = semantic[0];
+    return {
+      element: best.element,
+      selector: kpopDescribeElement(best.element),
+      strategy: "semantic-main",
+      metrics: best.metrics,
+      candidateCount: semantic.length,
+    };
+  }
+
+  const candidates = kpopCollectRootCandidates()
+    .filter((element) => element !== document.body && element !== document.documentElement)
+    .map((element) => ({ element, metrics: kpopElementMetrics(element) }))
+    .filter((entry) => entry.metrics.visible && (entry.metrics.tables >= 1 || entry.metrics.contentImages >= 2) && entry.metrics.textLength >= 300);
+
+  if (candidates.length) {
+    const maxTables = Math.max(...candidates.map((entry) => entry.metrics.tables));
+    const maxContentImages = Math.max(...candidates.map((entry) => entry.metrics.contentImages));
+    const maxText = Math.max(...candidates.map((entry) => entry.metrics.textLength));
+
+    const strong = candidates.filter((entry) => {
+      const tableCoverage = maxTables > 0 ? entry.metrics.tables / maxTables : 1;
+      const imageCoverage = maxContentImages > 0 ? entry.metrics.contentImages / maxContentImages : 1;
+      const textCoverage = maxText > 0 ? entry.metrics.textLength / maxText : 1;
+      const tableOk = maxTables < 3 || tableCoverage >= 0.78;
+      const imageOk = maxContentImages < 4 || imageCoverage >= 0.70;
+      const textOk = maxText < 1500 || textCoverage >= 0.45;
+      return tableOk && imageOk && textOk;
+    });
+
+    const pool = strong.length ? strong : candidates;
+    pool.sort((a, b) => {
+      if (a.metrics.nodes !== b.metrics.nodes) return a.metrics.nodes - b.metrics.nodes;
+      return b.metrics.score - a.metrics.score;
+    });
+    const best = pool[0];
+    return {
+      element: best.element,
+      selector: kpopDescribeElement(best.element),
+      strategy: strong.length ? "content-envelope" : "content-score-fallback",
+      metrics: best.metrics,
+      candidateCount: candidates.length,
+      maxima: { tables: maxTables, contentImages: maxContentImages, textLength: maxText },
+    };
+  }
+
+  if (document.body) {
+    const metrics = kpopElementMetrics(document.body);
+    if (metrics.score > 1200) {
+      return {
+        element: document.body,
+        selector: "body",
+        strategy: "body-last-resort",
+        metrics,
+        candidateCount: 0,
+      };
+    }
+  }
+  return null;
 }
 
 function kpopSafeComputedValue(property, value) {
@@ -110,6 +206,7 @@ function kpopPseudoRule(nodeId, element, pseudo) {
 
 function kpopSanitizeRenderedClone(sourceRoot) {
   const clone = sourceRoot.cloneNode(true);
+  clone.setAttribute("data-kpop-capture-root", "true");
   const originals = [sourceRoot, ...sourceRoot.querySelectorAll("*")];
   const copies = [clone, ...clone.querySelectorAll("*")];
   const rootRect = sourceRoot.getBoundingClientRect();
@@ -189,7 +286,7 @@ function kpopSanitizeRenderedClone(sourceRoot) {
 
 function kpopExtractRenderedDocument() {
   const found = kpopFindPresentationRoot();
-  if (!found) throw new Error("Could not locate the rendered NamuWiki article/main content root.");
+  if (!found) throw new Error("Could not locate any content-rich NamuWiki document root.");
 
   const source = found.element;
   const snapshot = kpopSanitizeRenderedClone(source);
@@ -206,6 +303,10 @@ function kpopExtractRenderedDocument() {
     captureVersion: KPOP_CAPTURE_VERSION,
     meta: {
       selector: found.selector,
+      rootStrategy: found.strategy,
+      rootMetrics: found.metrics,
+      rootCandidateCount: found.candidateCount || 0,
+      rootMaxima: found.maxima || null,
       tagName: source.tagName.toLowerCase(),
       articleBytes: new TextEncoder().encode(html).byteLength,
       styleBytes: new TextEncoder().encode(styleCss).byteLength,
@@ -215,6 +316,7 @@ function kpopExtractRenderedDocument() {
       pseudoRuleCount: snapshot.pseudoRuleCount,
       stylePropertyCount: KPOP_COMPUTED_STYLE_PROPERTIES.length,
       imageCount: source.querySelectorAll("img").length,
+      contentImageCount: found.metrics?.contentImages || 0,
       tableCount: source.querySelectorAll("table").length,
       headingCount: source.querySelectorAll("h1,h2,h3,h4,h5,h6").length,
       renderedWidth: Math.round(rect.width || 0),
