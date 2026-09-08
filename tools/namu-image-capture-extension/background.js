@@ -13,39 +13,37 @@ function utf8Base64(value) {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
   const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   return btoa(binary);
+}
+
+function syntheticName(asset, contentType, candidate) {
+  if (asset.fileName) return asset.fileName;
+  const ext = ({
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/avif": "avif",
+    "image/svg+xml": "svg",
+  })[contentType] || String(candidate || "").match(/\.([a-z0-9]+)(?:$|[?#])/i)?.[1] || "bin";
+  return `__anonymous__${String(asset.domIndex ?? 0).padStart(4, "0")}.${ext}`;
 }
 
 async function validateBlob(blob, declaredWidth = 0, declaredHeight = 0) {
   if (!blob.size) return { valid: false, reason: "empty image" };
   if (blob.size > MAX_BYTES) return { valid: false, reason: "image exceeds 8 MB" };
-
   const type = (blob.type || "").toLowerCase();
-  if (type === "image/svg+xml") {
-    return {
-      valid: true,
-      width: declaredWidth || 0,
-      height: declaredHeight || 0,
-      visibleRatio: null,
-      colorRange: null,
-    };
-  }
+  if (type === "image/svg+xml") return { valid: true, width: declaredWidth || 0, height: declaredHeight || 0, visibleRatio: null, colorRange: null };
 
   let bitmap;
-  try {
-    bitmap = await createImageBitmap(blob);
-  } catch (error) {
-    return { valid: false, reason: `image decode failed: ${error?.message || error}` };
-  }
+  try { bitmap = await createImageBitmap(blob); }
+  catch (error) { return { valid: false, reason: `image decode failed: ${error?.message || error}` }; }
 
   try {
     const width = bitmap.width || declaredWidth || 0;
     const height = bitmap.height || declaredHeight || 0;
     if (width < 8 || height < 8) return { valid: false, reason: `placeholder-sized image ${width}x${height}`, width, height };
-
     const canvas = new OffscreenCanvas(32, 32);
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     ctx.clearRect(0, 0, 32, 32);
@@ -66,9 +64,7 @@ async function validateBlob(blob, declaredWidth = 0, declaredHeight = 0) {
     if (visibleRatio < 0.002) return { valid: false, reason: "nearly fully transparent image", width, height, visibleRatio };
     const colorRange = Math.max(maxR - minR, maxG - minG, maxB - minB);
     const alphaRange = maxA - minA;
-    if (visibleRatio > 0.98 && colorRange <= 1 && alphaRange <= 1) {
-      return { valid: false, reason: "uniform blank image", width, height, visibleRatio, colorRange };
-    }
+    if (visibleRatio > 0.98 && colorRange <= 1 && alphaRange <= 1) return { valid: false, reason: "uniform blank image", width, height, visibleRatio, colorRange };
     return { valid: true, width, height, visibleRatio, colorRange };
   } finally {
     bitmap.close?.();
@@ -80,10 +76,8 @@ async function helperHealth() {
     const response = await fetch(`${HELPER}/health`, { cache: "no-store" });
     if (!response.ok) return { ok: false };
     const json = await response.json();
-    return { ok: Boolean(json?.ok), supabaseHost: json?.supabaseHost || "", stats: json?.stats || null };
-  } catch {
-    return { ok: false };
-  }
+    return { ok: Boolean(json?.ok), supabaseHost: json?.supabaseHost || json?.supabase || "", stats: json?.stats || null };
+  } catch { return { ok: false }; }
 }
 
 async function sendAsset(blob, meta) {
@@ -104,14 +98,10 @@ async function sendAsset(blob, meta) {
 
 async function captureCurrentTab(rootTitle) {
   const health = await helperHealth();
-  if (!health.ok) {
-    throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
-  }
+  if (!health.ok) throw new Error("Local helper is not running. In kpoparkive, run: npm run namu:capture-helper");
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) {
-    throw new Error("Open a NamuWiki document in this Chrome tab first.");
-  }
+  if (!tab?.id || !/^https:\/\/(?:www\.)?namu\.wiki\/w\//i.test(tab.url || "")) throw new Error("Open a NamuWiki document in this Chrome tab first.");
 
   const extracted = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-images" });
   if (!extracted?.ok) throw new Error(extracted?.error || "Could not extract images from this page.");
@@ -149,10 +139,18 @@ async function captureCurrentTab(rootTitle) {
           throw new Error(visual.reason || "visual validation failed");
         }
 
+        const fileName = syntheticName(asset, contentType, response.url || candidate);
         const helper = await sendAsset(blob, {
           rootTitle,
           sourceTitle: extracted.sourceTitle,
-          fileName: asset.fileName,
+          fileName,
+          semanticFileName: asset.fileName || null,
+          anonymous: Boolean(asset.anonymous),
+          domIndex: asset.domIndex ?? null,
+          contextText: asset.contextText || "",
+          heading: asset.heading || "",
+          alt: asset.alt || "",
+          title: asset.title || "",
           sourceUrl: response.url || candidate,
           pageUrl: extracted.pageUrl,
           contentType,
@@ -163,17 +161,7 @@ async function captureCurrentTab(rootTitle) {
 
         if (helper.status === "resolved") results.resolved += 1;
         else if (helper.status === "no_queue") results.noQueue += 1;
-        results.details.push({
-          fileName: asset.fileName,
-          status: helper.status,
-          bytes: helper.bytes,
-          width: helper.width,
-          height: helper.height,
-          fileKey: helper.fileKey,
-          queueRows: helper.queueRows,
-          sampleKeys: helper.sampleKeys,
-          supabaseHost: helper.supabaseHost,
-        });
+        results.details.push({ fileName, status: helper.status, bytes: helper.bytes, width: helper.width, height: helper.height, anonymous: Boolean(asset.anonymous) });
         done = true;
         break;
       } catch (error) {
@@ -182,7 +170,7 @@ async function captureCurrentTab(rootTitle) {
     }
     if (!done) {
       results.failed += 1;
-      results.details.push({ fileName: asset.fileName, status: "failed", error: lastError });
+      results.details.push({ fileName: asset.fileName || `anonymous@${asset.domIndex ?? "?"}`, status: "failed", error: lastError });
     }
     await sleep(120);
   }
