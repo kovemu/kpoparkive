@@ -1,3 +1,4 @@
 fastapi>=0.117.1,<1
 cloudscraper>=1.2.71,<2
+beautifulsoup4>=4.12,<5
 Pillow>=10,<12
