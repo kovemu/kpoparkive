@@ -1,4 +1,5 @@
 import { parse } from "node-html-parser";
+import { isNamuMirrorUiAssetUrl } from "./namuStoredAssets";
 
 export type RawSourceSegment = {
   type: "raw" | "rendered";
@@ -142,6 +143,8 @@ function extractInternalLinks(source: string) {
  * Pairing img.alt with a CDN-bearing attribute gives us a generic filename ->
  * URL resolver. Some mirror bugs put the CDN URL inside a malformed width attr;
  * scan the serialized tag as a final recovery hint instead of losing the asset.
+ * Mirror-owned /images/* are page chrome (for example the CC license badge),
+ * never the payload of a Namu [[파일:...]] reference.
  */
 export function extractRenderedFileMap(html: string): RenderedFileMap {
   const root = parse(extractArticleHtml(html));
@@ -157,7 +160,9 @@ export function extractRenderedFileMap(html: string): RenderedFileMap {
     const candidates = [image.getAttribute("data-original"), image.getAttribute("data-src"),
       ...(image.getAttribute("srcset") || "").split(",").map(value => value.trim().split(/\s+/)[0]),
       image.getAttribute("src"), embeddedHint];
-    const url = candidates.map(value => normalizeMediaUrl(value || "")).find(Boolean);
+    const url = candidates
+      .map(value => normalizeMediaUrl(value || ""))
+      .find(value => Boolean(value) && !isNamuMirrorUiAssetUrl(value));
     if (file && url && !map[file]) map[file] = url;
   }
   return map;
@@ -213,4 +218,3 @@ export function extractMirrorRawBundle(html: string): MirrorRawBundle {
     estimatedRawCoverage: denominator ? Math.round((rawCharacters / denominator) * 1000) / 10 : 0,
   };
 }
-
