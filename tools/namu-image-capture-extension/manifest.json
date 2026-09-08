@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.4.0",
-  "description": "Capture final rendered NamuWiki documents and clone imported document clusters with verified media from normal Chrome.",
+  "version": "0.5.0",
+  "description": "Capture and recursively clone rendered NamuWiki document clusters with verified media from normal Chrome.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
-      "js": ["content.js", "rendered-dom.js"],
+      "js": ["content.js", "rendered-dom.js", "links.js"],
       "run_at": "document_idle"
     }
   ]
