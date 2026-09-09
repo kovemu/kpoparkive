@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { parse } from "node-html-parser";
 import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../../lib/namuAssetLookup";
+import TheTreeRuntimeBridge from "../../thetree-frontend-poc/TheTreeRuntimeBridge";
 import "../poc.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
@@ -179,6 +180,7 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
                 <div>{unresolved.slice(0, 60).join(" · ")}{unresolved.length > 60 ? ` · +${unresolved.length - 60} more` : ""}</div>
               </details>
             )}
+            <TheTreeRuntimeBridge />
             <section className="namumarkPocDocument wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
           </>
         )}
