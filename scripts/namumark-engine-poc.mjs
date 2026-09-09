@@ -7,6 +7,7 @@ const ENGINE_REPO = "https://github.com/jhk1090/namumark-clone-core.git";
 const ENGINE_COMMIT = "94d0ddfbf35e5791096b3c86ebd9c869471abb13";
 const ENGINE_NAME = "namumark-clone-core-poc";
 const CACHE_DIR = path.resolve(".cache", "namumark-clone-core");
+const ROOT_TSC = path.resolve("node_modules", "typescript", "bin", "tsc");
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -31,10 +32,25 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) throw new Error("Supabase env is missing
 const title = decodeURIComponent(process.argv[2] || "RESCENE").normalize("NFKC").trim();
 
 function run(command, args, cwd = process.cwd()) {
-  const executable = process.platform === "win32" && ["npm", "npx"].includes(command) ? `${command}.cmd` : command;
-  const result = spawnSync(executable, args, { cwd, stdio: "inherit", env: process.env });
+  let executable = command;
+  let finalArgs = args;
+
+  // Node 24 on Windows can throw EINVAL when spawnSync receives a .cmd file
+  // directly. Route npm/npx through the user's normal cmd.exe instead.
+  if (process.platform === "win32" && ["npm", "npx"].includes(command)) {
+    executable = process.env.ComSpec || "cmd.exe";
+    finalArgs = ["/d", "/s", "/c", `${command}.cmd ${args.map(quoteWindowsCmdArg).join(" ")}`];
+  }
+
+  const result = spawnSync(executable, finalArgs, { cwd, stdio: "inherit", env: process.env });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${executable} ${args.join(" ")} failed with exit code ${result.status}`);
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+}
+
+function quoteWindowsCmdArg(value) {
+  const text = String(value);
+  if (!/[\s"&|<>^()%!]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 function ensureEngine() {
@@ -42,8 +58,18 @@ function ensureEngine() {
   if (!fs.existsSync(path.join(CACHE_DIR, ".git"))) run("git", ["clone", "--no-checkout", ENGINE_REPO, CACHE_DIR]);
   run("git", ["fetch", "--depth", "1", "origin", ENGINE_COMMIT], CACHE_DIR);
   run("git", ["checkout", "--detach", "--force", ENGINE_COMMIT], CACHE_DIR);
-  if (!fs.existsSync(path.join(CACHE_DIR, "node_modules"))) run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], CACHE_DIR);
-  run("npx", ["tsc", "--pretty", "false"], CACHE_DIR);
+
+  if (!fs.existsSync(path.join(CACHE_DIR, "node_modules"))) {
+    run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], CACHE_DIR);
+  }
+
+  // Compile with the TypeScript already installed by kpoparkive instead of
+  // invoking npx (which is both slower and another Windows .cmd boundary).
+  if (!fs.existsSync(ROOT_TSC)) {
+    throw new Error(`Kpoparkive TypeScript compiler is missing: ${ROOT_TSC}. Run npm.cmd install once in the project root.`);
+  }
+  run(process.execPath, [ROOT_TSC, "--project", path.join(CACHE_DIR, "tsconfig.json"), "--pretty", "false"], process.cwd());
+
   const indexPath = path.join(CACHE_DIR, "out", "index.js");
   if (!fs.existsSync(indexPath)) throw new Error(`Engine build did not create ${indexPath}`);
   return indexPath;
