@@ -1,6 +1,7 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
 const rawButton = document.getElementById("raw");
+const compareButton = document.getElementById("compare");
 const resetButton = document.getElementById("reset");
 const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
@@ -150,6 +151,38 @@ rawButton.addEventListener("click", async () => {
     setStatus(error?.message || String(error), "bad");
   } finally {
     rawButton.disabled = false;
+  }
+});
+
+compareButton.addEventListener("click", async () => {
+  compareButton.disabled = true;
+  setStatus(
+    "Comparing the LIVE NamuWiki page in this tab with the deployed The Tree baseline...\n" +
+    "The baseline opens in a background tab, layout/text/image metrics are captured at the same browser width, then the report is saved to Supabase."
+  );
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-compare-live-fidelity" });
+    if (!response?.ok) throw new Error(response?.error || "Live fidelity comparison failed.");
+    const s = response.summary || {};
+    setStatus([
+      "Live fidelity report saved.",
+      `Document: ${response.sourceTitle || "—"}`,
+      `Tables: original ${s.originalTables || 0} / The Tree ${s.baselineTables || 0}`,
+      `Matched tables: ${s.matchedTables || 0}`,
+      `Geometry mismatches: ${s.tableGeometryMismatches || 0}`,
+      `Unmatched tables: original ${s.unmatchedOriginalTables || 0} / The Tree ${s.unmatchedBaselineTables || 0}`,
+      `Images: original ${s.originalImages || 0} / The Tree ${s.baselineImages || 0}`,
+      `Matched images by alt: ${s.matchedImagesByAlt || 0}`,
+      `Missing images by alt: ${s.missingImagesByAlt || 0}`,
+      `Leaked syntax markers: ${s.leakedMarkerCount || 0}`,
+      "",
+      "Saved to source_documents.source_fidelity_meta for direct analysis.",
+    ].join("\n"), "ok");
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+  } finally {
+    compareButton.disabled = false;
   }
 });
 
