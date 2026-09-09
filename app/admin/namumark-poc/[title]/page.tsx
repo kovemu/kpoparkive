@@ -40,8 +40,17 @@ async function db<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function normalizeWikiKey(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
 function fileKey(ref: string) {
-  return ref.normalize("NFKC").trim().replace(/^(?:파일|File):/i, "");
+  return normalizeWikiKey(ref).replace(/^(?:파일|File):/i, "");
 }
 
 function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
@@ -69,14 +78,17 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
       continue;
     }
 
-    const src = image.getAttribute("src") || "";
-    if (!src.startsWith("/image/")) continue;
-    const alt = (image.getAttribute("alt") || "").trim();
-    const resolved = alt ? lookup(alt) || lookup(`파일:${alt}`) : null;
+    const alt = normalizeWikiKey(image.getAttribute("alt") || "");
+    if (!alt) continue;
+    const resolved = lookup(alt) || lookup(`파일:${alt}`) || lookup(fileKey(alt));
     if (resolved) image.setAttribute("src", resolved);
   }
 
   return root.querySelector("#kpop-namumark-poc-root")?.innerHTML || "";
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 export default async function NamuMarkPocPage({ params }: { params: Promise<{ title: string }> }) {
@@ -96,12 +108,16 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
   const assets: Record<string, string> = {};
   for (const row of assetRows) {
     const url = row.resolved_url || (typeof row.metadata?.enrichment_url === "string" ? row.metadata.enrichment_url : null);
-    if (url) assets[fileKey(row.source_ref)] = url;
+    if (!url) continue;
+    assets[fileKey(row.source_ref)] = url;
+    if (row.label) assets[fileKey(row.label)] = url;
   }
   const hydratedAssets = buildNamuResolvedAssetMap(assetRows, assets);
   const renderedHtml = source.source_namumark_html ? sanitizeAndHydrate(source.source_namumark_html, hydratedAssets) : "";
   const meta = source.source_namumark_meta || {};
   const unresolved = Array.isArray(meta.unresolvedIncludes) ? meta.unresolvedIncludes.map(String) : [];
+  const requiredFiles = stringArray(meta.requiredFiles);
+  const missingFiles = stringArray(meta.missingFiles);
 
   return (
     <>
@@ -116,6 +132,7 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
             <div className="breadcrumbs"><a href="/">Kpoparkive</a> › NamuMark engine POC › {source.source_title}</div>
             <h1>{source.source_title}</h1>
             <p>This page renders the captured edit-source NamuMark through an external compatibility engine. It is an architecture experiment, not the production renderer.</p>
+            <p><a href={`/admin/thetree-frontend-poc/${encodeURIComponent(source.source_title)}`}>Open official The Tree frontend baseline →</a></p>
           </div>
         </div>
 
@@ -123,6 +140,8 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
           <Metric label="Engine" value={source.source_namumark_engine || "NOT RENDERED"} />
           <Metric label="Raw source" value={source.source_wikitext ? `${source.source_wikitext.length.toLocaleString()} chars` : "NONE"} />
           <Metric label="Engine HTML" value={source.source_namumark_html ? `${source.source_namumark_html.length.toLocaleString()} chars` : "NONE"} />
+          <Metric label="Required files" value={requiredFiles.length ? String(requiredFiles.length) : String(meta.files || 0)} />
+          <Metric label="Missing files" value={String(missingFiles.length || meta.missingFileCount || 0)} />
           <Metric label="Unresolved includes" value={String(unresolved.length)} />
         </div>
 
@@ -149,6 +168,8 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
             engine: source.source_namumark_engine,
             version: source.source_namumark_engine_version,
             renderedAt: source.source_namumark_rendered_at,
+            requiredFiles,
+            missingFiles,
             meta,
             capturedAssets: Object.keys(hydratedAssets).length,
             engineJsChars: source.source_namumark_js?.length || 0,
