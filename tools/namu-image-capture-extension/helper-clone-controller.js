@@ -27,6 +27,52 @@ function kpopTitleFromDocumentUrl(value) {
   } catch { return ""; }
 }
 
+function kpopExtractIncludeTitles(rawValue) {
+  const raw = String(rawValue || "");
+  const lower = raw.toLowerCase();
+  const output = [];
+  const seen = new Set();
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    const start = lower.indexOf("[include(", cursor);
+    if (start < 0) break;
+
+    let depth = 0;
+    let comma = -1;
+    let end = -1;
+    for (let i = start + 9; i < raw.length; i += 1) {
+      const ch = raw[i];
+      if (ch === "(") {
+        depth += 1;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth > 0) {
+          depth -= 1;
+          continue;
+        }
+        if (raw[i + 1] === "]") {
+          end = i;
+          break;
+        }
+      }
+      if (ch === "," && depth === 0 && comma < 0) comma = i;
+    }
+
+    if (end < 0) break;
+    const nameEnd = comma >= 0 && comma < end ? comma : end;
+    const title = raw.slice(start + 9, nameEnd).normalize("NFKC").trim();
+    if (title && !seen.has(title)) {
+      seen.add(title);
+      output.push(title);
+    }
+    cursor = end + 2;
+  }
+
+  return output;
+}
+
 async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
   const existing = tabs.find((tab) => tab.id);
@@ -112,76 +158,130 @@ async function kpopResetHelperClone() {
   return result.job || null;
 }
 
+async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
+  const normalizedTitle = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!normalizedTitle) throw new Error("Raw source title is empty.");
+
+  const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(normalizedTitle)}`;
+  const editUrl = `https://namu.wiki/edit/${encodeURIComponent(normalizedTitle)}`;
+  const editTab = await chrome.tabs.create({ url: editUrl, active: false });
+  if (!editTab?.id) throw new Error(`Could not open the NamuWiki edit page for ${normalizedTitle}.`);
+
+  let extracted = null;
+  let verificationShown = false;
+  const started = Date.now();
+
+  try {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      let tab;
+      try { tab = await chrome.tabs.get(editTab.id); }
+      catch { throw new Error(`The NamuWiki edit tab for ${normalizedTitle} was closed before source capture finished.`); }
+
+      if (tab.status === "complete") {
+        try {
+          const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
+          if (result?.ok && result.raw) {
+            extracted = result;
+            break;
+          }
+          if (result?.blocked && !verificationShown) {
+            verificationShown = true;
+            try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+          }
+        } catch {}
+      }
+
+      if (!verificationShown && Date.now() - started > 8000) {
+        verificationShown = true;
+        try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    if (!extracted?.raw) {
+      try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+      throw new Error(`Could not read raw source for ${normalizedTitle} within 90 seconds.`);
+    }
+
+    const saved = await kpopControllerJson("/raw-source", {
+      method: "POST",
+      body: JSON.stringify({
+        rootTitle,
+        sourceTitle: normalizedTitle,
+        pageUrl: sourcePageUrl,
+        editUrl: extracted.editUrl || editUrl,
+        raw: extracted.raw,
+        extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+        signalScore: Number(extracted.signalScore || 0),
+      }),
+    });
+
+    return {
+      ...saved,
+      sourceTitle: normalizedTitle,
+      raw: extracted.raw,
+      charCount: Number(extracted.charCount || extracted.raw.length),
+      extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+    };
+  } finally {
+    try { await chrome.tabs.remove(editTab.id); } catch {}
+  }
+}
+
 async function kpopCaptureEditRawSource(options = {}) {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const sourceTitle = kpopTitleFromDocumentUrl(activeTab?.url || "");
   if (!activeTab?.url || !sourceTitle) throw new Error("Open the NamuWiki document (/w/...) you want to test first.");
 
   const rootTitle = String(options.rootTitle || "").normalize("NFKC").trim() || sourceTitle;
-  const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(sourceTitle)}`;
-  const editUrl = `https://namu.wiki/edit/${encodeURIComponent(sourceTitle)}`;
-  const editTab = await chrome.tabs.create({ url: editUrl, active: false });
-  if (!editTab?.id) throw new Error("Could not open the NamuWiki edit page.");
+  const maxTemplateDepth = Math.max(0, Math.min(3, Number(options.maxTemplateDepth ?? 2) || 0));
+  const maxTemplates = Math.max(0, Math.min(80, Number(options.maxTemplates ?? 40) || 0));
 
-  let extracted = null;
-  let verificationShown = false;
-  const started = Date.now();
+  const rootCapture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle });
+  const queue = kpopExtractIncludeTitles(rootCapture.raw).map((title) => ({ title, depth: 1 }));
+  const seen = new Set([sourceTitle]);
+  const capturedTemplates = [];
+  const templateFailures = [];
+  let discoveredTemplates = queue.length;
 
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    let tab;
-    try { tab = await chrome.tabs.get(editTab.id); }
-    catch { throw new Error("The NamuWiki edit tab was closed before source capture finished."); }
+  while (queue.length && capturedTemplates.length < maxTemplates) {
+    const item = queue.shift();
+    const title = String(item?.title || "").normalize("NFKC").trim();
+    const depth = Math.max(1, Number(item?.depth || 1) || 1);
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    if (!/^틀:/i.test(title)) continue;
 
-    if (tab.status === "complete") {
-      try {
-        const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
-        if (result?.ok && result.raw) {
-          extracted = result;
-          break;
+    try {
+      const capture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle: title });
+      capturedTemplates.push({ title, depth, charCount: capture.charCount });
+
+      if (depth < maxTemplateDepth) {
+        const nested = kpopExtractIncludeTitles(capture.raw);
+        discoveredTemplates += nested.length;
+        for (const nestedTitle of nested) {
+          if (!seen.has(nestedTitle) && /^틀:/i.test(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
         }
-        if (result?.blocked && !verificationShown) {
-          verificationShown = true;
-          try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
-        }
-      } catch {}
+      }
+    } catch (error) {
+      templateFailures.push({ title, depth, error: error?.message || String(error) });
     }
-
-    if (!verificationShown && Date.now() - started > 8000) {
-      verificationShown = true;
-      try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  if (!extracted?.raw) {
-    try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
-    throw new Error("Could not read the edit source within 90 seconds. If NamuWiki verification is visible, complete it in the opened edit tab and run Capture Raw Source again.");
-  }
-
-  const saved = await kpopControllerJson("/raw-source", {
-    method: "POST",
-    body: JSON.stringify({
-      rootTitle,
-      sourceTitle,
-      pageUrl: sourcePageUrl,
-      editUrl: extracted.editUrl || editUrl,
-      raw: extracted.raw,
-      extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
-      signalScore: Number(extracted.signalScore || 0),
-    }),
-  });
-
-  try { await chrome.tabs.remove(editTab.id); } catch {}
   const previewUrl = `https://kpoparkive.vercel.app/admin/namu-raw-preview/${encodeURIComponent(sourceTitle)}`;
   if (options.openPreview) {
     try { await chrome.tabs.create({ url: previewUrl, active: true }); } catch {}
   }
+
   return {
-    ...saved,
+    ...rootCapture,
     sourceTitle,
-    charCount: Number(extracted.charCount || extracted.raw.length),
-    extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
     previewUrl,
+    templateDepth: maxTemplateDepth,
+    templatesCaptured: capturedTemplates.length,
+    templatesDiscovered: discoveredTemplates,
+    templateFailures,
+    capturedTemplates,
   };
 }
 
