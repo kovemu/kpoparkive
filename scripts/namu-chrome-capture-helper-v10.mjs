@@ -108,24 +108,27 @@ combined = mustReplace(
 const statsMarker = "  stats.documentsSaved += 1;";
 combined = mustReplace(combined, statsMarker, "  await syncSourceDocumentLinks(doc.id, internalLinks);\n\n" + statsMarker, "link graph sync");
 
-const oldCleanInternalLinks = String.raw`function cleanInternalLinks(value) {
-  if (!Array.isArray(value)) return [];
-  const output = [];
-  const seen = new Set();
-  for (const item of value) {
-    const title = String(item?.title || item || "").normalize("NFKC").trim();
-    if (!title || seen.has(title)) continue;
-    seen.add(title);
-    output.push({
-      title,
-      href: String(item?.href || `https://namu.wiki/w/${encodeURIComponent(title)}`).trim(),
-      text: String(item?.text || "").replace(/\s+/g, " ").trim().slice(0, 240),
-    });
-    if (output.length >= 2000) break;
-  }
-  return output;
-}`;
-const newCleanInternalLinks = String.raw`function cleanInternalLinks(value) {
+const oldCleanInternalLinks = [
+  "function cleanInternalLinks(value) {",
+  "  if (!Array.isArray(value)) return [];",
+  "  const output = [];",
+  "  const seen = new Set();",
+  "  for (const item of value) {",
+  "    const title = String(item?.title || item || \"\").normalize(\"NFKC\").trim();",
+  "    if (!title || seen.has(title)) continue;",
+  "    seen.add(title);",
+  "    output.push({",
+  "      title,",
+  "      href: String(item?.href || `https://namu.wiki/w/${encodeURIComponent(title)}`).trim(),",
+  "      text: String(item?.text || \"\").replace(/\\s+/g, \" \" ).trim().slice(0, 240),",
+  "    });",
+  "    if (output.length >= 2000) break;",
+  "  }",
+  "  return output;",
+  "}",
+].join("\n").replace('replace(/\\s+/g, " " )', 'replace(/\\s+/g, " ")');
+
+function kpopPolicyCleanInternalLinks(value) {
   if (!Array.isArray(value)) return [];
   const output = [];
   const seen = new Set();
@@ -153,7 +156,8 @@ const newCleanInternalLinks = String.raw`function cleanInternalLinks(value) {
     if (output.length >= 2000) break;
   }
   return output;
-}`;
+}
+const newCleanInternalLinks = kpopPolicyCleanInternalLinks.toString().replace("kpopPolicyCleanInternalLinks", "cleanInternalLinks");
 combined = mustReplace(combined, oldCleanInternalLinks, newCleanInternalLinks, "preserve crawl relationship metadata");
 
 const tempCombined = path.join(os.tmpdir(), `kpoparkive-namu-combined-v10-${process.pid}.mjs`);
@@ -208,9 +212,6 @@ const newKnownAssets = String.raw`async function kpopKnownAssetUrls(_rootTitle) 
 }`;
 v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache");
 
-// Crawl policy v1: EXPAND recursively, LEAF capture once, SKIP never visit.
-// The browser classifier is authoritative. The helper fallback only protects
-// old stored link metadata and old persisted queues during the transition.
 v8 = mustReplace(
   v8,
   "const KPOP_CLONE_MAX_RETRIES = 2;",
