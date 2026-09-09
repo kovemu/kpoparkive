@@ -119,21 +119,33 @@ rawButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   rawButton.disabled = true;
   setStatus(
-    "Opening the normal NamuWiki edit page...\n" +
-    "The extension will read the editor source and store it as canonical NamuMark.\n" +
-    "If NamuWiki verification appears, complete it in the opened tab."
+    "Capturing canonical NamuMark through normal Chrome edit pages...\n" +
+    "The root source is saved first, then included templates are followed recursively.\n" +
+    "If NamuWiki verification appears, complete it in the opened tab and leave the tab open."
   );
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-capture-edit-raw-source",
-      options: { rootTitle, openPreview: true },
+      options: { rootTitle, openPreview: true, maxTemplateDepth: 2, maxTemplates: 40 },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not capture raw source.");
-    setStatus(
-      `Raw source saved.\nDocument: ${response.sourceTitle || "—"}\nCharacters: ${response.charCount || 0}\nMethod: ${response.extractionMethod || "normal Chrome edit"}\nOpening raw preview...`,
-      "ok",
-    );
+
+    const failures = Array.isArray(response.templateFailures) ? response.templateFailures : [];
+    const lines = [
+      "Raw source saved.",
+      `Document: ${response.sourceTitle || "—"}`,
+      `Characters: ${response.charCount || 0}`,
+      `Method: ${response.extractionMethod || "normal Chrome edit"}`,
+      `Templates captured: ${response.templatesCaptured || 0}`,
+      `Template failures: ${failures.length}`,
+    ];
+    if (failures.length) {
+      lines.push("", "Template failures:");
+      for (const item of failures.slice(0, 8)) lines.push(`- ${item.title}: ${item.error}`);
+    }
+    lines.push("", "Run the NamuMark engine POC again to compare the fuller render.");
+    setStatus(lines.join("\n"), failures.length ? "" : "ok");
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
   } finally {
