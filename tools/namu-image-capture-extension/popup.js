@@ -1,6 +1,7 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
 const rawButton = document.getElementById("raw");
+const assetsButton = document.getElementById("assets");
 const compareButton = document.getElementById("compare");
 const resetButton = document.getElementById("reset");
 const depthInput = document.getElementById("depth");
@@ -8,6 +9,7 @@ const maxDocsInput = document.getElementById("maxDocs");
 const health = document.getElementById("health");
 const status = document.getElementById("status");
 let pollTimer = null;
+let rawAssetPollTimer = null;
 
 function setStatus(text, kind = "") {
   status.textContent = text;
@@ -16,13 +18,17 @@ function setStatus(text, kind = "") {
 
 async function refreshHealth() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-health" });
+    const [response, rawAssets] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "kpoparkive-helper-health" }),
+      chrome.runtime.sendMessage({ type: "kpoparkive-raw-asset-health" }).catch(() => ({ ok: false })),
+    ]);
     if (response?.ok) {
       const suffix = response.documentCapture ? ` · ${response.documentCapture}` : "";
+      const rawSuffix = rawAssets?.ok ? " · raw-assets ready" : " · raw-assets unavailable";
       health.textContent = response.supabaseHost
-        ? `Local helper: connected (${response.supabaseHost})${suffix}`
-        : `Local helper: connected${suffix}`;
-      health.className = "ok";
+        ? `Local helper: connected (${response.supabaseHost})${suffix}${rawSuffix}`
+        : `Local helper: connected${suffix}${rawSuffix}`;
+      health.className = rawAssets?.ok ? "ok" : "";
     } else {
       health.textContent = "Local helper: not running";
       health.className = "bad";
@@ -58,6 +64,30 @@ function formatJob(job) {
   return lines.join("\n");
 }
 
+function formatRawAssetJob(job) {
+  if (!job || job.id !== "raw-assets") return "Raw asset resolver is idle.";
+  const lines = [
+    `Raw assets · ${job.rootTitle || "—"}`,
+    `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
+    `Required by renderer: ${job.required || 0}`,
+    `Missing at start: ${job.planned || 0}`,
+    `Processed: ${job.processed || 0}/${job.planned || 0}`,
+    `Resolved: ${job.resolved || 0}`,
+    `Failed: ${job.failed || 0}`,
+    `Remaining after verification: ${job.remaining == null ? "—" : job.remaining}`,
+  ];
+  if (job.current) lines.push(`Current: ${job.current}`);
+  if (job.running) lines.push("", "File pages are opened in background. If NamuWiki verification blocks a file, that tab will be brought forward.");
+  if (Array.isArray(job.errors) && job.errors.length) {
+    lines.push("", "Recent errors:");
+    for (const error of job.errors.slice(-5)) lines.push(`- ${error}`);
+  }
+  if (job.done && !job.failed && Number(job.remaining || 0) === 0) {
+    lines.push("", "All renderer-required assets are storage-backed. Re-run the The Tree renderer to refresh missing-files metadata/HTML.");
+  }
+  return lines.join("\n");
+}
+
 async function pollStatus() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-clone-status" });
@@ -68,6 +98,22 @@ async function pollStatus() {
     if (!job?.running && pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
+    }
+  } catch {}
+}
+
+async function pollRawAssetStatus(show = true) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-raw-asset-status" });
+    if (!response?.ok) return;
+    const job = response.job;
+    assetsButton.disabled = Boolean(job?.running);
+    if (show && job?.id === "raw-assets" && (job.running || job.done || job.planned)) {
+      setStatus(formatRawAssetJob(job), job.failed ? "" : "ok");
+    }
+    if (!job?.running && rawAssetPollTimer) {
+      clearInterval(rawAssetPollTimer);
+      rawAssetPollTimer = null;
     }
   } catch {}
 }
@@ -154,6 +200,29 @@ rawButton.addEventListener("click", async () => {
   }
 });
 
+assetsButton.addEventListener("click", async () => {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
+  assetsButton.disabled = true;
+  setStatus(
+    `Planning renderer-required assets for ${rootTitle}...\n` +
+    "Only files without storage-backed bytes will be opened and captured through this normal Chrome session."
+  );
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "kpoparkive-start-raw-asset-resolver",
+      options: { rootTitle, sourceTitle: rootTitle },
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not start raw asset resolver.");
+    setStatus(formatRawAssetJob(response.job), "ok");
+    if (rawAssetPollTimer) clearInterval(rawAssetPollTimer);
+    rawAssetPollTimer = setInterval(() => pollRawAssetStatus(true), 1000);
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+    assetsButton.disabled = false;
+  }
+});
+
 compareButton.addEventListener("click", async () => {
   compareButton.disabled = true;
   setStatus(
@@ -212,3 +281,4 @@ resetButton.addEventListener("click", async () => {
 
 refreshHealth();
 pollStatus();
+pollRawAssetStatus(false);
