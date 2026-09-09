@@ -79,6 +79,18 @@ async function db(pathname, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function dbAll(pathname, { pageSize = 1000, maxRows = 20000 } = {}) {
+  const rows = [];
+  const separator = pathname.includes("?") ? "&" : "?";
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const batch = await db(`${pathname}${separator}limit=${pageSize}&offset=${offset}`);
+    if (!Array.isArray(batch)) throw new Error(`Expected array response while paging ${pathname}`);
+    rows.push(...batch);
+    if (batch.length < pageSize) return rows;
+  }
+  throw new Error(`Supabase pagination reached ${maxRows} rows for ${pathname}; raise maxRows deliberately before continuing`);
+}
+
 const config = {
   lang: "ko",
   namespaces: ["문서", "사용자", "파일", "틀", "분류", "나무위키", "특수기능", "휴지통", "투표"],
@@ -268,13 +280,15 @@ function hasRenderableFile(virtualWiki, name) {
 async function main() {
   ensureEngine();
 
-  const rawRows = await db("source_documents?source=eq.namu_mirror&source_wikitext=not.is.null&select=id,source_title,root_title,source_wikitext&limit=5000");
+  const rawRows = await dbAll(
+    "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null&select=id,source_title,root_title,source_wikitext&order=id.asc",
+  );
   const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
 
-  const assetRows = await db(
+  const assetRows = await dbAll(
     `source_asset_queue?root_title=eq.${encodeURIComponent(target.root_title || title)}&asset_type=eq.image` +
-      "&select=source_ref,label,status,resolved_url,storage_path,metadata&limit=5000",
+      "&select=id,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
   );
 
   const virtualWiki = makeVirtualWiki(rawRows || [], assetRows || []);
@@ -374,6 +388,7 @@ async function main() {
     virtualRevisions: virtualWiki.histories.length,
     capturedRawDocuments: (rawRows || []).filter((row) => row?.source_wikitext).length,
     capturedAssets: (assetRows || []).filter((row) => assetUrl(row)).length,
+    assetRowsLoaded: (assetRows || []).length,
     renderedAt,
   };
 
@@ -394,7 +409,7 @@ async function main() {
 
   console.log(`THE TREE POC SAVED ${title}`);
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
-  console.log(`raw-docs=${meta.capturedRawDocuments} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
+  console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
   console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} categories=${meta.categories} headings=${meta.headings}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
