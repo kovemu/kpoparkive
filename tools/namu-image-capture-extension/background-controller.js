@@ -1,1 +1,1 @@
-importScripts("background.js", "helper-clone-controller.js");
+importScripts("background.js", "helper-clone-controller.js", "fidelity-controller.js");
