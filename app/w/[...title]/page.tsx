@@ -61,6 +61,38 @@ function fileKey(ref: string) {
   return normalizeWikiKey(ref).replace(/^(?:파일|File):/i, "");
 }
 
+function isVideoAssetUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return /\.(?:mp4|webm|mov)$/i.test(url.pathname);
+  } catch {
+    return /\.(?:mp4|webm|mov)(?:$|[?#])/i.test(value);
+  }
+}
+
+function hydrateResolvedMedia(image: any, resolved: string) {
+  if (isVideoAssetUrl(resolved)) {
+    image.setAttribute("data-video-src", resolved);
+    image.removeAttribute("data-src");
+    const className = (image.getAttribute("class") || "")
+      .replace(/\bwiki-image-loading\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    image.setAttribute("class", className.includes("wiki-image") ? className : `${className} wiki-image`.trim());
+    return;
+  }
+
+  image.setAttribute("src", resolved);
+  image.removeAttribute("data-src");
+  image.removeAttribute("data-video-src");
+  const className = (image.getAttribute("class") || "")
+    .replace(/\bwiki-image-loading\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (className) image.setAttribute("class", className);
+  else image.removeAttribute("class");
+}
+
 function rewriteInternalHref(href: string) {
   if (/^https:\/\/namu\.wiki\/w\//i.test(href)) return href.replace(/^https:\/\/namu\.wiki/i, "");
   return href;
@@ -89,22 +121,21 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
       : undefined;
 
     if (resolved) {
-      image.setAttribute("src", resolved);
-      image.removeAttribute("data-src");
-      const className = (image.getAttribute("class") || "")
-        .replace(/\bwiki-image-loading\b/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (className) image.setAttribute("class", className);
-      else image.removeAttribute("class");
+      hydrateResolvedMedia(image, resolved);
       continue;
     }
 
+    const videoSrc = image.getAttribute("data-video-src") || "";
+    if (videoSrc.startsWith(`${SUPABASE_URL}/storage/`)) continue;
+
     const lazySrc = image.getAttribute("data-src") || "";
     if (lazySrc.startsWith(`${SUPABASE_URL}/storage/`)) {
-      image.setAttribute("src", lazySrc);
-      image.removeAttribute("data-src");
-      image.setAttribute("loading", "lazy");
+      if (isVideoAssetUrl(lazySrc)) hydrateResolvedMedia(image, lazySrc);
+      else {
+        image.setAttribute("src", lazySrc);
+        image.removeAttribute("data-src");
+        image.setAttribute("loading", "lazy");
+      }
     } else if (lazySrc) {
       // Do not promote unresolved Namu CDN hints into visible giant placeholders.
       image.removeAttribute("data-src");
