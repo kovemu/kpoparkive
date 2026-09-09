@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -155,9 +156,22 @@ source = source
   .replaceAll("helper v10 (global Namu document registry + crawl policy)", "helper v11 (global registry + crawl policy + raw source + transient outage backoff)")
   .replaceAll("helper v10 (global Namu document registry)", "helper v11 (global registry + transient outage backoff)");
 
+const fidelityHelper = spawn(process.execPath, [path.resolve("scripts/namu-fidelity-report-helper.mjs")], {
+  env: { ...process.env, NAMU_FIDELITY_PORT: "43119" },
+  stdio: ["ignore", "inherit", "inherit"],
+});
+fidelityHelper.on("exit", (code, signal) => {
+  if (code !== 0 && signal !== "SIGTERM" && signal !== "SIGINT") {
+    console.error(`Live fidelity helper exited unexpectedly (code=${code}, signal=${signal || "none"}).`);
+  }
+});
+
 const tempPath = path.join(os.tmpdir(), `kpoparkive-namu-capture-v11-${process.pid}.mjs`);
 fs.writeFileSync(tempPath, source, "utf8");
-const cleanup = () => { try { fs.unlinkSync(tempPath); } catch {} };
+const cleanup = () => {
+  try { fidelityHelper.kill("SIGTERM"); } catch {}
+  try { fs.unlinkSync(tempPath); } catch {}
+};
 process.on("exit", cleanup);
 
 try {
