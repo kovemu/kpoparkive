@@ -6,6 +6,7 @@ alter table public.source_documents
   add column if not exists content_updated_at timestamptz,
   add column if not exists content_updated_by text,
   add column if not exists content_namumark_html text,
+  add column if not exists content_namumark_meta jsonb,
   add column if not exists content_namumark_engine text,
   add column if not exists content_namumark_engine_version text,
   add column if not exists content_namumark_rendered_at timestamptz;
@@ -82,6 +83,7 @@ begin
       content_updated_at = v_updated_at,
       content_updated_by = nullif(trim(p_editor_label), ''),
       content_namumark_html = null,
+      content_namumark_meta = null,
       content_namumark_engine = null,
       content_namumark_engine_version = null,
       content_namumark_rendered_at = null,
