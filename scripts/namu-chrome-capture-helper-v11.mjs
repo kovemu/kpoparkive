@@ -148,61 +148,9 @@ const resetJobPatch = [
   '',
 ].join("\n");
 
-const rawSourcePatch = [
-  'const rawFunctionMarker = "function kpopCancelCloneJob() {";',
-  'const rawFunction = [',
-  '  "async function kpopSaveRawSource(payload) {",',
-  '  "  const rootTitle = String(payload?.rootTitle || payload?.sourceTitle || \\\"\\\").normalize(\\\"NFKC\\\").trim();",',
-  '  "  const sourceTitle = String(payload?.sourceTitle || \\\"\\\").normalize(\\\"NFKC\\\").trim();",',
-  '  "  const pageUrl = kpopCleanCloneUrl(payload?.pageUrl);",',
-  '  "  let raw = String(payload?.raw || \\\"\\\");",',
-  '  "  raw = raw.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));",',
-  '  "  raw = raw.split(String.fromCharCode(13)).join(String.fromCharCode(10));",',
-  '  "  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);",',
-  '  "  raw = raw.trim();",',
-  '  "  if (!rootTitle || !sourceTitle || !pageUrl) throw new Error(\\\"raw source capture is missing rootTitle/sourceTitle/pageUrl\\\");",',
-  '  "  const lowerRaw = raw.toLowerCase();",',
-  '  "  const lines = raw.split(String.fromCharCode(10));",',
-  '  "  const hasHeading = lines.some((line) => { const text = line.trim(); return text.length >= 3 && text.startsWith(\\\"=\\\") && text.endsWith(\\\"=\\\"); });",',
-  '  "  const signals = [raw.includes(\\\"[[\\\") && raw.includes(\\\"]]\\\"), hasHeading, raw.includes(\\\"||\\\"), lowerRaw.includes(\\\"[include(\\\"), raw.includes(\\\"{{{#!\\\")].filter(Boolean).length;",',
-  '  "  if (raw.length < 200 || signals < 2) throw new Error(\\\"captured edit source does not look like complete NamuMark (\\\" + raw.length + \\\" chars, \\\" + signals + \\\" signals)\\\");",',
-  '  "  const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });",',
-  '  "  if (doc?.id) await recordSourceDocumentCluster(rootTitle, doc.id, 0);",',
-  '  "  const capturedAt = new Date().toISOString();",',
-  '  "  await db(\\\"source_documents?id=eq.\\\" + encodeURIComponent(doc.id), {",',
-  '  "    method: \\\"PATCH\\\",",',
-  '  "    headers: { Prefer: \\\"return=minimal\\\" },",',
-  '  "    body: JSON.stringify({",',
-  '  "      source_wikitext: raw,",',
-  '  "      source_format: \\\"namuwiki_raw\\\",",',
-  '  "      source_extraction_version: \\\"normal-chrome-edit-source-v1\\\",",',
-  '  "      raw_extracted_at: capturedAt,",',
-  '  "      updated_at: capturedAt,",',
-  '  "    }),",',
-  '  "  });",',
-  '  "  console.log(\\\"RAW SOURCE SAVED \\\" + sourceTitle + \\\" -> \\\" + (Buffer.byteLength(raw, \\\"utf8\\\") / 1024).toFixed(1) + \\\" KB via \\\" + String(payload?.extractionMethod || \\\"normal-chrome-edit\\\"));",',
-  '  "  return { ok: true, sourceTitle, rootTitle, charCount: raw.length, bytes: Buffer.byteLength(raw, \\\"utf8\\\"), capturedAt, sourceFormat: \\\"namuwiki_raw\\\" };",',
-  '  "}",',
-  '  "",',
-  '].join("\\n");',
-  'v8 = mustReplace(v8, rawFunctionMarker, rawFunction + rawFunctionMarker, "raw source save function");',
-  'const rawRouteMarker = [',
-  '  "    if (req.method === \\\"POST\\\" && url.pathname === \\\"/clone/cancel\\\") {",',
-  '].join("\\n");',
-  'const rawRoute = [',
-  '  "    if (req.method === \\\"POST\\\" && url.pathname === \\\"/raw-source\\\") {",',
-  '  "      json(res, 200, await kpopSaveRawSource(await kpopReadJson(req)));",',
-  '  "      return;",',
-  '  "    }",',
-  '  "",',
-  '].join("\\n");',
-  'v8 = mustReplace(v8, rawRouteMarker, rawRoute + rawRouteMarker, "raw source route");',
-  '',
-].join("\n");
-
 source = source
   .replace(combinedMarker, dbRetryPatch + combinedMarker)
-  .replace(v8Marker, mediaRetryPatch + resetJobPatch + rawSourcePatch + v8Marker)
+  .replace(v8Marker, mediaRetryPatch + resetJobPatch + v8Marker)
   .replaceAll("kpoparkive-namu-chrome-capture-helper-v10", "kpoparkive-namu-chrome-capture-helper-v11")
   .replaceAll("helper v10 (global Namu document registry + crawl policy)", "helper v11 (global registry + crawl policy + raw source + transient outage backoff)")
   .replaceAll("helper v10 (global Namu document registry)", "helper v11 (global registry + transient outage backoff)");
