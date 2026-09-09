@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Resumable NamuWiki cluster import plus normal-Chrome edit-source capture for canonical NamuMark experiments.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
@@ -24,7 +24,12 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://namu.wiki/edit/*", "https://www.namu.wiki/edit/*"],
+      "matches": [
+        "https://namu.wiki/edit/*",
+        "https://www.namu.wiki/edit/*",
+        "https://namu.wiki/new_edit_request/*",
+        "https://www.namu.wiki/new_edit_request/*"
+      ],
       "js": ["edit-source.js"],
       "run_at": "document_idle"
     }
