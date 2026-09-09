@@ -7,13 +7,14 @@
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v1",
+  version: "modern-namu-compat-v2",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
   commentContinuationLinesRemoved: 0,
   multilineWikiHeaderLinesJoined: 0,
   multilineIfHeaderLinesJoined: 0,
+  fileLinkTargetsNormalized: 0,
   charsBefore: 0,
   charsAfter: 0,
   changedDocuments: [],
@@ -21,6 +22,28 @@ const compatibilityStats = {
 
 function normalizeNewlines(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n");
+}
+
+function normalizeWikiTitleFragment(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+// The Tree performs exact title comparisons after its DB lookup. Current
+// NamuWiki sources frequently contain NBSP or decomposed Hangul inside file
+// targets, while the captured asset registry is canonicalized. Normalize only
+// the FILE TARGET, not prose, so visible non-breaking spaces stay untouched.
+function normalizeFileLinkTargets(source, local) {
+  return source.replace(/\[\[((?:파일|File):)([^\]|]+)(?=[\]|])/gi, (full, prefix, target) => {
+    const normalized = normalizeWikiTitleFragment(target);
+    if (!normalized || normalized === target) return full;
+    local.fileLinkTargetsNormalized += 1;
+    return `[[${prefix}${normalized}`;
+  });
 }
 
 function startsStructuralSyntax(line) {
@@ -152,9 +175,11 @@ function applyCompatibility(raw, title) {
     commentContinuationLinesRemoved: 0,
     multilineWikiHeaderLinesJoined: 0,
     multilineIfHeaderLinesJoined: 0,
+    fileLinkTargetsNormalized: 0,
   };
 
-  let lines = source.split("\n");
+  const titleNormalizedSource = normalizeFileLinkTargets(source, local);
+  let lines = titleNormalizedSource.split("\n");
   lines = stripModernCommentBlocks(lines, local);
   lines = joinMultilineDirectiveHeaders(lines, local);
   const result = lines.join("\n");
