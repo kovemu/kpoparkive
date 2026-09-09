@@ -23,6 +23,7 @@ type DocRow = {
 };
 
 type AssetRow = {
+  id: string;
   asset_type: string;
   source_ref: string;
   label: string | null;
@@ -40,6 +41,17 @@ async function db<T>(path: string): Promise<T> {
   });
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   return response.json() as Promise<T>;
+}
+
+async function dbAll<T>(path: string, pageSize = 1000, maxRows = 10000): Promise<T[]> {
+  const rows: T[] = [];
+  const separator = path.includes("?") ? "&" : "?";
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const batch = await db<T[]>(`${path}${separator}limit=${pageSize}&offset=${offset}`);
+    rows.push(...batch);
+    if (batch.length < pageSize) return rows;
+  }
+  throw new Error(`Supabase pagination reached ${maxRows} rows for ${path}`);
 }
 
 function normalizeWikiKey(value: string) {
@@ -106,9 +118,9 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
   const source = docs[0];
   if (!source) notFound();
 
-  const assetRows = await db<AssetRow[]>(
+  const assetRows = await dbAll<AssetRow>(
     `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image` +
-      `&select=asset_type,source_ref,label,status,resolved_url,storage_path,metadata&limit=5000`,
+      `&select=id,asset_type,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
   );
 
   const assets: Record<string, string> = {};
@@ -180,6 +192,7 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
             renderedAt: source.source_namumark_rendered_at,
             requiredFiles,
             missingFiles,
+            assetRowsLoaded: assetRows.length,
             capturedAssets: Object.keys(hydratedAssets).length,
             meta,
           }, null, 2)}</pre>
