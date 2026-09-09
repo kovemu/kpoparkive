@@ -1,13 +1,14 @@
-// Renderer-only compatibility shim for current NamuWiki source syntax.
+// Renderer compatibility layer for current NamuWiki source syntax.
 //
-// Important: this NEVER mutates source_wikitext in Supabase. It intercepts the
-// raw document rows loaded by namumark-thetree-poc.mjs, normalizes only the
-// renderer input, then annotates the saved render metadata with diagnostics.
-// The underlying The Tree engine remains pinned/unmodified.
+// Canonical source_wikitext is never mutated. This wrapper normalizes only
+// renderer input and asks namumark-thetree-poc.mjs to patch the locally cloned
+// The Tree cache at runtime. No modified The Tree source is stored in this repo.
+
+process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSET || "modern-namu-v1";
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v2",
+  version: "modern-namu-compat-v3",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -33,10 +34,6 @@ function normalizeWikiTitleFragment(value) {
     .trim();
 }
 
-// The Tree performs exact title comparisons after its DB lookup. Current
-// NamuWiki sources frequently contain NBSP or decomposed Hangul inside file
-// targets, while the captured asset registry is canonicalized. Normalize only
-// the FILE TARGET, not prose, so visible non-breaking spaces stay untouched.
 function normalizeFileLinkTargets(source, local) {
   return source.replace(/\[\[((?:파일|File):)([^\]|]+)(?=[\]|])/gi, (full, prefix, target) => {
     const normalized = normalizeWikiTitleFragment(target);
@@ -144,7 +141,7 @@ function joinMultilineDirectiveHeaders(lines, local) {
   const output = [];
   for (let i = 0; i < lines.length; i += 1) {
     let line = lines[i];
-    let mode = wikiHeaderNeedsJoin(line) ? "wiki" : ifHeaderNeedsJoin(line) ? "if" : null;
+    const mode = wikiHeaderNeedsJoin(line) ? "wiki" : ifHeaderNeedsJoin(line) ? "if" : null;
     if (!mode) {
       output.push(line);
       continue;
@@ -152,8 +149,6 @@ function joinMultilineDirectiveHeaders(lines, local) {
 
     while (i + 1 < lines.length) {
       const next = lines[i + 1];
-      // A structural boundary means the opening directive really ended here;
-      // don't accidentally absorb normal NamuMark content.
       if (startsStructuralSyntax(next) && !/^\s*[#@]/.test(next)) break;
       line += next;
       i += 1;
@@ -253,7 +248,8 @@ globalThis.fetch = async (input, init = undefined) => {
         ...previousMeta,
         compatibility: {
           ...compatibilityStats,
-          note: "Renderer-input normalization only; canonical source_wikitext was not modified.",
+          enginePatchset: process.env.KPOPARKIVE_THETREE_PATCHSET,
+          note: "Canonical source_wikitext unchanged; renderer input normalized and local cached The Tree patched at runtime.",
         },
       };
       body.source_namumark_engine = "thetree-modern-namu-compat-poc";
