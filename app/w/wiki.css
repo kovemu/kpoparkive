@@ -1,0 +1,39 @@
+.kpoparkiveRawWikiPage {
+  width: min(1032px, calc(100% - 32px));
+  box-sizing: border-box;
+  margin: 24px auto 80px;
+  padding: 24px;
+  background: #fff;
+  color: #212529;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.kpoparkiveRawWikiPage .wiki-content {
+  overflow: hidden;
+}
+
+.kpoparkiveRawWikiMissing {
+  width: min(900px, calc(100% - 32px));
+  margin: 64px auto;
+  padding: 32px;
+  border: 1px solid #d7dde5;
+  background: #fff;
+}
+
+.kpoparkiveRawWikiMissing h1 {
+  margin: 0 0 12px;
+}
+
+.kpoparkiveRawWikiMissing p {
+  margin: 0;
+  color: #667085;
+}
+
+@media (max-width: 760px) {
+  .kpoparkiveRawWikiPage {
+    width: 100%;
+    margin-top: 0;
+    padding: 16px;
+  }
+}
