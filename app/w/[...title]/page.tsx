@@ -16,6 +16,8 @@ type DocRow = {
   source_namumark_html: string | null;
   source_namumark_engine: string | null;
   source_namumark_rendered_at: string | null;
+  content_namumark_html: string | null;
+  content_namumark_rendered_at: string | null;
 };
 
 type AssetRow = {
@@ -155,7 +157,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
 
   const docs = await db<DocRow[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at&limit=1`,
+      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_namumark_html,content_namumark_rendered_at&limit=1`,
   );
   const source = docs[0];
 
@@ -168,7 +170,8 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
     );
   }
 
-  if (!source.source_namumark_html) {
+  const exactHtml = source.content_namumark_html || source.source_namumark_html;
+  if (!exactHtml) {
     return (
       <main className="kpoparkiveRawWikiMissing">
         <h1>{source.source_title}</h1>
@@ -192,7 +195,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
   }
 
   const assets = buildNamuResolvedAssetMap(resolvedRows, hints);
-  const renderedHtml = sanitizeAndHydrate(source.source_namumark_html, assets);
+  const renderedHtml = sanitizeAndHydrate(exactHtml, assets);
 
   return (
     <>
