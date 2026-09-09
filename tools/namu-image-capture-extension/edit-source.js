@@ -26,7 +26,7 @@ function kpopSourceTitleFromPage() {
 
 function kpopRawSignalScore(value) {
   const text = kpopNormalizeEditRaw(value);
-  if (text.length < 200) return 0;
+  if (text.length < 20) return 0;
   let score = 0;
   if (/\[\[[^\]]+\]\]/.test(text)) score += 2;
   if (/^={1,6}[^=\n].*={1,6}$/m.test(text)) score += 2;
@@ -34,6 +34,7 @@ function kpopRawSignalScore(value) {
   if (/\[include\(/i.test(text)) score += 2;
   if (/\{\{\{#!/.test(text)) score += 2;
   if (/\[\[(?:파일|File):/i.test(text)) score += 1;
+  if (/@[ㄱ-힣A-Za-z0-9_]+@/.test(text)) score += 1;
   return score;
 }
 
@@ -80,7 +81,7 @@ function kpopEditorCandidates() {
 
   const push = (source, value) => {
     const raw = kpopNormalizeEditRaw(value);
-    if (raw.length < 200 || seenRaw.has(raw)) return;
+    if (raw.length < 20 || seenRaw.has(raw)) return;
     seenRaw.add(raw);
     const score = kpopRawSignalScore(raw);
     const ratio = expected.chars > 0 ? raw.length / expected.chars : null;
@@ -179,9 +180,12 @@ function kpopExtractEditSource() {
     kpopSetStatus(`Kpoparkive RAW: ${sourceTitle}\nNamuWiki verification detected.\nComplete the verification, then leave this tab open.`, "warn");
   }
 
+  const isTemplate = /^틀:/i.test(sourceTitle);
+  const minChars = isTemplate ? 20 : 200;
+  const minScore = isTemplate ? 1 : 2;
   const ratio = best?.ratio;
   const looksTruncated = Boolean(best && expected.chars > 1000 && Number.isFinite(ratio) && ratio < 0.7);
-  if (!best || best.score < 2 || looksTruncated) {
+  if (!best || best.raw.length < minChars || best.score < minScore || looksTruncated) {
     const candidateInfo = best
       ? `Best candidate: ${best.source}\n${best.raw.length.toLocaleString()} chars · syntax score ${best.score}${expected.chars ? ` · expected ~${expected.chars.toLocaleString()} chars` : ""}`
       : "No editor text candidate detected yet.";
