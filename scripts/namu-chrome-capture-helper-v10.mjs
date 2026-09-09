@@ -108,6 +108,54 @@ combined = mustReplace(
 const statsMarker = "  stats.documentsSaved += 1;";
 combined = mustReplace(combined, statsMarker, "  await syncSourceDocumentLinks(doc.id, internalLinks);\n\n" + statsMarker, "link graph sync");
 
+const oldCleanInternalLinks = String.raw`function cleanInternalLinks(value) {
+  if (!Array.isArray(value)) return [];
+  const output = [];
+  const seen = new Set();
+  for (const item of value) {
+    const title = String(item?.title || item || "").normalize("NFKC").trim();
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    output.push({
+      title,
+      href: String(item?.href || `https://namu.wiki/w/${encodeURIComponent(title)}`).trim(),
+      text: String(item?.text || "").replace(/\s+/g, " ").trim().slice(0, 240),
+    });
+    if (output.length >= 2000) break;
+  }
+  return output;
+}`;
+const newCleanInternalLinks = String.raw`function cleanInternalLinks(value) {
+  if (!Array.isArray(value)) return [];
+  const output = [];
+  const seen = new Set();
+  for (const item of value) {
+    const title = String(item?.title || item || "").normalize("NFKC").trim();
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    const crawlMode = ["expand", "leaf", "skip"].includes(String(item?.crawlMode || "").toLowerCase())
+      ? String(item.crawlMode).toLowerCase()
+      : "";
+    const link = {
+      title,
+      href: String(item?.href || `https://namu.wiki/w/${encodeURIComponent(title)}`).trim(),
+      text: String(item?.text || "").replace(/\s+/g, " ").trim().slice(0, 240),
+    };
+    if (crawlMode) link.crawlMode = crawlMode;
+    if (item?.relation) link.relation = String(item.relation).slice(0, 80);
+    if (item?.section) link.section = String(item.section).slice(0, 80);
+    if (item?.sectionTitle) link.sectionTitle = String(item.sectionTitle).replace(/\s+/g, " ").trim().slice(0, 180);
+    if (item?.context) link.context = String(item.context).replace(/\s+/g, " ").trim().slice(0, 900);
+    if (Number.isFinite(Number(item?.priority))) link.priority = Number(item.priority);
+    if (Number.isFinite(Number(item?.tocOrder))) link.tocOrder = Number(item.tocOrder);
+    if (Number.isFinite(Number(item?.crawlPolicyVersion))) link.crawlPolicyVersion = Number(item.crawlPolicyVersion);
+    output.push(link);
+    if (output.length >= 2000) break;
+  }
+  return output;
+}`;
+combined = mustReplace(combined, oldCleanInternalLinks, newCleanInternalLinks, "preserve crawl relationship metadata");
+
 const tempCombined = path.join(os.tmpdir(), `kpoparkive-namu-combined-v10-${process.pid}.mjs`);
 fs.writeFileSync(tempCombined, combined, "utf8");
 
@@ -160,6 +208,149 @@ const newKnownAssets = String.raw`async function kpopKnownAssetUrls(_rootTitle) 
 }`;
 v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache");
 
+// Crawl policy v1: EXPAND recursively, LEAF capture once, SKIP never visit.
+// The browser classifier is authoritative. The helper fallback only protects
+// old stored link metadata and old persisted queues during the transition.
+v8 = mustReplace(
+  v8,
+  "const KPOP_CLONE_MAX_RETRIES = 2;",
+  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 1;",
+  "crawl policy version",
+);
+
+v8 = mustReplace(
+  v8,
+  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0,',
+  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
+  "crawl policy state",
+);
+
+v8 = mustReplace(
+  v8,
+  "    maxDocs: kpopCloneState.maxDocs,",
+  "    maxDocs: kpopCloneState.maxDocs,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
+  "public crawl policy state",
+);
+
+const oldEnqueueLinks = String.raw`function kpopEnqueueLinks(links, depth) {
+  if (depth > kpopCloneState.maxDepth) return 0;
+  const seen = new Set(kpopCloneState.seenUrls);
+  let added = 0;
+  for (const link of cleanInternalLinks(links)) {
+    if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
+    const url = kpopCleanCloneUrl(link.href);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    kpopCloneState.seenUrls.push(url);
+    kpopCloneState.queue.push({ url, depth, attempts: 0 });
+    added += 1;
+  }
+  return added;
+}`;
+const newEnqueueLinks = String.raw`function kpopFallbackCrawlMode(link) {
+  const explicit = String(link?.crawlMode || "").toLowerCase();
+  if (["expand", "leaf", "skip"].includes(explicit)) return explicit;
+  const title = String(link?.title || "").normalize("NFKC").trim();
+  if (!title) return "skip";
+  if (/^(?:18|19|20|21)\d{2}(?:년)?$/u.test(title)
+    || /^(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?$/u.test(title)
+    || /^(?:3[01]|[12]\d|[1-9])일$/u.test(title)) return "skip";
+  if (/^(?:대한민국|한국|북한|일본|중국|대만|미국|영국|프랑스|독일|캐나다|호주|러시아|태국|필리핀|베트남|인도네시아|말레이시아|싱가포르|홍콩|마카오)$/u.test(title)) return "skip";
+  if (/^(?:K-?POP|J-?POP|C-?POP|R&B|발라드|댄스|힙합|랩|보컬|아이돌|가수|음악|YouTube|유튜브|Instagram|인스타그램|TikTok|틱톡|Spotify|스포티파이|X|Twitter|트위터)$/iu.test(title)) return "skip";
+  if (title.startsWith(kpopCloneState.rootTitle + "/")) return "expand";
+  if (/(?:음악\s*방송\s*직캠|응원법|멤버\s*간\s*케미|디스코그래피|콘텐츠|활동|공연|콘서트|팬미팅|투어|팬덤|굿즈|수상)/i.test(title)) return "expand";
+  return "leaf";
+}
+
+function kpopEnqueueLinks(links, depth) {
+  if (depth > kpopCloneState.maxDepth) return 0;
+  const seen = new Set(kpopCloneState.seenUrls);
+  let added = 0;
+  for (const link of cleanInternalLinks(links)) {
+    if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
+    const mode = kpopFallbackCrawlMode(link);
+    if (mode === "skip") continue;
+    const url = kpopCleanCloneUrl(link.href);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    kpopCloneState.seenUrls.push(url);
+    kpopCloneState.queue.push({
+      url,
+      depth,
+      attempts: 0,
+      mode,
+      forceCapture: Boolean(kpopCloneState.policyRefresh && mode === "expand"),
+    });
+    added += 1;
+  }
+  return added;
+}`;
+v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue policy");
+
+v8 = mustReplace(
+  v8,
+  "  const now = new Date().toISOString();\n  kpopCloneState = {",
+  "  const now = new Date().toISOString();\n  const policyRefresh = Number(kpopCloneState.policyVersion || 0) !== KPOP_CRAWL_POLICY_VERSION;\n  kpopCloneState = {",
+  "policy refresh decision on new job",
+);
+
+v8 = mustReplace(
+  v8,
+  "    maxDepth, maxDocs, queue: [{ url: rootUrl, depth: 0, attempts: 0 }], seenUrls: [rootUrl],",
+  "    maxDepth, maxDocs, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: policyRefresh }], seenUrls: [rootUrl],",
+  "root queue policy",
+);
+
+v8 = mustReplace(
+  v8,
+  "      leaseId: crypto.randomUUID(), url: item.url, depth: item.depth, attempts,",
+  "      leaseId: crypto.randomUUID(), url: item.url, depth: item.depth, attempts, mode: item.mode || \"expand\", forceCapture: Boolean(item.forceCapture),",
+  "lease crawl mode",
+);
+
+v8 = mustReplace(
+  v8,
+  "      kpopCloneState.queue.unshift({ url: lease.url, depth: lease.depth, attempts: lease.attempts });",
+  "      kpopCloneState.queue.unshift({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", forceCapture: Boolean(lease.forceCapture) });",
+  "expired lease crawl mode",
+);
+
+v8 = mustReplace(
+  v8,
+  "    kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts });",
+  "    kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", forceCapture: Boolean(lease.forceCapture) });",
+  "failed lease crawl mode",
+);
+
+const resumeMarker = String.raw`if (kpopCloneState.status === "running") {
+  kpopReleaseExpiredLeases();`;
+const policyResume = String.raw`if (kpopCloneState.status === "running" && Number(kpopCloneState.policyVersion || 0) !== KPOP_CRAWL_POLICY_VERSION) {
+  const rootUrl = kpopCloneState.rootUrl;
+  console.log("CRAWL POLICY CHANGED -> rebuilding pending queue from root (v" + KPOP_CRAWL_POLICY_VERSION + ")");
+  kpopCloneState = {
+    ...kpopCloneState,
+    policyVersion: KPOP_CRAWL_POLICY_VERSION,
+    policyRefresh: true,
+    status: "running",
+    queue: rootUrl ? [{ url: rootUrl, depth: 0, attempts: 0, mode: "expand", forceCapture: true }] : [],
+    leases: [],
+    seenUrls: rootUrl ? [rootUrl] : [],
+    completedUrls: [],
+    completedTitles: [],
+    processed: 0,
+    captured: 0,
+    skipped: 0,
+    failed: 0,
+    errors: ["crawl policy updated; old pending queue discarded"],
+    finishedAt: null,
+  };
+  kpopSaveCloneState();
+}
+
+if (kpopCloneState.status === "running") {
+  kpopReleaseExpiredLeases();`;
+v8 = mustReplace(v8, resumeMarker, policyResume, "discard stale queue on crawl policy change");
+
 const finalizeBefore = "  if (kpopCloneState.processed >= kpopCloneState.maxDocs || (!kpopCloneState.queue.length && !kpopCloneState.leases.length)) {";
 const finalizeAfter = "  if (kpopClaimInFlight === 0 && (kpopCloneState.processed >= kpopCloneState.maxDocs || (!kpopCloneState.queue.length && !kpopCloneState.leases.length))) {";
 v8 = mustReplace(v8, finalizeBefore, finalizeAfter, "claim race finalizer guard");
@@ -190,7 +381,7 @@ const oldSkip = String.raw`    if (existing?.source_browser_captured_at && exist
       kpopCloneState.processed += 1;`;
 const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_browser_captured_at || "");
     const capturedAfterAdFilter = Number.isFinite(capturedAtMs) && capturedAtMs >= Date.parse("2026-09-08T16:30:00Z");
-    if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter) {
+    if (!item.forceCapture && existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter) {
       if (existing?.id) {
         const membership = await db(
           "source_document_clusters?root_title=eq." + encodeURIComponent(kpopCloneState.rootTitle) +
@@ -210,13 +401,20 @@ const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_
         }
       }
       kpopCloneState.processed += 1;`;
-v8 = mustReplace(v8, oldSkip, newSkip, "global reuse membership + ad refresh");
+v8 = mustReplace(v8, oldSkip, newSkip, "global reuse membership + ad refresh + policy refresh");
+
+v8 = mustReplace(
+  v8,
+  "      if (item.depth < kpopCloneState.maxDepth) kpopEnqueueLinks(existing.discovered_links || [], item.depth + 1);",
+  "      if ((item.mode || \"expand\") !== \"leaf\" && item.depth < kpopCloneState.maxDepth) kpopEnqueueLinks(existing.discovered_links || [], item.depth + 1);",
+  "leaf documents stop on reuse",
+);
 
 v8 = v8
   .replace('service: "kpoparkive-namu-chrome-capture-helper-v8"', 'service: "kpoparkive-namu-chrome-capture-helper-v10"')
   .replace(
     'Kpoparkive Namu Chrome capture helper v8 (persistent helper-owned clone queue)',
-    'Kpoparkive Namu Chrome capture helper v10 (global Namu document registry)',
+    'Kpoparkive Namu Chrome capture helper v10 (global Namu document registry + crawl policy)',
   );
 
 const tempV8 = path.join(os.tmpdir(), `kpoparkive-namu-v8-global-v10-${process.pid}.mjs`);
