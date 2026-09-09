@@ -10,6 +10,7 @@ const THETREE_REPO = "https://github.com/wjdgustn/thetree.git";
 const THETREE_COMMIT = "7435e93e4d695e666aee5eddbabf68533f7b7b21";
 const ENGINE_NAME = "thetree-unmodified-render-poc";
 const CACHE_DIR = path.resolve(ROOT_DIR, ".cache", "thetree-render-poc");
+const ENGINE_PATCHSET = String(process.env.KPOPARKIVE_THETREE_PATCHSET || "").trim();
 const title = decodeURIComponent(process.argv[2] || "RESCENE").normalize("NFKC").trim();
 
 function loadEnv(filePath) {
@@ -50,6 +51,37 @@ function run(command, args, cwd = ROOT_DIR) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
 }
 
+function patchEngineFile(relativePath, before, after, label) {
+  const filePath = path.join(CACHE_DIR, relativePath);
+  const source = fs.readFileSync(filePath, "utf8");
+  if (source.includes(after)) return label;
+  if (!source.includes(before)) throw new Error(`The Tree patch target changed: ${label} (${relativePath})`);
+  fs.writeFileSync(filePath, source.replace(before, after), "utf8");
+  return label;
+}
+
+function applyModernNamuEnginePatches() {
+  if (!ENGINE_PATCHSET) return [];
+  const applied = [];
+
+  applied.push(patchEngineFile(
+    "utils/namumark/utils/index.js",
+    `if(![\n                            'table',\n                            'tbody',\n                            'tr',\n                            'td'\n                        ].includes(node.name))`,
+    `if(![\n                            'a',\n                            'div',\n                            'span',\n                            'p',\n                            'strong',\n                            'em',\n                            'img',\n                            'details',\n                            'summary',\n                            'ul',\n                            'ol',\n                            'li',\n                            'table',\n                            'thead',\n                            'tbody',\n                            'tfoot',\n                            'tr',\n                            'th',\n                            'td'\n                        ].includes(node.name))`,
+    "preserve safe type-qualified template CSS selectors",
+  ));
+
+  applied.push(patchEngineFile(
+    "utils/namumark/syntax/table.js",
+    "const tagStr = paramStr.slice(1, closeIndex);",
+    `const tagStr = paramStr.slice(1, closeIndex)\n                    .replace(/\\u00a0/g, ' ')\n                    .replace(/=\\s+/g, '=')\n                    .replace(/,\\s+/g, ',')\n                    .trim();`,
+    "treat NBSP as whitespace inside table parameter tokens",
+  ));
+
+  console.log(`Applied The Tree patchset ${ENGINE_PATCHSET}: ${applied.join("; ")}`);
+  return applied;
+}
+
 function ensureEngine() {
   fs.mkdirSync(path.dirname(CACHE_DIR), { recursive: true });
   if (!fs.existsSync(path.join(CACHE_DIR, ".git"))) {
@@ -62,6 +94,8 @@ function ensureEngine() {
     console.log("Installing The Tree dependencies in .cache (first run only)...");
     run("npm", ["ci", "--no-audit", "--no-fund"], CACHE_DIR);
   }
+
+  return applyModernNamuEnginePatches();
 }
 
 async function db(pathname, init = {}) {
@@ -169,6 +203,7 @@ function assetName(ref) {
 }
 
 function assetUrl(row) {
+  if (row?.status !== "resolved") return null;
   if (typeof row.resolved_url === "string" && row.resolved_url) return row.resolved_url;
   if (typeof row.metadata?.enrichment_url === "string" && row.metadata.enrichment_url) return row.metadata.enrichment_url;
   return null;
@@ -278,7 +313,7 @@ function hasRenderableFile(virtualWiki, name) {
 }
 
 async function main() {
-  ensureEngine();
+  const enginePatches = ensureEngine();
 
   const rawRows = await dbAll(
     "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null&select=id,source_title,root_title,source_wikitext&order=id.asc",
@@ -369,9 +404,13 @@ async function main() {
   const missingFiles = requiredFiles.filter((file) => !hasRenderableFile(virtualWiki, file));
   const renderedAt = new Date().toISOString();
   const meta = {
-    purpose: "raw-source architecture POC using unmodified The Tree renderer",
+    purpose: ENGINE_PATCHSET
+      ? "raw-source architecture POC using pinned The Tree + Kpoparkive modern-Namu engine patches"
+      : "raw-source architecture POC using unmodified The Tree renderer",
     engineRepo: THETREE_REPO,
     engineCommit: THETREE_COMMIT,
+    enginePatchset: ENGINE_PATCHSET || null,
+    enginePatches,
     rawChars: String(target.source_wikitext).length,
     htmlChars: html.length,
     renderMs: elapsed,
@@ -411,6 +450,7 @@ async function main() {
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
   console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} categories=${meta.categories} headings=${meta.headings}`);
+  if (enginePatches.length) console.log(`engine-patches: ${enginePatches.join(" | ")}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
   console.log(`Frontend baseline: https://kpoparkive.vercel.app/admin/thetree-frontend-poc/${encodeURIComponent(title)}`);
