@@ -6,10 +6,22 @@
   overflow-wrap: break-word;
 }
 
-/* tablealign=center is emitted on the wrapper. The table itself also needs auto margins. */
-.namumarkPocDocument.wiki-content .table-center .wiki-table {
-  margin-left: auto;
-  margin-right: auto;
+/* tablealign=center is emitted on the wrapper. A wrapper without an explicit
+   width otherwise stretches to the full article width, so auto margins alone
+   do not visibly center the 640px YouTube table. Shrink those wrappers to the
+   table width, while preserving explicit widths such as the 700px member/nav tables. */
+.namumarkPocDocument.wiki-content .wiki-table-wrap.table-center {
+  margin: 10px auto !important;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap.table-center:not([style*="width"]) {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap.table-center .wiki-table {
+  margin-left: auto !important;
+  margin-right: auto !important;
 }
 
 .namumarkPocDocument.wiki-content .wiki-media {
@@ -17,23 +29,28 @@
   max-width: 100%;
 }
 
-/* Current The Tree footnotes are sibling spans; force one block per note and allow wrapping. */
+/* Current The Tree footnotes are sibling spans. They must be block-level,
+   otherwise [1]..[5] flow as one long inline sentence at the bottom. */
 .namumarkPocDocument.wiki-content .wiki-macro-footnote {
+  display: block !important;
+  width: 100%;
   max-width: 100%;
   margin: 1.5em 0;
   padding: .5em 0;
   border-top: 1px solid #777;
-  white-space: normal;
+  white-space: normal !important;
 }
 
+.namumarkPocDocument.wiki-content .wiki-macro-footnote > .footnote-list,
 .namumarkPocDocument.wiki-content .wiki-macro-footnote .footnote-list {
-  display: block;
+  display: block !important;
+  width: 100%;
   max-width: 100%;
-  margin-bottom: .5em;
+  margin: 0 0 .5em;
   line-height: 1.75;
-  white-space: normal;
+  white-space: normal !important;
   overflow-wrap: anywhere;
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .namumarkPocDocument.wiki-content details.wiki-folding > summary {
