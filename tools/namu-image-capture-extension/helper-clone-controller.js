@@ -16,6 +16,17 @@ async function kpopControllerJson(path, init = {}) {
   return body;
 }
 
+function kpopTitleFromDocumentUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!/(^|\.)namu\.wiki$/i.test(url.hostname)) return "";
+    const match = url.pathname.match(/^\/w\/(.+)$/);
+    if (!match) return "";
+    try { return decodeURIComponent(match[1]).normalize("NFKC").trim(); }
+    catch { return match[1].normalize("NFKC").trim(); }
+  } catch { return ""; }
+}
+
 async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
   const existing = tabs.find((tab) => tab.id);
@@ -85,18 +96,12 @@ async function kpopStartHelperClone(options = {}) {
     body: JSON.stringify({ rootTitle, rootUrl: activeTab.url, maxDepth, maxDocs }),
   });
 
-  // A previous helper failure can leave runner.html open but dead. Because the
-  // Import button is disabled while a job is already running, an explicit start
-  // here means it is safe to restart the runner page and create fresh workers.
   await kpopEnsureRunnerTab({ reloadExisting: true });
   kpopRunnerWatch = { processed: Number(result?.job?.processed || 0), since: Date.now(), recovering: false };
   return result.job;
 }
 
 async function kpopResetHelperClone() {
-  // Stop workers first so an in-flight claim cannot immediately repopulate the
-  // queue after reset. The helper reset only clears local job state; Supabase
-  // documents and captured media are intentionally preserved.
   try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
   await kpopCloseRunnerTabs();
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -105,6 +110,79 @@ async function kpopResetHelperClone() {
   kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
   try { await chrome.action.setBadgeText({ text: "" }); } catch {}
   return result.job || null;
+}
+
+async function kpopCaptureEditRawSource(options = {}) {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const sourceTitle = kpopTitleFromDocumentUrl(activeTab?.url || "");
+  if (!activeTab?.url || !sourceTitle) throw new Error("Open the NamuWiki document (/w/...) you want to test first.");
+
+  const rootTitle = String(options.rootTitle || "").normalize("NFKC").trim() || sourceTitle;
+  const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(sourceTitle)}`;
+  const editUrl = `https://namu.wiki/edit/${encodeURIComponent(sourceTitle)}`;
+  const editTab = await chrome.tabs.create({ url: editUrl, active: false });
+  if (!editTab?.id) throw new Error("Could not open the NamuWiki edit page.");
+
+  let extracted = null;
+  let verificationShown = false;
+  const started = Date.now();
+
+  try {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      let tab;
+      try { tab = await chrome.tabs.get(editTab.id); }
+      catch { throw new Error("The NamuWiki edit tab was closed before source capture finished."); }
+
+      if (tab.status === "complete") {
+        try {
+          const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
+          if (result?.ok && result.raw) {
+            extracted = result;
+            break;
+          }
+          if (result?.blocked && !verificationShown) {
+            verificationShown = true;
+            try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+          }
+        } catch {}
+      }
+
+      if (!verificationShown && Date.now() - started > 8000) {
+        verificationShown = true;
+        try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    if (!extracted?.raw) {
+      try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+      throw new Error("Could not read the edit source within 90 seconds. If NamuWiki verification is visible, complete it in the opened edit tab and run Capture Raw Source again.");
+    }
+
+    const saved = await kpopControllerJson("/raw-source", {
+      method: "POST",
+      body: JSON.stringify({
+        rootTitle,
+        sourceTitle,
+        pageUrl: sourcePageUrl,
+        editUrl: extracted.editUrl || editUrl,
+        raw: extracted.raw,
+        extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+        signalScore: Number(extracted.signalScore || 0),
+      }),
+    });
+
+    try { await chrome.tabs.remove(editTab.id); } catch {}
+    return {
+      ...saved,
+      sourceTitle,
+      charCount: Number(extracted.charCount || extracted.raw.length),
+      extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+      previewUrl: `https://kpoparkive.vercel.app/admin/namu-raw-preview/${encodeURIComponent(sourceTitle)}`,
+    };
+  } catch (error) {
+    throw error;
+  }
 }
 
 async function kpopRecoverRunner() {
@@ -120,10 +198,6 @@ async function kpopRecoverRunner() {
       return;
     }
 
-    // If a persisted job has queued work but no active leases, the previous
-    // runner likely died while the helper was stopped or errored. Confirm the
-    // idle state after a short grace period before reloading to avoid racing a
-    // healthy worker between claims.
     if (Number(job.queued || 0) > 0 && Number(job.leased || 0) === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const confirm = await kpopControllerJson("/clone/status");
@@ -163,6 +237,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "kpoparkive-reset-helper-clone") {
     kpopResetHelperClone()
       .then((job) => sendResponse({ ok: true, job }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-capture-edit-raw-source") {
+    kpopCaptureEditRawSource(message.options || {})
+      .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }
