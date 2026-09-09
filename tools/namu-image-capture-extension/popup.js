@@ -1,5 +1,6 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
+const resetButton = document.getElementById("reset");
 const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
 const health = document.getElementById("health");
@@ -110,6 +111,30 @@ cloneButton.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
     cloneButton.disabled = false;
+  }
+});
+
+resetButton.addEventListener("click", async () => {
+  const confirmed = confirm("Reset the current crawler job and clear its queue/progress?\n\nAlready captured Supabase documents and media will be kept.");
+  if (!confirmed) return;
+
+  resetButton.disabled = true;
+  cloneButton.disabled = true;
+  setStatus("Resetting crawler job...\nStopping workers and clearing the local queue.");
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-reset-helper-clone" });
+    if (!response?.ok) throw new Error(response?.error || "Could not reset import job.");
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    setStatus("Job reset complete.\nQueue, leases and progress were cleared.\nCaptured Supabase documents/media were kept.", "ok");
+    cloneButton.disabled = false;
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+  } finally {
+    resetButton.disabled = false;
   }
 });
 
