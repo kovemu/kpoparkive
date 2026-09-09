@@ -176,6 +176,68 @@
   margin: 5px 0 5px 20px;
 }
 
+/* Minimal host styles for unmodified The Tree renderer output. The template's
+   own {{{#!style}}} CSS remains authoritative inside .wiki-content. */
+.namumarkPocDocument.wiki-content .wiki-paragraph {
+  margin: 0 0 0.55em;
+}
+
+.namumarkPocDocument.wiki-content .wiki-heading {
+  margin: 1.35em 0 0.55em;
+  line-height: 1.35;
+}
+
+.namumarkPocDocument.wiki-content .wiki-edit-section {
+  margin-left: 0.55em;
+  font-size: 0.72em;
+  font-weight: 400;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.65em 0;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table {
+  max-width: 100%;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image-wrapper {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image-wrapper > img:not(.wiki-image) {
+  display: none;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.namumarkPocDocument.wiki-content .wiki-macro-toc {
+  display: inline-block;
+  margin: 0.8em 0 1.2em;
+  padding: 0.7em 0.9em;
+  border: 1px solid #d5d9df;
+  border-radius: 4px;
+}
+
+.namumarkPocDocument.wiki-content .toc-indent {
+  padding-left: 1em;
+}
+
+.namumarkPocDocument.wiki-content .toc-item {
+  display: block;
+}
+
+.namumarkPocDocument.wiki-content .wiki-list {
+  padding-left: 1.7em;
+}
+
 @media (max-width: 760px) {
   .namumarkPocShell {
     width: min(100% - 20px, 1180px);
