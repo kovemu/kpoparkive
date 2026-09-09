@@ -35,8 +35,6 @@ function run(command, args, cwd = process.cwd()) {
   let executable = command;
   let finalArgs = args;
 
-  // Node 24 on Windows can throw EINVAL when spawnSync receives a .cmd file
-  // directly. Route npm/npx through the user's normal cmd.exe instead.
   if (process.platform === "win32" && ["npm", "npx"].includes(command)) {
     executable = process.env.ComSpec || "cmd.exe";
     finalArgs = ["/d", "/s", "/c", `${command}.cmd ${args.map(quoteWindowsCmdArg).join(" ")}`];
@@ -63,8 +61,6 @@ function ensureEngine() {
     run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], CACHE_DIR);
   }
 
-  // Compile with the TypeScript already installed by kpoparkive instead of
-  // invoking npx (which is both slower and another Windows .cmd boundary).
   if (!fs.existsSync(ROOT_TSC)) {
     throw new Error(`Kpoparkive TypeScript compiler is missing: ${ROOT_TSC}. Run npm.cmd install once in the project root.`);
   }
@@ -90,19 +86,81 @@ async function db(pathname, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-function includeNames(raw) {
+function includeNames(rawValue) {
+  const raw = String(rawValue || "");
   const names = [];
   const seen = new Set();
-  const regex = /\[include\(\s*([^,\)\]]+)/gi;
-  let match;
-  while ((match = regex.exec(raw)) !== null) {
-    const name = String(match[1] || "").normalize("NFKC").trim();
+  const lower = raw.toLowerCase();
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    const start = lower.indexOf("[include(", cursor);
+    if (start < 0) break;
+
+    let i = start + 9;
+    let depth = 0;
+    let comma = -1;
+    let end = -1;
+    for (; i < raw.length; i += 1) {
+      const ch = raw[i];
+      if (ch === "(") {
+        depth += 1;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth > 0) {
+          depth -= 1;
+          continue;
+        }
+        if (raw[i + 1] === "]") {
+          end = i;
+          break;
+        }
+      }
+      if (ch === "," && depth === 0 && comma < 0) comma = i;
+    }
+
+    if (end < 0) break;
+    const nameEnd = comma >= 0 && comma < end ? comma : end;
+    const name = raw.slice(start + 9, nameEnd).normalize("NFKC").trim();
     if (name && !seen.has(name)) {
       seen.add(name);
       names.push(name);
     }
+    cursor = end + 2;
   }
+
   return names;
+}
+
+function dependencyClosure(rootTitle, rawByTitle, maxNodes = 500) {
+  const queue = [rootTitle];
+  const visited = new Set();
+  const dependencies = new Set();
+  const unresolved = new Set();
+
+  while (queue.length && visited.size < maxNodes) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    const raw = rawByTitle.get(current);
+    if (!raw) continue;
+
+    for (const name of includeNames(raw)) {
+      dependencies.add(name);
+      if (rawByTitle.has(name)) {
+        if (!visited.has(name)) queue.push(name);
+      } else {
+        unresolved.add(name);
+      }
+    }
+  }
+
+  return {
+    dependencies: [...dependencies],
+    unresolved: [...unresolved],
+    visited: [...visited],
+  };
 }
 
 async function main() {
@@ -121,9 +179,9 @@ async function main() {
       data: String(row.source_wikitext),
     })),
   };
-  const available = new Set(database.data.map((item) => item.title));
-  const includes = includeNames(String(target.source_wikitext));
-  const unresolved = includes.filter((name) => !available.has(name));
+  const rawByTitle = new Map(database.data.map((item) => [item.title, item.data]));
+  const directIncludes = includeNames(String(target.source_wikitext));
+  const closure = dependencyClosure(title, rawByTitle);
 
   const started = performance.now();
   const result = new NamuMark(String(target.source_wikitext), {
@@ -148,8 +206,10 @@ async function main() {
     jsChars: js.length,
     renderMs: elapsed,
     availableRawDocuments: database.data.length,
-    includeNames: includes,
-    unresolvedIncludes: unresolved,
+    directIncludeNames: directIncludes,
+    dependencyNames: closure.dependencies,
+    unresolvedIncludes: closure.unresolved,
+    dependencyDocumentsVisited: closure.visited.length,
     renderedAt,
   };
 
@@ -169,8 +229,8 @@ async function main() {
 
   console.log(`NAMUMARK POC SAVED ${title}`);
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} js=${meta.jsChars} render=${elapsed}ms`);
-  console.log(`includes=${includes.length} unresolved=${unresolved.length}`);
-  for (const name of unresolved.slice(0, 30)) console.log(`  unresolved: ${name}`);
+  console.log(`direct-includes=${directIncludes.length} dependencies=${closure.dependencies.length} unresolved=${closure.unresolved.length}`);
+  for (const name of closure.unresolved.slice(0, 40)) console.log(`  unresolved: ${name}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
 }
 
