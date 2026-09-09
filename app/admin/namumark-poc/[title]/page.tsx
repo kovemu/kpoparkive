@@ -59,6 +59,16 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
   }
 
   for (const image of root.querySelectorAll("img")) {
+    const lazySrc = image.getAttribute("data-src") || "";
+    if (/^https?:\/\//i.test(lazySrc)) {
+      image.setAttribute("src", lazySrc);
+      image.removeAttribute("data-src");
+      const className = (image.getAttribute("class") || "").replace(/\bwiki-image-loading\b/g, "").replace(/\s+/g, " ").trim();
+      if (className) image.setAttribute("class", className);
+      else image.removeAttribute("class");
+      continue;
+    }
+
     const src = image.getAttribute("src") || "";
     if (!src.startsWith("/image/")) continue;
     const alt = (image.getAttribute("alt") || "").trim();
@@ -119,7 +129,7 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
         {!renderedHtml ? (
           <section className="namumarkPocEmpty">
             <h2>No engine render yet</h2>
-            <p>Run <code>npm.cmd run namu:engine-poc -- {source.source_title}</code> on the local project, then refresh this page after deployment.</p>
+            <p>Run the selected NamuMark engine POC for <code>{source.source_title}</code>, then refresh this page.</p>
           </section>
         ) : (
           <>
@@ -129,7 +139,7 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
                 <div>{unresolved.slice(0, 60).join(" · ")}{unresolved.length > 60 ? ` · +${unresolved.length - 60} more` : ""}</div>
               </details>
             )}
-            <section className="namumarkPocDocument" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+            <section className="namumarkPocDocument wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
           </>
         )}
 
