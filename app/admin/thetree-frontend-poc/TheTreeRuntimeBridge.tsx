@@ -2,6 +2,39 @@
 
 import { useEffect } from "react";
 
+function isVideoUrl(value: string) {
+  try {
+    const url = new URL(value, window.location.href);
+    return /\.(?:mp4|webm|mov)(?:$|[?#])/i.test(url.pathname + url.search);
+  } catch {
+    return /\.(?:mp4|webm|mov)(?:$|[?#])/i.test(value);
+  }
+}
+
+function hydrateVideoBackedImage(image: HTMLImageElement) {
+  const explicitVideo = image.dataset.videoSrc || "";
+  const src = explicitVideo || image.dataset.src || image.getAttribute("src") || "";
+  if (!src || !isVideoUrl(src)) return false;
+
+  const video = document.createElement("video");
+  video.className = image.className.replace(/\bwiki-image-loading\b/g, "").replace(/\s+/g, " ").trim();
+  video.style.cssText = image.style.cssText;
+  if (image.hasAttribute("width")) video.setAttribute("width", image.getAttribute("width") || "");
+  if (image.hasAttribute("height")) video.setAttribute("height", image.getAttribute("height") || "");
+  const alt = image.getAttribute("alt") || "";
+  if (alt) video.setAttribute("aria-label", alt);
+  video.src = src;
+  video.autoplay = true;
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.setAttribute("disablepictureinpicture", "");
+  image.replaceWith(video);
+  video.play().catch(() => {});
+  return true;
+}
+
 export default function TheTreeRuntimeBridge() {
   useEffect(() => {
     const roots = Array.from(
@@ -50,7 +83,8 @@ export default function TheTreeRuntimeBridge() {
         cleanups.push(() => trigger.removeEventListener("click", handler));
       }
 
-      for (const image of Array.from(root.querySelectorAll<HTMLImageElement>("img[data-src]"))) {
+      for (const image of Array.from(root.querySelectorAll<HTMLImageElement>("img.wiki-image, img[data-src], img[data-video-src]"))) {
+        if (hydrateVideoBackedImage(image)) continue;
         const src = image.dataset.src;
         if (!src) continue;
         image.src = src;
