@@ -1,0 +1,192 @@
+.namumarkPocShell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 80px;
+}
+
+.namumarkPocHeader h1 {
+  margin: 8px 0 10px;
+  font-size: 40px;
+  line-height: 1.1;
+}
+
+.namumarkPocHeader p {
+  margin: 0;
+  color: #667085;
+  line-height: 1.6;
+}
+
+.namumarkPocMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 22px 0;
+}
+
+.namumarkPocMetric {
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.namumarkPocMetric > div {
+  font-size: 12px;
+  color: #667085;
+}
+
+.namumarkPocMetric strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.namumarkPocWarning,
+.namumarkPocDiagnostics,
+.namumarkPocEmpty {
+  border: 1px solid #e5b84d;
+  border-radius: 8px;
+  background: #fff9e8;
+  padding: 14px 16px;
+  margin: 18px 0;
+  line-height: 1.55;
+}
+
+.namumarkPocWarning summary,
+.namumarkPocDiagnostics summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.namumarkPocWarning div {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #7a5a00;
+}
+
+.namumarkPocDiagnostics {
+  border-color: #d7dde5;
+  background: #f8fafc;
+}
+
+.namumarkPocDiagnostics pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.namumarkPocDocument {
+  max-width: 1032px;
+  margin: 24px auto 0;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.namumarkPocDocument video,
+.namumarkPocDocument table,
+.namumarkPocDocument iframe,
+.namumarkPocDocument img,
+.namumarkPocDocument hr,
+.namumarkPocDocument blockquote,
+.namumarkPocDocument pre,
+.namumarkPocDocument .table_safe {
+  max-width: 100%;
+}
+
+.namumarkPocDocument table {
+  border-collapse: collapse;
+}
+
+.namumarkPocDocument td,
+.namumarkPocDocument th {
+  border: 1px solid gainsboro;
+  padding: 8px 10px;
+}
+
+.namumarkPocDocument a {
+  color: #0275d8;
+  text-decoration: none;
+}
+
+.namumarkPocDocument a:hover {
+  text-decoration: underline;
+}
+
+.namumarkPocDocument .opennamu_not_exist_link {
+  color: #d32f2f;
+}
+
+.namumarkPocDocument .opennamu_link_out,
+.namumarkPocDocument .opennamu_link_inter {
+  color: #138a3d;
+}
+
+.namumarkPocDocument .opennamu_TOC {
+  border: 1px solid gainsboro;
+  padding: 18px;
+  width: fit-content;
+  display: inline-block;
+  clear: both;
+  margin: 10px 0 18px;
+}
+
+.namumarkPocDocument .opennamu_TOC_title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.namumarkPocDocument .opennamu_category {
+  border: 1px solid gainsboro;
+  padding: 10px;
+}
+
+.namumarkPocDocument .opennamu_footnote {
+  border-top: 1px solid gainsboro;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.namumarkPocDocument pre {
+  border: 1px solid gainsboro;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.namumarkPocDocument hr {
+  border: 0;
+  border-top: 1px solid gainsboro;
+}
+
+.namumarkPocDocument blockquote {
+  padding: 15px;
+  margin: 15px 0 0;
+  border: 2px solid #ccc;
+  border-left: 5px solid #222;
+}
+
+.namumarkPocDocument .opennamu_ul {
+  padding-left: 20px;
+}
+
+.namumarkPocDocument .opennamu_ul li {
+  margin: 5px 0 5px 20px;
+}
+
+@media (max-width: 760px) {
+  .namumarkPocShell {
+    width: min(100% - 20px, 1180px);
+    padding-top: 18px;
+  }
+
+  .namumarkPocHeader h1 {
+    font-size: 30px;
+  }
+
+  .namumarkPocDocument {
+    overflow-x: auto;
+  }
+}
