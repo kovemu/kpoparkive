@@ -17,6 +17,7 @@ type SourceDocument = {
   content_updated_at: string | null;
   content_updated_by: string | null;
   source_namumark_rendered_at: string | null;
+  content_namumark_html: string | null;
   content_namumark_rendered_at: string | null;
 };
 
@@ -48,7 +49,7 @@ async function db<T>(path: string, init?: RequestInit): Promise<T> {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      `&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,content_revision_no,content_updated_at,content_updated_by,source_namumark_rendered_at,content_namumark_rendered_at&limit=1`,
+      `&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,content_revision_no,content_updated_at,content_updated_by,source_namumark_rendered_at,content_namumark_html,content_namumark_rendered_at&limit=1`,
   );
   return rows[0] || null;
 }
@@ -65,6 +66,16 @@ async function saveRevision(documentId: string, content: string, language: strin
     }),
   });
   return rows[0];
+}
+
+async function setContentStatus(documentId: string, status: "draft" | "published") {
+  const now = new Date().toISOString();
+  await db<unknown>(`source_documents?id=eq.${encodeURIComponent(documentId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ content_status: status, updated_at: now }),
+  });
+  return now;
 }
 
 function errorResponse(error: unknown, status = 500) {
@@ -115,13 +126,15 @@ export async function GET(request: Request) {
         `&select=revision_no,content_language,summary,editor_label,created_at&order=revision_no.desc&limit=50`,
     );
 
+    const { content_namumark_html: _privateRenderedHtml, ...safeDocument } = document;
     return NextResponse.json(
       {
         ok: true,
         document: {
-          ...document,
+          ...safeDocument,
           effective_wikitext: document.content_wikitext ?? document.source_wikitext ?? "",
           has_content_draft: document.content_wikitext !== null,
+          has_exact_content_render: Boolean(document.content_namumark_html && document.content_namumark_rendered_at),
           needs_render: Boolean(document.content_wikitext && !document.content_namumark_rendered_at),
         },
         revisions,
@@ -185,6 +198,21 @@ export async function POST(request: Request) {
       if (!document.source_wikitext) return errorResponse(new Error("Source wikitext is unavailable"), 400);
       const saved = await saveRevision(document.id, document.source_wikitext, "ko", "Reset draft to captured source");
       return NextResponse.json({ ok: true, action: "reset-to-source", ...saved }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    if (body.action === "publish") {
+      if (!document.content_wikitext) return errorResponse(new Error("There is no editable draft to publish"), 400);
+      if (!document.content_namumark_html || !document.content_namumark_rendered_at) {
+        return errorResponse(new Error("Render the latest draft with the exact The Tree renderer before publishing"), 409);
+      }
+      const publishedAt = await setContentStatus(document.id, "published");
+      return NextResponse.json({ ok: true, action: "publish", publishedAt }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    if (body.action === "unpublish") {
+      if (!document.content_wikitext) return errorResponse(new Error("There is no editable content"), 400);
+      const updatedAt = await setContentStatus(document.id, "draft");
+      return NextResponse.json({ ok: true, action: "unpublish", updatedAt }, { headers: { "Cache-Control": "no-store" } });
     }
 
     return errorResponse(new Error("Unsupported action"), 400);
