@@ -13,6 +13,16 @@
   overflow: hidden;
 }
 
+.kpoparkiveRawWikiPage .wiki-image-wrapper > video.wiki-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: inherit;
+}
+
 .kpoparkiveRawWikiMissing {
   width: min(900px, calc(100% - 32px));
   margin: 64px auto;
