@@ -16,6 +16,7 @@ type DocRow = {
   source_namumark_html: string | null;
   source_namumark_engine: string | null;
   source_namumark_rendered_at: string | null;
+  content_status: string;
   content_namumark_html: string | null;
   content_namumark_rendered_at: string | null;
 };
@@ -139,7 +140,6 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
         image.setAttribute("loading", "lazy");
       }
     } else if (lazySrc) {
-      // Do not promote unresolved Namu CDN hints into visible giant placeholders.
       image.removeAttribute("data-src");
     }
   }
@@ -157,7 +157,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
 
   const docs = await db<DocRow[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_namumark_html,content_namumark_rendered_at&limit=1`,
+      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at&limit=1`,
   );
   const source = docs[0];
 
@@ -170,7 +170,8 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
     );
   }
 
-  const exactHtml = source.content_namumark_html || source.source_namumark_html;
+  const publishedContentHtml = source.content_status === "published" ? source.content_namumark_html : null;
+  const exactHtml = publishedContentHtml || source.source_namumark_html;
   if (!exactHtml) {
     return (
       <main className="kpoparkiveRawWikiMissing">
