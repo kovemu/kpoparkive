@@ -12,7 +12,8 @@
     "namu:engine-poc": "node scripts/namumark-engine-poc.mjs",
     "namu:engine-shapelayer": "node scripts/namumark-shapelayer-poc.mjs",
     "namu:engine-thetree": "node --no-node-snapshot scripts/namumark-thetree-poc.mjs",
-    "namu:engine-thetree-compat": "node --no-node-snapshot scripts/namumark-thetree-compat-poc.mjs"
+    "namu:engine-thetree-compat": "node --no-node-snapshot scripts/namumark-thetree-compat-poc.mjs",
+    "namu:engine-thetree-content": "node --no-node-snapshot scripts/namumark-thetree-content.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
