@@ -76,13 +76,17 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
     }
     const href = node.getAttribute("href") || "";
     if (/^javascript:/i.test(href)) node.removeAttribute("href");
-    else if (href.startsWith("/w/")) node.setAttribute("href", `https://namu.wiki${href}`);
+    else if (/^https:\/\/namu\.wiki\/w\//i.test(href)) node.setAttribute("href", href.replace(/^https:\/\/namu\.wiki/i, ""));
+    // Relative /w/* links are Kpoparkive internal links and remain unchanged.
   }
 
   for (const image of root.querySelectorAll("img")) {
-    const lazySrc = image.getAttribute("data-src") || "";
-    if (/^https?:\/\//i.test(lazySrc)) {
-      image.setAttribute("src", lazySrc);
+    const alt = normalizeWikiKey(image.getAttribute("alt") || "");
+    const resolved = alt
+      ? lookup(alt) || lookup(`파일:${alt}`) || lookup(fileKey(alt))
+      : undefined;
+    if (resolved) {
+      image.setAttribute("src", resolved);
       image.removeAttribute("data-src");
       const className = (image.getAttribute("class") || "").replace(/\bwiki-image-loading\b/g, "").replace(/\s+/g, " ").trim();
       if (className) image.setAttribute("class", className);
@@ -90,10 +94,13 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
       continue;
     }
 
-    const alt = normalizeWikiKey(image.getAttribute("alt") || "");
-    if (!alt) continue;
-    const resolved = lookup(alt) || lookup(`파일:${alt}`) || lookup(fileKey(alt));
-    if (resolved) image.setAttribute("src", resolved);
+    const lazySrc = image.getAttribute("data-src") || "";
+    if (lazySrc.startsWith(`${SUPABASE_URL}/storage/`)) {
+      image.setAttribute("src", lazySrc);
+      image.removeAttribute("data-src");
+    } else if (lazySrc) {
+      image.removeAttribute("data-src");
+    }
   }
 
   return root.querySelector("#kpop-namumark-poc-root")?.innerHTML || "";
@@ -117,14 +124,15 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
     `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image` +
       `&select=id,asset_type,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
   );
+  const resolvedRows = assetRows.filter((row) => row.status === "resolved");
   const assets: Record<string, string> = {};
-  for (const row of assetRows) {
+  for (const row of resolvedRows) {
     const url = row.resolved_url || (typeof row.metadata?.enrichment_url === "string" ? row.metadata.enrichment_url : null);
     if (!url) continue;
     assets[fileKey(row.source_ref)] = url;
     if (row.label) assets[fileKey(row.label)] = url;
   }
-  const hydratedAssets = buildNamuResolvedAssetMap(assetRows, assets);
+  const hydratedAssets = buildNamuResolvedAssetMap(resolvedRows, assets);
   const renderedHtml = source.source_namumark_html ? sanitizeAndHydrate(source.source_namumark_html, hydratedAssets) : "";
   const meta = source.source_namumark_meta || {};
   const unresolved = Array.isArray(meta.unresolvedIncludes) ? meta.unresolvedIncludes.map(String) : [];
@@ -143,8 +151,9 @@ export default async function NamuMarkPocPage({ params }: { params: Promise<{ ti
           <div>
             <div className="breadcrumbs"><a href="/">Kpoparkive</a> › NamuMark engine POC › {source.source_title}</div>
             <h1>{source.source_title}</h1>
-            <p>This page renders the captured edit-source NamuMark through an external compatibility engine. It is an architecture experiment, not the production renderer.</p>
-            <p><a href={`/admin/thetree-frontend-poc/${encodeURIComponent(source.source_title)}`}>Open official The Tree frontend baseline →</a></p>
+            <p>This page renders the captured edit-source NamuMark through the current The Tree compatibility path.</p>
+            <p><a href={`/w/${source.source_title.split("/").map(encodeURIComponent).join("/")}`}>Open Kpoparkive /w route →</a></p>
+            <p><a href={`/admin/thetree-frontend-poc/${encodeURIComponent(source.source_title)}`}>Open The Tree frontend baseline →</a></p>
           </div>
         </div>
 
