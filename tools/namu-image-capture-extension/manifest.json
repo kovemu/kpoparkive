@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.6",
-  "description": "Resumable NamuWiki import, canonical raw capture, raw asset resolution and live NamuWiki vs The Tree fidelity comparison.",
+  "version": "0.8.7",
+  "description": "Resumable NamuWiki import, canonical raw capture, raw asset resolution including video-backed GIF files, and live fidelity comparison.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
-      "js": ["ad-filter.js", "content.js", "rendered-dom.js", "rendered-root-guard.js", "links.js", "fidelity-capture.js"],
+      "js": ["ad-filter.js", "content.js", "raw-file-media.js", "rendered-dom.js", "rendered-root-guard.js", "links.js", "fidelity-capture.js"],
       "run_at": "document_idle"
     },
     {
