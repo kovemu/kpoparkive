@@ -87,7 +87,12 @@ const config = {
 };
 
 function normalizeTitle(value) {
-  return String(value || "").normalize("NFKC").trim();
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
 }
 
 function parseDocumentName(value) {
@@ -112,7 +117,7 @@ function stableUuid(value) {
 }
 
 function comparable(value) {
-  return typeof value === "string" ? value.normalize("NFKC").trim() : value;
+  return typeof value === "string" ? normalizeTitle(value) : value;
 }
 
 function equalComparable(left, right) {
@@ -241,11 +246,30 @@ function translation(key) {
   return known[key] || key;
 }
 
+function uniqueNormalizedStrings(values) {
+  const output = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const normalized = normalizeTitle(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(normalized);
+  }
+  return output;
+}
+
+function hasRenderableFile(virtualWiki, name) {
+  const parsed = parseDocumentName(/^파일:/i.test(name) ? name : `파일:${name}`);
+  const doc = virtualWiki.byFullTitle.get(fullTitle(parsed));
+  if (!doc) return false;
+  return virtualWiki.histories.some((rev) => rev.document === doc.uuid && Boolean(rev.fileKey || rev.videoFileKey));
+}
+
 async function main() {
   ensureEngine();
 
   const rawRows = await db("source_documents?source=eq.namu_mirror&source_wikitext=not.is.null&select=id,source_title,root_title,source_wikitext&limit=5000");
-  const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === title);
+  const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
 
   const assetRows = await db(
@@ -327,6 +351,8 @@ async function main() {
   const html = String(result?.html || "");
   if (html.length < 100) throw new Error(`The Tree returned only ${html.length} chars of HTML`);
 
+  const requiredFiles = uniqueNormalizedStrings(Array.isArray(result?.files) ? result.files : []);
+  const missingFiles = requiredFiles.filter((file) => !hasRenderableFile(virtualWiki, file));
   const renderedAt = new Date().toISOString();
   const meta = {
     purpose: "raw-source architecture POC using unmodified The Tree renderer",
@@ -338,7 +364,10 @@ async function main() {
     hasError: Boolean(result?.hasError),
     errorCode: result?.errorCode || null,
     links: Array.isArray(result?.links) ? result.links.length : 0,
-    files: Array.isArray(result?.files) ? result.files.length : 0,
+    files: requiredFiles.length,
+    requiredFiles,
+    missingFiles,
+    missingFileCount: missingFiles.length,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
@@ -366,8 +395,10 @@ async function main() {
   console.log(`THE TREE POC SAVED ${title}`);
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
-  console.log(`links=${meta.links} files=${meta.files} categories=${meta.categories} headings=${meta.headings}`);
+  console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} categories=${meta.categories} headings=${meta.headings}`);
+  if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
+  console.log(`Frontend baseline: https://kpoparkive.vercel.app/admin/thetree-frontend-poc/${encodeURIComponent(title)}`);
 }
 
 main().catch((error) => {
