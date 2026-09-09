@@ -1,0 +1,47 @@
+/* Small fidelity bridge for The Tree HTML in the custom NamuMark POC shell.
+   These are layout semantics from the rendered structure, not template-specific styling. */
+
+.namumarkPocDocument.wiki-content {
+  overflow: hidden;
+  overflow-wrap: break-word;
+}
+
+/* tablealign=center is emitted on the wrapper. The table itself also needs auto margins. */
+.namumarkPocDocument.wiki-content .table-center .wiki-table {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.namumarkPocDocument.wiki-content .wiki-media {
+  display: block;
+  max-width: 100%;
+}
+
+/* Current The Tree footnotes are sibling spans; force one block per note and allow wrapping. */
+.namumarkPocDocument.wiki-content .wiki-macro-footnote {
+  max-width: 100%;
+  margin: 1.5em 0;
+  padding: .5em 0;
+  border-top: 1px solid #777;
+  white-space: normal;
+}
+
+.namumarkPocDocument.wiki-content .wiki-macro-footnote .footnote-list {
+  display: block;
+  max-width: 100%;
+  margin-bottom: .5em;
+  line-height: 1.75;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.namumarkPocDocument.wiki-content details.wiki-folding > summary {
+  list-style: none;
+  user-select: none;
+}
+
+.namumarkPocDocument.wiki-content details.wiki-folding > summary::marker {
+  display: none;
+  content: "";
+}
