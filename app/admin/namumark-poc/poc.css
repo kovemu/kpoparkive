@@ -176,67 +176,195 @@
   margin: 5px 0 5px 20px;
 }
 
-/* Minimal host styles for unmodified The Tree renderer output. The template's
-   own {{{#!style}}} CSS remains authoritative inside .wiki-content. */
+/* Runtime layout semantics needed by unmodified The Tree HTML.
+   The document/template-generated CSS still controls colors and custom classes. */
+.namumarkPocDocument.wiki-content {
+  display: flow-root;
+}
+
 .namumarkPocDocument.wiki-content .wiki-paragraph {
-  margin: 0 0 0.55em;
+  margin: 0 0 1rem;
 }
 
-.namumarkPocDocument.wiki-content .wiki-heading {
-  margin: 1.35em 0 0.55em;
-  line-height: 1.35;
-}
-
-.namumarkPocDocument.wiki-content .wiki-edit-section {
-  margin-left: 0.55em;
-  font-size: 0.72em;
-  font-weight: 400;
+.namumarkPocDocument.wiki-content .wiki-table .wiki-paragraph {
+  margin: 0;
 }
 
 .namumarkPocDocument.wiki-content .wiki-table-wrap {
+  display: block;
   max-width: 100%;
+  margin: 10px 0;
   overflow-x: auto;
-  margin: 0.65em 0;
+  overflow-y: hidden;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap.table-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap.table-right {
+  float: right;
+  margin-left: 20px;
+  margin-bottom: 20px;
 }
 
 .namumarkPocDocument.wiki-content .wiki-table {
   max-width: 100%;
+  border-collapse: collapse;
 }
 
-.namumarkPocDocument.wiki-content .wiki-image-wrapper {
+.namumarkPocDocument.wiki-content .wiki-table td,
+.namumarkPocDocument.wiki-content .wiki-table th {
+  padding: 5px 10px;
+  vertical-align: middle;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table td.wiki-table-nopadding,
+.namumarkPocDocument.wiki-content .wiki-table th.wiki-table-nopadding {
+  padding: 0 !important;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-keepall {
+  word-break: keep-all;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image-align,
+.namumarkPocDocument.wiki-content .wiki-image-align-bottom,
+.namumarkPocDocument.wiki-content .wiki-image-align-center,
+.namumarkPocDocument.wiki-content .wiki-image-align-left,
+.namumarkPocDocument.wiki-content .wiki-image-align-middle,
+.namumarkPocDocument.wiki-content .wiki-image-align-normal,
+.namumarkPocDocument.wiki-content .wiki-image-align-right,
+.namumarkPocDocument.wiki-content .wiki-image-align-top {
   display: inline-block;
   max-width: 100%;
+  font-size: 0;
+  vertical-align: middle;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image-align-center,
+.namumarkPocDocument.wiki-content .wiki-image-align-middle {
+  display: block;
+  text-align: center;
+}
+
+.namumarkPocDocument.wiki-content .wiki-image-align-left { float: left; }
+.namumarkPocDocument.wiki-content .wiki-image-align-right { float: right; }
+.namumarkPocDocument.wiki-content .wiki-image-align-top { vertical-align: top; }
+.namumarkPocDocument.wiki-content .wiki-image-align-bottom { vertical-align: bottom; }
+
+.namumarkPocDocument.wiki-content .wiki-image-wrapper {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0;
+  vertical-align: middle;
 }
 
 .namumarkPocDocument.wiki-content .wiki-image-wrapper > img:not(.wiki-image) {
-  display: none;
-}
-
-.namumarkPocDocument.wiki-content .wiki-image {
   display: block;
   max-width: 100%;
   height: auto;
 }
 
+.namumarkPocDocument.wiki-content .wiki-image-wrapper > img.wiki-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+}
+
+.namumarkPocDocument.wiki-content .wiki-theme-dark {
+  display: none;
+}
+
+.namumarkPocDocument.wiki-content .wiki-self-link {
+  font-weight: 700;
+}
+
+.namumarkPocDocument.wiki-content .wiki-link-external {
+  color: #138a3d;
+}
+
+.namumarkPocDocument.wiki-content .wiki-heading {
+  margin: 1.2em 0 .8em;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #ccd2da;
+  line-height: 1.35;
+}
+
+.namumarkPocDocument.wiki-content h1.wiki-heading { font-size: 2em; }
+.namumarkPocDocument.wiki-content h2.wiki-heading { font-size: 1.8em; }
+.namumarkPocDocument.wiki-content h3.wiki-heading { font-size: 1.6em; }
+.namumarkPocDocument.wiki-content h4.wiki-heading { font-size: 1.4em; }
+.namumarkPocDocument.wiki-content h5.wiki-heading { font-size: 1.2em; }
+.namumarkPocDocument.wiki-content h6.wiki-heading { font-size: 1em; }
+
+.namumarkPocDocument.wiki-content .wiki-edit-section {
+  float: right;
+  margin-left: .55em;
+  font-size: .72em;
+  font-weight: 400;
+}
+
+.namumarkPocDocument.wiki-content .wiki-list {
+  margin: .4em 0 .4em 1.5em;
+  padding-left: .5rem;
+}
+
+.namumarkPocDocument.wiki-content .wiki-list li {
+  margin: .4em 0;
+}
+
+.namumarkPocDocument.wiki-content .wiki-quote {
+  display: table;
+  margin: 1em 0;
+  padding: 1em;
+  background: #f4f5f7;
+  border: 1px dashed #ccd2da;
+  border-left: 5px solid #777;
+}
+
+.namumarkPocDocument.wiki-content .wiki-clearfix {
+  clear: both;
+}
+
 .namumarkPocDocument.wiki-content .wiki-macro-toc {
   display: inline-block;
-  margin: 0.8em 0 1.2em;
-  padding: 0.7em 0.9em;
+  margin: .8em 0 1.2em;
+  padding: .7em .9em;
   border: 1px solid #d5d9df;
   border-radius: 4px;
 }
 
-.namumarkPocDocument.wiki-content .toc-indent {
-  padding-left: 1em;
+.namumarkPocDocument.wiki-content .wiki-macro-toc summary {
+  cursor: pointer;
+  font-size: 1.15em;
+  font-weight: 700;
 }
 
-.namumarkPocDocument.wiki-content .toc-item {
-  display: block;
+.namumarkPocDocument.wiki-content .toc-indent { padding-left: 1em; }
+.namumarkPocDocument.wiki-content .toc-item { display: block; }
+
+.namumarkPocDocument.wiki-content details.wiki-folding > summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
-.namumarkPocDocument.wiki-content .wiki-list {
-  padding-left: 1.7em;
-}
+.namumarkPocDocument.wiki-content .wiki-size-up-1 { font-size: 1.29em; }
+.namumarkPocDocument.wiki-content .wiki-size-up-2 { font-size: 1.39em; }
+.namumarkPocDocument.wiki-content .wiki-size-up-3 { font-size: 1.48em; }
+.namumarkPocDocument.wiki-content .wiki-size-up-4 { font-size: 1.57em; }
+.namumarkPocDocument.wiki-content .wiki-size-up-5 { font-size: 1.67em; }
+.namumarkPocDocument.wiki-content .wiki-size-down-1 { font-size: .93em; }
+.namumarkPocDocument.wiki-content .wiki-size-down-2 { font-size: .83em; }
+.namumarkPocDocument.wiki-content .wiki-size-down-3 { font-size: .74em; }
+.namumarkPocDocument.wiki-content .wiki-size-down-4 { font-size: .65em; }
+.namumarkPocDocument.wiki-content .wiki-size-down-5 { font-size: .62em; }
 
 @media (max-width: 760px) {
   .namumarkPocShell {
