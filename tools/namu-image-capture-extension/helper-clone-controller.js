@@ -73,6 +73,16 @@ function kpopExtractIncludeTitles(rawValue) {
   return output;
 }
 
+function kpopShouldCaptureTemplate(value) {
+  const title = String(value || "").normalize("NFKC").replace(/\u00a0/g, " ").trim();
+  if (!/^틀:/i.test(title)) return false;
+  if (/\/설명문서(?:$|\/)/i.test(title)) return false;
+
+  const body = title.replace(/^틀:/i, "").trim();
+  if (/^(?:설명문서|문서 가져옴|토론 관련 틀|토론 합의(?:\/설명문서)?|분류 설명|분류 참고|한시적 넘겨주기)$/i.test(body)) return false;
+  return true;
+}
+
 async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
   const existing = tabs.find((tab) => tab.id);
@@ -238,7 +248,9 @@ async function kpopCaptureEditRawSource(options = {}) {
   const maxTemplates = Math.max(0, Math.min(80, Number(options.maxTemplates ?? 40) || 0));
 
   const rootCapture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle });
-  const queue = kpopExtractIncludeTitles(rootCapture.raw).map((title) => ({ title, depth: 1 }));
+  const queue = kpopExtractIncludeTitles(rootCapture.raw)
+    .filter(kpopShouldCaptureTemplate)
+    .map((title) => ({ title, depth: 1 }));
   const seen = new Set([sourceTitle]);
   const capturedTemplates = [];
   const templateFailures = [];
@@ -250,17 +262,17 @@ async function kpopCaptureEditRawSource(options = {}) {
     const depth = Math.max(1, Number(item?.depth || 1) || 1);
     if (!title || seen.has(title)) continue;
     seen.add(title);
-    if (!/^틀:/i.test(title)) continue;
+    if (!kpopShouldCaptureTemplate(title)) continue;
 
     try {
       const capture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle: title });
       capturedTemplates.push({ title, depth, charCount: capture.charCount });
 
       if (depth < maxTemplateDepth) {
-        const nested = kpopExtractIncludeTitles(capture.raw);
+        const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
         discoveredTemplates += nested.length;
         for (const nestedTitle of nested) {
-          if (!seen.has(nestedTitle) && /^틀:/i.test(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
+          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
         }
       }
     } catch (error) {
