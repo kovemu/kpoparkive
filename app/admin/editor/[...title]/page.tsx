@@ -26,6 +26,7 @@ type EditorDocument = {
   content_namumark_rendered_at: string | null;
   effective_wikitext: string;
   has_content_draft: boolean;
+  has_exact_content_render: boolean;
   needs_render: boolean;
 };
 
@@ -104,7 +105,10 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
       setLanguage(payload.document.content_language || "ko");
       setSummary("");
       setDirty(false);
-      setStatus(payload.document.needs_render ? "Draft loaded. Exact render is pending." : "Ready.");
+      if (payload.document.needs_render) setStatus("Draft saved. Exact The Tree render is pending.");
+      else if (payload.document.content_status === "published") setStatus("Published revision is live.");
+      else if (payload.document.has_exact_content_render) setStatus("Exact draft render is ready. You can publish it.");
+      else setStatus("Ready.");
     } catch (error) {
       setDocument(null);
       setStatus(error instanceof Error ? error.message : "Failed to load document");
@@ -138,12 +142,42 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Failed to save revision");
       await loadDocument(adminKey, title);
-      setStatus(`Saved as r${result.revision_no}. Exact The Tree render is now pending.`);
+      setStatus(`Saved as r${result.revision_no}. Run the exact content renderer before publishing.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to save revision");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function setPublishState(action: "publish" | "unpublish") {
+    if (!document || !adminKey || busy) return;
+    const verb = action === "publish" ? "Publish" : "Unpublish";
+    if (!window.confirm(`${verb} ${document.source_title}?`)) return;
+    setBusy(true);
+    setStatus(`${verb}ing...`);
+    try {
+      const response = await fetch("/api/admin/wiki-editor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+        body: JSON.stringify({ action, title }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `${verb} failed`);
+      await loadDocument(adminKey, title);
+      setRenderNonce((value) => value + 1);
+      setStatus(action === "publish" ? "Published. /w now serves the editable render." : "Unpublished. /w has returned to the captured source render.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : `${verb} failed`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshState() {
+    if (dirty && !window.confirm("Discard unsaved editor changes and reload the saved revision?")) return;
+    await loadDocument(adminKey, title);
+    setRenderNonce((value) => value + 1);
   }
 
   async function rollback(revisionNo: number) {
@@ -160,7 +194,7 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Rollback failed");
       await loadDocument(adminKey, title);
-      setStatus(`Rollback completed as new revision r${result.revision_no}.`);
+      setStatus(`Rollback completed as new revision r${result.revision_no}. Exact render is pending.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Rollback failed");
     } finally {
@@ -193,7 +227,7 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
 
   async function resetToSource() {
     if (!adminKey || busy) return;
-    if (!window.confirm("Reset the editable draft to the captured Namu source? The source copy itself is never modified.")) return;
+    if (!window.confirm("Reset the editable draft to the captured Namu source? The captured source itself is never modified.")) return;
     setBusy(true);
     setStatus("Resetting draft to captured source...");
     try {
@@ -205,7 +239,7 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Reset failed");
       await loadDocument(adminKey, title);
-      setStatus(`Captured source copied into editable content as r${result.revision_no}.`);
+      setStatus(`Captured source copied into editable content as r${result.revision_no}. Exact render is pending.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Reset failed");
     } finally {
@@ -230,6 +264,7 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
   }
 
   const currentWikiPath = useMemo(() => wikiPath(title), [title]);
+  const canPublish = Boolean(document?.has_content_draft && document.has_exact_content_render && !document.needs_render && !dirty);
 
   if (!adminKey || !document) {
     return (
@@ -272,16 +307,21 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
           </div>
         </div>
         <div className={styles.headerActions}>
-          <a href={currentWikiPath} target="_blank" rel="noreferrer">Open page</a>
-          <button type="button" className={styles.secondaryButton} onClick={() => setRenderNonce((value) => value + 1)}>Refresh render</button>
+          <a href={currentWikiPath} target="_blank" rel="noreferrer">Open public page</a>
+          <button type="button" className={styles.secondaryButton} onClick={() => void refreshState()} disabled={busy}>Refresh state</button>
+          {document.content_status === "published" ? (
+            <button type="button" className={styles.secondaryButton} onClick={() => void setPublishState("unpublish")} disabled={busy || dirty}>Unpublish</button>
+          ) : (
+            <button type="button" onClick={() => void setPublishState("publish")} disabled={busy || !canPublish}>Publish</button>
+          )}
           <button type="button" onClick={() => void save()} disabled={busy || !dirty}>Save revision</button>
         </div>
       </header>
 
       <div className={styles.notice} data-pending={document.needs_render ? "true" : "false"}>
-        <strong>{document.needs_render ? "Render pending" : "Render synced"}</strong>
+        <strong>{document.needs_render ? "Render pending" : document.content_status === "published" ? "Published" : document.has_exact_content_render ? "Ready to publish" : "Source mode"}</strong>
         <span>
-          Captured Namu source is immutable. Editing only changes Kpoparkive content. The right pane shows the last exact The Tree render until the renderer processes the new revision.
+          Captured Namu source is immutable. Saved edits stay private drafts until an exact The Tree render is produced and you press Publish. The right pane is the current public /w page.
         </span>
       </div>
 
@@ -339,10 +379,10 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
 
         <div className={styles.previewPane}>
           <div className={styles.paneTitle}>
-            <strong>Current exact render</strong>
-            <span>{document.needs_render ? "last rendered version" : "synced"}</span>
+            <strong>Current public page</strong>
+            <span>{document.content_status === "published" ? `published r${document.content_revision_no}` : "captured source remains live"}</span>
           </div>
-          <iframe key={renderNonce} title={`${title} current render`} src={`${currentWikiPath}?editorPreview=${renderNonce}`} />
+          <iframe key={renderNonce} title={`${title} current public page`} src={`${currentWikiPath}?editorPreview=${renderNonce}`} />
         </div>
       </section>
 
@@ -352,7 +392,7 @@ export default function WikiEditorPage({ params }: { params: Promise<{ title: st
             <div className={styles.eyebrow}>REVISION HISTORY</div>
             <h2>{revisions.length ? `${revisions.length} saved revisions` : "No editable revisions yet"}</h2>
           </div>
-          <span>Rollback always creates a new revision.</span>
+          <span>Rollback always creates a new revision. Captured source is never overwritten.</span>
         </div>
 
         {revisions.length > 0 && (
