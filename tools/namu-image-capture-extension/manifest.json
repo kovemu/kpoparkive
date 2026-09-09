@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.5",
-  "description": "Resumable NamuWiki import, canonical raw capture and live NamuWiki vs The Tree fidelity comparison.",
+  "version": "0.8.6",
+  "description": "Resumable NamuWiki import, canonical raw capture, raw asset resolution and live NamuWiki vs The Tree fidelity comparison.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
     "https://*.namu.wiki/*",
     "https://*/*",
     "http://127.0.0.1:43117/*",
-    "http://127.0.0.1:43119/*"
+    "http://127.0.0.1:43119/*",
+    "http://127.0.0.1:43120/*"
   ],
   "action": {
     "default_title": "Import NamuWiki cluster",
