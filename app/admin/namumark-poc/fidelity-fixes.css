@@ -29,6 +29,18 @@
   max-width: 100%;
 }
 
+/* NamuWiki may serve an animated [[파일:...gif]] as MP4. RuntimeBridge replaces
+   the The Tree image node with a video element while keeping image geometry. */
+.namumarkPocDocument.wiki-content .wiki-image-wrapper > video.wiki-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: inherit;
+}
+
 /* Current The Tree footnotes are sibling spans. They must be block-level,
    otherwise [1]..[5] flow as one long inline sentence at the bottom. */
 .namumarkPocDocument.wiki-content .wiki-macro-footnote {
