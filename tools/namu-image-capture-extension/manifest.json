@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.4",
-  "description": "Resumable NamuWiki cluster import plus normal-Chrome raw NamuMark dependency capture with template-document filtering.",
+  "version": "0.8.5",
+  "description": "Resumable NamuWiki import, canonical raw capture and live NamuWiki vs The Tree fidelity comparison.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://namu.wiki/*",
     "https://*.namu.wiki/*",
     "https://*/*",
-    "http://127.0.0.1:43117/*"
+    "http://127.0.0.1:43117/*",
+    "http://127.0.0.1:43119/*"
   ],
   "action": {
     "default_title": "Import NamuWiki cluster",
@@ -20,7 +21,12 @@
   "content_scripts": [
     {
       "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
-      "js": ["ad-filter.js", "content.js", "rendered-dom.js", "rendered-root-guard.js", "links.js"],
+      "js": ["ad-filter.js", "content.js", "rendered-dom.js", "rendered-root-guard.js", "links.js", "fidelity-capture.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://kpoparkive.vercel.app/admin/thetree-frontend-poc/*"],
+      "js": ["fidelity-capture.js"],
       "run_at": "document_idle"
     },
     {
