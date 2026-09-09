@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Resumable helper-owned NamuWiki cluster import with member-first crawling, anchored document capture and verified media.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
-      "js": ["ad-filter.js", "content.js", "rendered-dom.js", "links.js"],
+      "js": ["ad-filter.js", "content.js", "rendered-dom.js", "rendered-root-guard.js", "links.js"],
       "run_at": "document_idle"
     }
   ]
