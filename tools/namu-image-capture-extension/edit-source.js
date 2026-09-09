@@ -9,6 +9,21 @@ function kpopNormalizeEditRaw(value) {
     .trim();
 }
 
+function kpopSourceTitleFromPage() {
+  const pathMatch = location.pathname.match(/^\/(?:edit|new_edit_request)\/(.+?)\/?$/i);
+  if (pathMatch?.[1]) return kpopDecodeEditTitle(pathMatch[1]).normalize("NFKC").trim();
+
+  const heading = document.querySelector("h1")?.textContent?.normalize("NFKC").trim() || "";
+  if (heading) {
+    const cleaned = heading
+      .replace(/\s*\((?:편집|편집 요청 편집|편집 요청)\)\s*$/i, "")
+      .trim();
+    if (cleaned && cleaned !== heading) return cleaned;
+  }
+
+  return "";
+}
+
 function kpopRawSignalScore(value) {
   const text = kpopNormalizeEditRaw(value);
   if (text.length < 200) return 0;
@@ -73,8 +88,6 @@ function kpopEditorCandidates() {
   };
 
   for (const { root, label } of kpopCollectSearchRoots()) {
-    let nodes = [];
-
     try {
       for (const textarea of root.querySelectorAll("textarea")) {
         push(`${label}:textarea${textarea.name ? `[name=${textarea.name}]` : ""}`, textarea.value || textarea.textContent || "");
@@ -110,8 +123,9 @@ function kpopEditorCandidates() {
     } catch {}
 
     try {
-      nodes = [...root.querySelectorAll("pre, pre code")];
-      for (const node of nodes) push(`${label}:${node.tagName.toLowerCase()}`, node.innerText || node.textContent || "");
+      for (const node of root.querySelectorAll("pre, pre code")) {
+        push(`${label}:${node.tagName.toLowerCase()}`, node.innerText || node.textContent || "");
+      }
     } catch {}
   }
 
@@ -150,20 +164,19 @@ function kpopSetStatus(text, kind = "wait") {
 }
 
 function kpopExtractEditSource() {
-  const match = location.pathname.match(/^\/edit\/(.+)$/);
-  const sourceTitle = match ? kpopDecodeEditTitle(match[1]).normalize("NFKC").trim() : "";
+  const sourceTitle = kpopSourceTitleFromPage();
   const expected = kpopExpectedEditorStats();
   const candidates = kpopEditorCandidates();
   const best = candidates[0] || null;
   const blocked = /captcha|cloudflare|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i.test(document.body?.innerText || "");
 
   if (!sourceTitle) {
-    kpopSetStatus("Kpoparkive RAW: could not determine the edit document title.", "bad");
-    return { ok: false, error: "Could not determine the NamuWiki edit document title." };
+    kpopSetStatus(`Kpoparkive RAW: could not determine the edit document title.\nPath: ${location.pathname}`, "bad");
+    return { ok: false, error: "Could not determine the NamuWiki edit document title.", pathname: location.pathname };
   }
 
   if (blocked) {
-    kpopSetStatus(`Kpoparkive RAW: NamuWiki verification detected.\nComplete the verification, then leave this tab open.`, "warn");
+    kpopSetStatus(`Kpoparkive RAW: ${sourceTitle}\nNamuWiki verification detected.\nComplete the verification, then leave this tab open.`, "warn");
   }
 
   const ratio = best?.ratio;
@@ -173,7 +186,7 @@ function kpopExtractEditSource() {
       ? `Best candidate: ${best.source}\n${best.raw.length.toLocaleString()} chars · syntax score ${best.score}${expected.chars ? ` · expected ~${expected.chars.toLocaleString()} chars` : ""}`
       : "No editor text candidate detected yet.";
     const reason = looksTruncated ? "Editor text is visible, but only a partial/virtualized slice was detected." : "NamuMark editor source is not ready yet.";
-    if (!blocked) kpopSetStatus(`Kpoparkive RAW: waiting\n${candidateInfo}\n${reason}`, looksTruncated ? "warn" : "wait");
+    if (!blocked) kpopSetStatus(`Kpoparkive RAW: ${sourceTitle} · waiting\n${candidateInfo}\n${reason}`, looksTruncated ? "warn" : "wait");
     return {
       ok: false,
       blocked,
@@ -187,7 +200,7 @@ function kpopExtractEditSource() {
   }
 
   kpopSetStatus(
-    `Kpoparkive RAW: source detected ✓\n${best.raw.length.toLocaleString()} chars · syntax score ${best.score}\nSaving to local helper…`,
+    `Kpoparkive RAW: ${sourceTitle} · source detected ✓\n${best.raw.length.toLocaleString()} chars · syntax score ${best.score}\nSaving to local helper…`,
     "ok",
   );
 
