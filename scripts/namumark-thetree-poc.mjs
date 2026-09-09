@@ -51,12 +51,23 @@ function run(command, args, cwd = ROOT_DIR) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
 }
 
+function whitespaceFlexiblePattern(value) {
+  const parts = String(value).split(/\s+/).filter(Boolean).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(parts.join("\\s+"));
+}
+
 function patchEngineFile(relativePath, before, after, label) {
   const filePath = path.join(CACHE_DIR, relativePath);
   const source = fs.readFileSync(filePath, "utf8");
   if (source.includes(after)) return label;
-  if (!source.includes(before)) throw new Error(`The Tree patch target changed: ${label} (${relativePath})`);
-  fs.writeFileSync(filePath, source.replace(before, after), "utf8");
+  if (source.includes(before)) {
+    fs.writeFileSync(filePath, source.replace(before, after), "utf8");
+    return label;
+  }
+
+  const flexiblePattern = whitespaceFlexiblePattern(before);
+  if (!flexiblePattern.test(source)) throw new Error(`The Tree patch target changed: ${label} (${relativePath})`);
+  fs.writeFileSync(filePath, source.replace(flexiblePattern, after), "utf8");
   return label;
 }
 
