@@ -8,7 +8,7 @@ process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSE
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v4",
+  version: "modern-namu-compat-v5",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -17,6 +17,7 @@ const compatibilityStats = {
   multilineIfHeaderLinesJoined: 0,
   fileLinkTargetsNormalized: 0,
   structuralNbspNormalized: 0,
+  colorWhitespaceNormalized: 0,
   charsBefore: 0,
   charsAfter: 0,
   changedDocuments: [],
@@ -52,14 +53,30 @@ function isSyntaxBearingLine(line) {
   return /(\|\||\{\{\{|\}\}\}|\[\[|\]\]|\[(?:include|Include)\(|#!|<[^>]+>|\[목차\]|\[clearfix\]|\[br\])/i.test(line);
 }
 
+function normalizeModernColorSyntax(line, local) {
+  let normalized = line.replace(/\{\{\{#\s+([0-9A-Za-z])/g, (_full, first) => {
+    local.colorWhitespaceNormalized += 1;
+    return `{{{#${first}`;
+  });
+  normalized = normalized.replace(/,\s*#\s+([0-9A-Za-z])/g, (_full, first) => {
+    local.colorWhitespaceNormalized += 1;
+    return `,#${first}`;
+  });
+  return normalized;
+}
+
 function normalizeStructuralNbsp(source, local) {
   return source
     .split("\n")
     .map((line) => {
-      if (!line.includes("\u00a0") || !isSyntaxBearingLine(line)) return line;
-      const count = (line.match(/\u00a0/g) || []).length;
-      local.structuralNbspNormalized += count;
-      return line.replace(/\u00a0/g, " ");
+      if (!isSyntaxBearingLine(line)) return line;
+      let normalized = line;
+      if (normalized.includes("\u00a0")) {
+        const count = (normalized.match(/\u00a0/g) || []).length;
+        local.structuralNbspNormalized += count;
+        normalized = normalized.replace(/\u00a0/g, " ");
+      }
+      return normalizeModernColorSyntax(normalized, local);
     })
     .join("\n");
 }
@@ -193,6 +210,7 @@ function applyCompatibility(raw, title) {
     multilineIfHeaderLinesJoined: 0,
     fileLinkTargetsNormalized: 0,
     structuralNbspNormalized: 0,
+    colorWhitespaceNormalized: 0,
   };
 
   const whitespaceNormalizedSource = normalizeStructuralNbsp(source, local);
