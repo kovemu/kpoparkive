@@ -1,5 +1,6 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
+const rawButton = document.getElementById("raw");
 const resetButton = document.getElementById("reset");
 const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
@@ -111,6 +112,32 @@ cloneButton.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
     cloneButton.disabled = false;
+  }
+});
+
+rawButton.addEventListener("click", async () => {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  rawButton.disabled = true;
+  setStatus(
+    "Opening the normal NamuWiki edit page...\n" +
+    "The extension will read the editor source and store it as canonical NamuMark.\n" +
+    "If NamuWiki verification appears, complete it in the opened tab."
+  );
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "kpoparkive-capture-edit-raw-source",
+      options: { rootTitle, openPreview: true },
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not capture raw source.");
+    setStatus(
+      `Raw source saved.\nDocument: ${response.sourceTitle || "—"}\nCharacters: ${response.charCount || 0}\nMethod: ${response.extractionMethod || "normal Chrome edit"}\nOpening raw preview...`,
+      "ok",
+    );
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+  } finally {
+    rawButton.disabled = false;
   }
 });
 
