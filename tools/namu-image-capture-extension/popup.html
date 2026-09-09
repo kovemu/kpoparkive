@@ -14,6 +14,7 @@
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     button { width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 6px; background: #6f3cff; color: #fff; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
+    button.raw { background: #111827; }
     button.reset { background: #fff; color: #b00020; border: 1px solid #d7a4ad; }
     #health { margin-top: 9px; font-size: 11px; }
     #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 300px; overflow: auto; }
@@ -24,7 +25,7 @@
 <body>
   <main>
     <h1>Kpoparkive Namu Import</h1>
-    <p>Start once, then close this popup. A pinned background runner handles the resumable queue while you keep using Chrome.</p>
+    <p>Browser Artifact remains available. Raw Source POC opens NamuWiki's normal edit page in Chrome and preserves the original NamuMark for parser comparison.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
     <div class="row">
@@ -43,6 +44,7 @@
       </div>
     </div>
     <button id="clone">Import to Kpoparkive</button>
+    <button id="raw" class="raw">Capture Raw Source (POC)</button>
     <button id="reset" class="reset">Reset Job / Clear Queue</button>
     <div id="health">Checking local helper...</div>
     <div id="status">Ready.</div>
