@@ -111,12 +111,20 @@ function stableUuid(value) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+function comparable(value) {
+  return typeof value === "string" ? value.normalize("NFKC").trim() : value;
+}
+
+function equalComparable(left, right) {
+  return comparable(left) === comparable(right);
+}
+
 function mongoMatch(value, condition) {
   if (condition && typeof condition === "object" && !Array.isArray(condition)) {
-    if (Array.isArray(condition.$in)) return condition.$in.includes(value);
-    if (Object.prototype.hasOwnProperty.call(condition, "$eq")) return value === condition.$eq;
+    if (Array.isArray(condition.$in)) return condition.$in.some((candidate) => equalComparable(value, candidate));
+    if (Object.prototype.hasOwnProperty.call(condition, "$eq")) return equalComparable(value, condition.$eq);
   }
-  return value === condition;
+  return equalComparable(value, condition);
 }
 
 function documentMatches(doc, query) {
