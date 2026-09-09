@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Resumable NamuWiki cluster import plus normal-Chrome edit-source capture for canonical NamuMark experiments.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
