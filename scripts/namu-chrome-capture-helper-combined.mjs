@@ -8,6 +8,7 @@ const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
 const ASSET_WORKER_PORT = PORT + 1;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;
+const MAX_RAW_SOURCE_BYTES = 4 * 1024 * 1024;
 const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
 
 function loadEnvFile(filePath) {
@@ -220,6 +221,43 @@ async function saveRenderedDocument(payload) {
   };
 }
 
+async function saveRawSource(payload) {
+  const rootTitle = String(payload?.rootTitle || payload?.sourceTitle || "").normalize("NFKC").trim();
+  const sourceTitle = String(payload?.sourceTitle || "").normalize("NFKC").trim();
+  const pageUrl = validateNamuPageUrl(payload?.pageUrl);
+  const raw = String(payload?.raw || "").replace(/\r\n?/g, "\n").replace(/^\uFEFF/, "").trim();
+
+  if (!rootTitle || !sourceTitle) throw new Error("raw source capture is missing rootTitle/sourceTitle");
+  const signals = [
+    /\[\[[^\]]+\]\]/,
+    /^={1,6}[^=\n].*={1,6}$/m,
+    /^\|\|/m,
+    /\[include\(/i,
+    /\{\{\{#!/,
+  ].filter((pattern) => pattern.test(raw)).length;
+  if (raw.length < 200 || signals < 2) {
+    throw new Error(`captured edit source does not look like complete NamuMark (${raw.length} chars, ${signals} signals)`);
+  }
+
+  const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
+  const capturedAt = new Date().toISOString();
+  await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      source_wikitext: raw,
+      source_format: "namuwiki_raw",
+      source_extraction_version: "normal-chrome-edit-source-v1",
+      raw_extracted_at: capturedAt,
+      updated_at: capturedAt,
+    }),
+  });
+
+  const bytes = Buffer.byteLength(raw, "utf8");
+  console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
+  return { ok: true, sourceTitle, rootTitle, charCount: raw.length, bytes, capturedAt, sourceFormat: "namuwiki_raw" };
+}
+
 async function clusterDocuments(rootTitle) {
   const title = String(rootTitle || "").normalize("NFKC").trim();
   if (!title) throw new Error("rootTitle is required");
@@ -334,6 +372,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/raw-source") {
+      const bytes = await readBody(req, MAX_RAW_SOURCE_BYTES);
+      let payload;
+      try { payload = JSON.parse(bytes.toString("utf8")); }
+      catch { throw new Error("raw source payload is not valid JSON"); }
+      json(res, 200, await saveRawSource(payload));
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/document") {
       const bytes = await readBody(req, MAX_DOCUMENT_BYTES);
       let payload;
@@ -352,7 +399,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { ok: false, error: "not found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (url.pathname === "/document") stats.documentErrors += 1;
+    if (url.pathname === "/document" || url.pathname === "/raw-source") stats.documentErrors += 1;
     else stats.proxyErrors += 1;
     console.error(`CAPTURE HELPER ERROR: ${message}`);
     json(res, 400, { ok: false, error: message });
