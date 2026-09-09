@@ -1,0 +1,396 @@
+.shell {
+  min-height: 100vh;
+  background: #f7f5fb;
+  color: #18151f;
+  padding: 28px;
+}
+
+.header {
+  max-width: 1600px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.header h1 {
+  margin: 4px 0 8px;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.eyebrow {
+  color: #7656d8;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #6f6979;
+  font-size: 13px;
+}
+
+.metaRow span {
+  background: white;
+  border: 1px solid #e6e0ef;
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
+.headerActions,
+.saveRow,
+.revisionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.headerActions a,
+.headerActions button,
+.saveRow button,
+.revisionActions button,
+.loginCard button {
+  border: 0;
+  border-radius: 10px;
+  background: #6f4bd8;
+  color: white;
+  text-decoration: none;
+  font: inherit;
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.headerActions button:disabled,
+.saveRow button:disabled,
+.revisionActions button:disabled,
+.loginCard button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.secondaryButton {
+  background: white !important;
+  color: #4d4658 !important;
+  border: 1px solid #ddd5e8 !important;
+}
+
+.notice {
+  max-width: 1600px;
+  margin: 0 auto 16px;
+  border: 1px solid #dcd2ef;
+  border-left: 5px solid #7656d8;
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.notice[data-pending="true"] {
+  border-left-color: #d67b28;
+}
+
+.workspace {
+  max-width: 1600px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 720px;
+}
+
+.editorPane,
+.previewPane,
+.historyPanel,
+.loginCard {
+  background: white;
+  border: 1px solid #e3ddeb;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(48, 34, 79, .05);
+}
+
+.editorPane {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.toolbar button {
+  border: 1px solid #ddd5e8;
+  border-radius: 8px;
+  background: #faf8fd;
+  color: #352d42;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.sourceEditor {
+  width: 100%;
+  min-height: 520px;
+  flex: 1;
+  resize: vertical;
+  border: 1px solid #dcd5e5;
+  border-radius: 10px;
+  background: #121016;
+  color: #f4effb;
+  padding: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
+  outline: none;
+}
+
+.sourceEditor:focus {
+  border-color: #8466dd;
+  box-shadow: 0 0 0 3px rgba(132, 102, 221, .12);
+}
+
+.editorFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px 0;
+  color: #716a79;
+  font-size: 12px;
+}
+
+.editorFooter label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editorFooter select,
+.summaryLabel input,
+.loginCard input {
+  border: 1px solid #dcd5e5;
+  border-radius: 8px;
+  background: white;
+  color: #201b27;
+  font: inherit;
+}
+
+.editorFooter select {
+  padding: 5px 8px;
+}
+
+.summaryLabel {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5d5568;
+}
+
+.summaryLabel input {
+  padding: 10px 11px;
+}
+
+.saveRow {
+  margin-top: 10px;
+}
+
+.status {
+  color: #6d6575;
+  font-size: 12px;
+}
+
+.previewPane {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.paneTitle {
+  min-height: 48px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5dfeb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.paneTitle span {
+  color: #81778b;
+  font-size: 12px;
+}
+
+.previewPane iframe {
+  width: 100%;
+  flex: 1;
+  min-height: 650px;
+  border: 0;
+  background: #fff;
+}
+
+.historyPanel {
+  max-width: 1600px;
+  margin: 16px auto 0;
+  padding: 16px;
+}
+
+.historyHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.historyHeader h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.historyHeader > span {
+  color: #807789;
+  font-size: 12px;
+}
+
+.revisionList {
+  display: grid;
+  gap: 8px;
+}
+
+.revisionRow {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #e6e0ec;
+  border-radius: 10px;
+}
+
+.revisionNumber {
+  font-weight: 800;
+  color: #7656d8;
+}
+
+.revisionBody {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.revisionBody strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.revisionBody span {
+  color: #81788a;
+  font-size: 12px;
+}
+
+.loginShell {
+  min-height: 100vh;
+  background: #f7f5fb;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.loginCard {
+  width: min(460px, 100%);
+  padding: 28px;
+}
+
+.loginCard h1 {
+  margin: 4px 0 6px;
+  font-size: 30px;
+}
+
+.loginCard p {
+  color: #746b7d;
+  overflow-wrap: anywhere;
+}
+
+.loginCard label {
+  display: grid;
+  gap: 7px;
+  margin: 20px 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.loginCard input {
+  padding: 11px 12px;
+}
+
+.loginCard .status {
+  margin-top: 12px;
+}
+
+@media (max-width: 1050px) {
+  .shell {
+    padding: 16px;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .previewPane iframe {
+    min-height: 720px;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 10px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .revisionRow {
+    grid-template-columns: 54px 1fr;
+  }
+
+  .revisionActions {
+    grid-column: 1 / -1;
+  }
+
+  .historyHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
