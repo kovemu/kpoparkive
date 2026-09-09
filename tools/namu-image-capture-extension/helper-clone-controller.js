@@ -29,6 +29,13 @@ async function kpopEnsureRunnerTab({ reloadExisting = false } = {}) {
   return chrome.tabs.create({ url: KPOP_RUNNER_URL, active: false, pinned: true });
 }
 
+async function kpopCloseRunnerTabs() {
+  const tabs = await chrome.tabs.query({ url: `${KPOP_RUNNER_URL}*` });
+  const ids = tabs.map((tab) => tab.id).filter(Boolean);
+  if (!ids.length) return;
+  try { await chrome.tabs.remove(ids); } catch {}
+}
+
 async function kpopWatchRunner(job) {
   if (!job?.running || Number(job.queued || 0) <= 0 || Number(job.leased || 0) > 0) {
     kpopRunnerWatch = { processed: Number(job?.processed || 0), since: 0, recovering: false };
@@ -86,6 +93,20 @@ async function kpopStartHelperClone(options = {}) {
   return result.job;
 }
 
+async function kpopResetHelperClone() {
+  // Stop workers first so an in-flight claim cannot immediately repopulate the
+  // queue after reset. The helper reset only clears local job state; Supabase
+  // documents and captured media are intentionally preserved.
+  try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
+  await kpopCloseRunnerTabs();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const result = await kpopControllerJson("/clone/reset", { method: "POST", body: "{}" });
+  kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
+  try { await chrome.action.setBadgeText({ text: "" }); } catch {}
+  return result.job || null;
+}
+
 async function kpopRecoverRunner() {
   try {
     const status = await kpopControllerJson("/clone/status");
@@ -135,6 +156,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "kpoparkive-cancel-helper-clone") {
     kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" })
       .then((result) => sendResponse({ ok: true, job: result.job || null }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-reset-helper-clone") {
+    kpopResetHelperClone()
+      .then((job) => sendResponse({ ok: true, job }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }
