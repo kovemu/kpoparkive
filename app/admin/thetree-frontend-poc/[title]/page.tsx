@@ -67,6 +67,38 @@ function fileKey(ref: string) {
   return normalizeWikiKey(ref).replace(/^(?:파일|File):/i, "");
 }
 
+function isVideoAssetUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return /\.(?:mp4|webm|mov)$/i.test(url.pathname);
+  } catch {
+    return /\.(?:mp4|webm|mov)(?:$|[?#])/i.test(value);
+  }
+}
+
+function hydrateResolvedMedia(image: any, resolved: string) {
+  if (isVideoAssetUrl(resolved)) {
+    image.setAttribute("data-video-src", resolved);
+    image.removeAttribute("data-src");
+    const className = (image.getAttribute("class") || "")
+      .replace(/\bwiki-image-loading\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    image.setAttribute("class", className.includes("wiki-image") ? className : `${className} wiki-image`.trim());
+    return;
+  }
+
+  image.setAttribute("src", resolved);
+  image.removeAttribute("data-src");
+  image.removeAttribute("data-video-src");
+  const className = (image.getAttribute("class") || "")
+    .replace(/\bwiki-image-loading\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (className) image.setAttribute("class", className);
+  else image.removeAttribute("class");
+}
+
 function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
   const root = parse(`<div id="kpop-thetree-baseline-root">${html}</div>`);
   const lookup = createNamuAssetLookup(assets);
@@ -83,23 +115,30 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
   }
 
   for (const image of root.querySelectorAll("img")) {
-    const lazySrc = image.getAttribute("data-src") || "";
-    if (/^https?:\/\//i.test(lazySrc)) {
-      image.setAttribute("src", lazySrc);
-      image.removeAttribute("data-src");
-      const className = (image.getAttribute("class") || "")
-        .replace(/\bwiki-image-loading\b/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (className) image.setAttribute("class", className);
-      else image.removeAttribute("class");
+    const alt = normalizeWikiKey(image.getAttribute("alt") || "");
+    const resolved = alt ? lookup(alt) || lookup(`파일:${alt}`) || lookup(fileKey(alt)) : undefined;
+    if (resolved) {
+      hydrateResolvedMedia(image, resolved);
       continue;
     }
 
-    const alt = normalizeWikiKey(image.getAttribute("alt") || "");
-    if (!alt) continue;
-    const resolved = lookup(alt) || lookup(`파일:${alt}`) || lookup(fileKey(alt));
-    if (resolved) image.setAttribute("src", resolved);
+    const videoSrc = image.getAttribute("data-video-src") || "";
+    if (videoSrc.startsWith(`${SUPABASE_URL}/storage/`)) continue;
+
+    const lazySrc = image.getAttribute("data-src") || "";
+    if (/^https?:\/\//i.test(lazySrc)) {
+      if (isVideoAssetUrl(lazySrc)) hydrateResolvedMedia(image, lazySrc);
+      else {
+        image.setAttribute("src", lazySrc);
+        image.removeAttribute("data-src");
+        const className = (image.getAttribute("class") || "")
+          .replace(/\bwiki-image-loading\b/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (className) image.setAttribute("class", className);
+        else image.removeAttribute("class");
+      }
+    }
   }
 
   return root.querySelector("#kpop-thetree-baseline-root")?.innerHTML || "";
