@@ -11,7 +11,8 @@
     "namu:capture-helper": "node scripts/namu-chrome-capture-helper-v11.mjs",
     "namu:engine-poc": "node scripts/namumark-engine-poc.mjs",
     "namu:engine-shapelayer": "node scripts/namumark-shapelayer-poc.mjs",
-    "namu:engine-thetree": "node --no-node-snapshot scripts/namumark-thetree-poc.mjs"
+    "namu:engine-thetree": "node --no-node-snapshot scripts/namumark-thetree-poc.mjs",
+    "namu:engine-thetree-compat": "node --no-node-snapshot scripts/namumark-thetree-compat-poc.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
