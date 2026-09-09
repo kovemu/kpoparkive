@@ -122,9 +122,35 @@ const mediaRetryPatch = [
   '',
 ].join("\n");
 
+const resetJobPatch = [
+  'const resetFunctionMarker = "function kpopCancelCloneJob() {";',
+  'const resetFunction = [',
+  '  "function kpopResetCloneJob() {",',
+  '  "  kpopCloneState = kpopDefaultCloneState();",',
+  '  "  try { fs.unlinkSync(KPOP_CLONE_STATE_FILE); } catch {}",',
+  '  "  console.log(\\"CLONE JOB RESET: queue/leases/progress cleared; captured DB artifacts kept\\");",',
+  '  "  return kpopPublicCloneState();",',
+  '  "}",',
+  '  "",',
+  '].join("\\n");',
+  'v8 = mustReplace(v8, resetFunctionMarker, resetFunction + resetFunctionMarker, "clone reset function");',
+  'const cancelRouteMarker = [',
+  '  "    if (req.method === \\\"POST\\\" && url.pathname === \\\"/clone/cancel\\\") {",',
+  '].join("\\n");',
+  'const resetRoute = [',
+  '  "    if (req.method === \\\"POST\\\" && url.pathname === \\\"/clone/reset\\\") {",',
+  '  "      json(res, 200, { ok: true, job: kpopResetCloneJob() });",',
+  '  "      return;",',
+  '  "    }",',
+  '  "",',
+  '].join("\\n");',
+  'v8 = mustReplace(v8, cancelRouteMarker, resetRoute + cancelRouteMarker, "clone reset route");',
+  '',
+].join("\n");
+
 source = source
   .replace(combinedMarker, dbRetryPatch + combinedMarker)
-  .replace(v8Marker, mediaRetryPatch + v8Marker)
+  .replace(v8Marker, mediaRetryPatch + resetJobPatch + v8Marker)
   .replaceAll("kpoparkive-namu-chrome-capture-helper-v10", "kpoparkive-namu-chrome-capture-helper-v11")
   .replaceAll("helper v10 (global Namu document registry + crawl policy)", "helper v11 (global registry + crawl policy + transient outage backoff)")
   .replaceAll("helper v10 (global Namu document registry)", "helper v11 (global registry + transient outage backoff)");
