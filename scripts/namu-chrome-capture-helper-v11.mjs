@@ -59,6 +59,7 @@ const dbRetryPatch = [
   '  "}",',
   '].join("\\n");',
   'combined = mustReplace(combined, oldDbWithNoRetry, newDbWithRetry, "Supabase transient outage retry/backoff");',
+  'combined = mustReplace(combined, "const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;", "const MAX_DOCUMENT_BYTES = 128 * 1024 * 1024;", "large browser-artifact payload limit");',
   '',
 ].join("\n");
 
