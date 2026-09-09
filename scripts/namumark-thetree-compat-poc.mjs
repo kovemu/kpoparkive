@@ -8,7 +8,7 @@ process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSE
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v3",
+  version: "modern-namu-compat-v4",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -16,6 +16,7 @@ const compatibilityStats = {
   multilineWikiHeaderLinesJoined: 0,
   multilineIfHeaderLinesJoined: 0,
   fileLinkTargetsNormalized: 0,
+  structuralNbspNormalized: 0,
   charsBefore: 0,
   charsAfter: 0,
   changedDocuments: [],
@@ -41,6 +42,26 @@ function normalizeFileLinkTargets(source, local) {
     local.fileLinkTargetsNormalized += 1;
     return `[[${prefix}${normalized}`;
   });
+}
+
+function isSyntaxBearingLine(line) {
+  // Current NamuWiki edit source frequently uses NBSP around syntax tokens.
+  // The seed treats it as structural whitespace, while the pinned The Tree
+  // parser only recognizes ordinary spaces in several lexers. Keep prose-only
+  // lines untouched and normalize NBSP only on lines that carry wiki syntax.
+  return /(\|\||\{\{\{|\}\}\}|\[\[|\]\]|\[(?:include|Include)\(|#!|<[^>]+>|\[목차\]|\[clearfix\]|\[br\])/i.test(line);
+}
+
+function normalizeStructuralNbsp(source, local) {
+  return source
+    .split("\n")
+    .map((line) => {
+      if (!line.includes("\u00a0") || !isSyntaxBearingLine(line)) return line;
+      const count = (line.match(/\u00a0/g) || []).length;
+      local.structuralNbspNormalized += count;
+      return line.replace(/\u00a0/g, " ");
+    })
+    .join("\n");
 }
 
 function startsStructuralSyntax(line) {
@@ -171,9 +192,11 @@ function applyCompatibility(raw, title) {
     multilineWikiHeaderLinesJoined: 0,
     multilineIfHeaderLinesJoined: 0,
     fileLinkTargetsNormalized: 0,
+    structuralNbspNormalized: 0,
   };
 
-  const titleNormalizedSource = normalizeFileLinkTargets(source, local);
+  const whitespaceNormalizedSource = normalizeStructuralNbsp(source, local);
+  const titleNormalizedSource = normalizeFileLinkTargets(whitespaceNormalizedSource, local);
   let lines = titleNormalizedSource.split("\n");
   lines = stripModernCommentBlocks(lines, local);
   lines = joinMultilineDirectiveHeaders(lines, local);
