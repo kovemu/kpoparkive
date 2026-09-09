@@ -78,7 +78,8 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
     }
     const href = node.getAttribute("href") || "";
     if (/^javascript:/i.test(href)) node.removeAttribute("href");
-    else if (href.startsWith("/w/")) node.setAttribute("href", `https://namu.wiki${href}`);
+    else if (/^https:\/\/namu\.wiki\/w\//i.test(href)) node.setAttribute("href", href.replace(/^https:\/\/namu\.wiki/i, ""));
+    // /w/* links are intentionally kept relative so they resolve to Kpoparkive.
   }
 
   for (const image of root.querySelectorAll("img")) {
@@ -125,6 +126,7 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
 
   const assets: Record<string, string> = {};
   for (const row of assetRows) {
+    if (row.status !== "resolved") continue;
     const url = row.resolved_url || (typeof row.metadata?.enrichment_url === "string" ? row.metadata.enrichment_url : null);
     if (!url) continue;
     assets[fileKey(row.source_ref)] = url;
@@ -147,11 +149,11 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
             <div>Kpoparkive › The Tree official frontend baseline › {source.source_title}</div>
             <h1>{source.source_title}</h1>
             <p>
-              Unmodified The Tree renderer HTML + the official The Tree frontend wiki.css pinned to a known commit.
-              This isolates renderer compatibility from Kpoparkive host CSS.
+              Pinned The Tree renderer + current compatibility patchset + official The Tree frontend wiki.css.
+              Internal wiki links stay inside Kpoparkive under /w/*.
             </p>
           </div>
-          <div className="thetreeBaselineBadge">OFFICIAL FRONTEND BASELINE</div>
+          <div className="thetreeBaselineBadge">THETREE FRONTEND BASELINE</div>
         </div>
 
         <div className="thetreeBaselineMetrics">
@@ -164,14 +166,14 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
         </div>
 
         <div className="thetreeBaselineLinks">
+          <a href={`/w/${source.source_title.split("/").map(encodeURIComponent).join("/")}`}>Kpoparkive wiki route</a>
           <a href={`/admin/namumark-poc/${encodeURIComponent(source.source_title)}`}>Kpoparkive host integration</a>
-          <a href={`/admin/namu-browser-preview/${encodeURIComponent(source.source_title)}`}>Browser Artifact reference</a>
           <a href={`https://namu.wiki/w/${encodeURIComponent(source.source_title)}`}>NamuWiki original</a>
         </div>
 
         <div className="thetreeBaselineNote">
           The stylesheet is referenced from the upstream frontend repository at runtime and is not copied into Kpoparkive.
-          The small client bridge below only reproduces runtime class-toggle behavior needed by template tabs and heading folding.
+          The small client bridge below reproduces runtime class-toggle behavior needed by template tabs and heading folding.
         </div>
 
         {renderedHtml ? (
@@ -180,7 +182,7 @@ export default async function TheTreeFrontendPocPage({ params }: { params: Promi
             <section className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
           </>
         ) : (
-          <div className="thetreeBaselineNote">Run <code>npm.cmd run namu:engine-thetree -- {source.source_title}</code> first.</div>
+          <div className="thetreeBaselineNote">Run <code>npm.cmd run namu:engine-thetree-compat -- {source.source_title}</code> first.</div>
         )}
 
         <details className="thetreeBaselineDiagnostics">
