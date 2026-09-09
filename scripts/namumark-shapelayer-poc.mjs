@@ -89,6 +89,13 @@ function shouldSkipTemplate(value) {
   const name = normalizeTitle(value);
   if (!/^틀:/i.test(name)) return false;
   if (/[\n\r{}]/.test(name) || name.length > 120) return true;
+
+  // NamuWiki template source often appends its own documentation page, e.g.
+  // [include(틀:국기/설명문서)]. That documentation is visible when browsing
+  // the template page itself but must never be inlined into a caller such as
+  // RESCENE. Expanding it was the source of the huge "사용법/파일명" junk.
+  if (/\/설명문서(?:\/.*)?$/i.test(name)) return true;
+
   return /^틀:(?:접근 제한|설명문서|문서 가져옴|토론 관련 틀|토론 합의(?:\/설명문서)?|다른 뜻|분류 설명|분류 참고|한시적 넘겨주기|상위 문서|하위 문서|관련 문서)$/i.test(name);
 }
 
