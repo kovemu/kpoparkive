@@ -75,7 +75,7 @@ function isVideoAssetUrl(value: string) {
   }
 }
 
-function hydrateResolvedMedia(image: ReturnType<typeof parse>["prototype"] extends never ? never : any, resolved: string) {
+function hydrateResolvedMedia(image: any, resolved: string) {
   if (isVideoAssetUrl(resolved)) {
     image.setAttribute("data-video-src", resolved);
     image.removeAttribute("data-src");
