@@ -221,7 +221,7 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
     after = replacementForLink(link, operation.target, operation.label);
   } else if (operation.op === "set-heading") {
     const heading = asHeadingNode(node);
-    after = headingReplacement(node, operation.text, operation.level);
+    after = headingReplacement(heading, operation.text, operation.level);
   } else if (operation.op === "replace-node") {
     if (!editableNodeReplacementAllowed(node.type)) throw badRequest(`Visual node replacement is not allowed for ${node.type} nodes`);
     after = validateEditableNodeReplacement(node.type, node.raw, operation.wikitext);
