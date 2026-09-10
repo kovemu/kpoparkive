@@ -9,41 +9,12 @@
   line-height: 1.5;
 }
 
-.kpoparkiveWikiToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin: -4px 0 18px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #ece9f2;
-  color: #767986;
-  font-size: 12px;
-}
-
-.kpoparkiveWikiToolbar span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.kpoparkiveWikiToolbar a {
-  flex: 0 0 auto;
-  border: 1px solid #d9d1ef;
-  border-radius: 8px;
-  padding: 7px 10px;
-  background: #f8f5ff;
-  color: #6d3df2;
-  font-weight: 800;
-}
-
-.kpoparkiveWikiToolbar a:hover {
-  background: #f0ebff;
-  text-decoration: none;
-}
-
 .kpoparkiveRawWikiPage .wiki-content {
   overflow: hidden;
+}
+
+.kpoparkiveRawWikiPage .wiki-edit-section > a {
+  cursor: pointer;
 }
 
 .kpoparkiveRawWikiPage .wiki-image-wrapper > video.wiki-image {
@@ -54,6 +25,120 @@
   height: 100%;
   max-width: 100%;
   object-fit: inherit;
+}
+
+.kpoparkiveInlineEditToolbar {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 18px;
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #b9a6ef;
+  border-radius: 6px;
+  background: #faf8ff;
+  box-shadow: 0 2px 10px rgba(73, 45, 135, .07);
+}
+
+.kpoparkiveInlineEditTitle {
+  min-width: 0;
+}
+
+.kpoparkiveInlineEditTitle strong {
+  display: block;
+  color: #3d246f;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.kpoparkiveInlineEditTitle span {
+  display: block;
+  margin-top: 3px;
+  color: #74707e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kpoparkiveInlineEditActions {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.kpoparkiveInlineEditActions button {
+  border: 1px solid #cec7da;
+  border-radius: 5px;
+  padding: 6px 11px;
+  background: #fff;
+  color: #423f49;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.kpoparkiveInlineEditActions button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.kpoparkiveInlineEditActions .kpoparkiveInlineSubmit {
+  border-color: #7047d7;
+  background: #7047d7;
+  color: #fff;
+}
+
+.kpoparkiveInlineEditActions .kpoparkiveInlineSubmit:hover:not(:disabled) {
+  background: #6038c5;
+}
+
+.kpoparkiveInlineSummary {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-top: 1px solid #e3ddf0;
+  padding: 8px 2px 1px;
+  outline: 0;
+  background: transparent;
+  color: #38353d;
+  font: inherit;
+  font-size: 12px;
+}
+
+.kpoparkiveInlineSummary::placeholder {
+  color: #aaa6b1;
+}
+
+.kpoparkiveSectionEditing {
+  position: relative;
+}
+
+.kpoparkiveInlineEditableBlock {
+  position: relative;
+  margin-top: 5px !important;
+  margin-bottom: 5px !important;
+  border-radius: 3px;
+  outline: 2px solid rgba(112, 71, 215, .52);
+  outline-offset: 4px;
+  background: rgba(249, 247, 255, .62);
+  caret-color: #5d35c4;
+  cursor: text;
+  transition: outline-color .12s ease, background .12s ease;
+}
+
+.kpoparkiveInlineEditableBlock:hover {
+  outline-color: rgba(112, 71, 215, .75);
+}
+
+.kpoparkiveInlineEditableBlock:focus {
+  outline: 2px solid #7047d7;
+  background: #fff;
+}
+
+.kpoparkiveInlineEditableBlock a {
+  cursor: text;
 }
 
 .kpoparkiveRawWikiMissing {
@@ -80,7 +165,16 @@
     padding: 16px;
   }
 
-  .kpoparkiveWikiToolbar {
-    margin-top: 0;
+  .kpoparkiveInlineEditToolbar {
+    grid-template-columns: 1fr;
+    padding: 10px 11px;
+  }
+
+  .kpoparkiveInlineEditActions {
+    justify-content: flex-end;
+  }
+
+  .kpoparkiveInlineSummary {
+    grid-column: 1;
   }
 }
