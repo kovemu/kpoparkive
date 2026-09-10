@@ -95,10 +95,25 @@ export function createV3TemplateTargets(templates: V3TemplateModel[], tables: V3
   return [...standalone, ...nested];
 }
 
-export function createV3TemplateDrafts(targets: V3TemplateTarget[]): V3TemplateDrafts {
+function asTargets(items: Array<V3TemplateTarget | V3TemplateModel>): V3TemplateTarget[] {
+  return items.map((item) => "key" in item ? item : ({
+    key: `document:${item.nodeId}`,
+    ownerType: "document" as const,
+    ownerNodeId: item.nodeId,
+    callId: null,
+    sectionIndex: item.sectionIndex,
+    name: item.name,
+    paramCount: item.paramCount,
+    editableParamCount: item.editableParamCount,
+    params: item.params,
+  }));
+}
+
+export function createV3TemplateDrafts(items: Array<V3TemplateTarget | V3TemplateModel>): V3TemplateDrafts {
   const drafts: V3TemplateDrafts = {};
-  for (const target of targets) {
+  for (const target of asTargets(items)) {
     drafts[target.key] = Object.fromEntries(target.params.map((param) => [param.id, param.valueRaw]));
+    if (target.ownerType === "document") drafts[target.ownerNodeId] = drafts[target.key];
   }
   return drafts;
 }
@@ -108,7 +123,7 @@ export function collectV3TemplateEdits(targets: V3TemplateTarget[], drafts: V3Te
   const tableParams = new Map<string, V3TableTemplateChange[]>();
 
   for (const target of targets) {
-    const targetDraft = drafts[target.key] || {};
+    const targetDraft = drafts[target.key] || drafts[target.ownerNodeId] || {};
     const changes = target.params
       .filter((param) => param.editable)
       .map((param) => ({ param, proposedValue: targetDraft[param.id] ?? param.valueRaw }))
@@ -137,6 +152,10 @@ export function collectV3TemplateEdits(targets: V3TemplateTarget[], drafts: V3Te
   return { standalone, tableParams };
 }
 
+export function collectV3TemplateOperations(templates: V3TemplateModel[], drafts: V3TemplateDrafts): V3TemplateFieldOperation[] {
+  return collectV3TemplateEdits(createV3TemplateTargets(templates, []), drafts).standalone;
+}
+
 function templateLabel(template: V3TemplateTarget, index: number) {
   const short = template.name.replace(/^틀:/, "");
   const owner = template.ownerType === "table" ? "table" : "page";
@@ -146,7 +165,9 @@ function templateLabel(template: V3TemplateTarget, index: number) {
 export default function VisualEditorV3TemplateInspector({
   open,
   targets,
+  templates,
   selectedKey,
+  selectedNodeId,
   drafts,
   onClose,
   onSelect,
@@ -154,8 +175,10 @@ export default function VisualEditorV3TemplateInspector({
   onRevealSection,
 }: {
   open: boolean;
-  targets: V3TemplateTarget[];
-  selectedKey: string | null;
+  targets?: V3TemplateTarget[];
+  templates?: V3TemplateModel[];
+  selectedKey?: string | null;
+  selectedNodeId?: string | null;
   drafts: V3TemplateDrafts;
   onClose: () => void;
   onSelect: (key: string) => void;
@@ -163,8 +186,10 @@ export default function VisualEditorV3TemplateInspector({
   onRevealSection: (sectionIndex: number) => void;
 }) {
   if (!open) return null;
-  const parameterized = targets.filter((target) => target.paramCount > 0);
-  const selected = parameterized.find((target) => target.key === selectedKey) || parameterized[0] || null;
+  const resolvedTargets = targets || createV3TemplateTargets(templates || [], []);
+  const parameterized = resolvedTargets.filter((target) => target.paramCount > 0);
+  const requested = selectedKey || (selectedNodeId ? `document:${selectedNodeId}` : null);
+  const selected = parameterized.find((target) => target.key === requested || target.ownerNodeId === selectedNodeId) || parameterized[0] || null;
 
   return (
     <aside className="kpoparkiveAstTemplatePanel" aria-label="Template parameter inspector">
@@ -198,7 +223,7 @@ export default function VisualEditorV3TemplateInspector({
 
           <div className="kpoparkiveAstTemplateFields">
             {selected.params.map((param) => {
-              const value = drafts[selected.key]?.[param.id] ?? param.valueRaw;
+              const value = drafts[selected.key]?.[param.id] ?? drafts[selected.ownerNodeId]?.[param.id] ?? param.valueRaw;
               return (
                 <label key={param.id} className={param.editable ? "" : "locked"}>
                   <span className="kpoparkiveAstTemplateFieldName">
