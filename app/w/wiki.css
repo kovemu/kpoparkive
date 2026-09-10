@@ -27,118 +27,211 @@
   object-fit: inherit;
 }
 
-.kpoparkiveInlineEditToolbar {
-  position: relative;
-  z-index: 4;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 18px;
-  margin: 12px 0 16px;
-  padding: 12px 14px;
-  border: 1px solid #b9a6ef;
-  border-radius: 6px;
-  background: #faf8ff;
-  box-shadow: 0 2px 10px rgba(73, 45, 135, .07);
+.kpoparkiveVisualEditorShell {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 10px 0 14px;
+  border: 1px solid #ddd9e8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 7px 28px rgba(39, 27, 66, .12);
+  backdrop-filter: blur(10px);
 }
 
-.kpoparkiveInlineEditTitle {
-  min-width: 0;
-}
-
-.kpoparkiveInlineEditTitle strong {
-  display: block;
-  color: #3d246f;
-  font-size: 14px;
-  line-height: 1.35;
-}
-
-.kpoparkiveInlineEditTitle span {
-  display: block;
-  margin-top: 3px;
-  color: #74707e;
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.kpoparkiveInlineEditActions {
+.kpoparkiveVisualToolbar {
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
+  align-items: center;
+  min-height: 44px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #ece9f2;
+  gap: 2px;
 }
 
-.kpoparkiveInlineEditActions button {
-  border: 1px solid #cec7da;
+.kpoparkiveVisualToolGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 7px;
+  border-right: 1px solid #e4e0eb;
+}
+
+.kpoparkiveVisualToolGroup:first-child {
+  padding-left: 0;
+}
+
+.kpoparkiveVisualTool {
+  min-width: 34px;
+  height: 32px;
+  border: 0;
   border-radius: 5px;
-  padding: 6px 11px;
-  background: #fff;
-  color: #423f49;
+  padding: 0 9px;
+  background: transparent;
+  color: #302b39;
   font: inherit;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 650;
   cursor: pointer;
 }
 
-.kpoparkiveInlineEditActions button:disabled {
+.kpoparkiveVisualTool:hover {
+  background: #f2eff8;
+  color: #5b35bd;
+}
+
+.kpoparkiveVisualToolbarSpacer {
+  flex: 1 1 auto;
+}
+
+.kpoparkiveVisualMode {
+  padding: 0 8px;
+  color: #6c45ca;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+.kpoparkiveVisualMeta {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #faf9fc;
+}
+
+.kpoparkiveVisualMeta > strong {
+  color: #45385e;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kpoparkiveVisualSummary {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e0dce8;
+  border-radius: 5px;
+  padding: 7px 9px;
+  outline: 0;
+  background: #fff;
+  color: #37323f;
+  font: inherit;
+  font-size: 12px;
+}
+
+.kpoparkiveVisualSummary:focus {
+  border-color: #9e82df;
+  box-shadow: 0 0 0 2px rgba(112, 71, 215, .09);
+}
+
+.kpoparkiveVisualActions {
+  display: flex;
+  gap: 6px;
+}
+
+.kpoparkiveVisualActions button {
+  height: 32px;
+  border-radius: 5px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.kpoparkiveVisualActions button:disabled {
   opacity: .55;
   cursor: wait;
 }
 
-.kpoparkiveInlineEditActions .kpoparkiveInlineSubmit {
-  border-color: #7047d7;
+.kpoparkiveVisualCancel {
+  border: 1px solid #d9d4e1;
+  background: #fff;
+  color: #494350;
+}
+
+.kpoparkiveVisualSubmit {
+  border: 1px solid #7047d7;
   background: #7047d7;
   color: #fff;
 }
 
-.kpoparkiveInlineEditActions .kpoparkiveInlineSubmit:hover:not(:disabled) {
+.kpoparkiveVisualSubmit:hover:not(:disabled) {
   background: #6038c5;
-}
-
-.kpoparkiveInlineSummary {
-  grid-column: 1 / -1;
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  border-top: 1px solid #e3ddf0;
-  padding: 8px 2px 1px;
-  outline: 0;
-  background: transparent;
-  color: #38353d;
-  font: inherit;
-  font-size: 12px;
-}
-
-.kpoparkiveInlineSummary::placeholder {
-  color: #aaa6b1;
 }
 
 .kpoparkiveSectionEditing {
   position: relative;
 }
 
-.kpoparkiveInlineEditableBlock {
+.kpoparkiveVisualBlock {
   position: relative;
-  margin-top: 5px !important;
-  margin-bottom: 5px !important;
-  border-radius: 3px;
-  outline: 2px solid rgba(112, 71, 215, .52);
-  outline-offset: 4px;
-  background: rgba(249, 247, 255, .62);
+  margin: 0 !important;
+}
+
+.kpoparkiveVisualSurface {
+  min-height: 1.6em;
+  margin: 0 0 12px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  outline: 0;
+  background: transparent;
   caret-color: #5d35c4;
   cursor: text;
-  transition: outline-color .12s ease, background .12s ease;
+  transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
 }
 
-.kpoparkiveInlineEditableBlock:hover {
-  outline-color: rgba(112, 71, 215, .75);
+.kpoparkiveVisualSurface:hover {
+  border-color: #e7e2ef;
+  background: #fdfcff;
 }
 
-.kpoparkiveInlineEditableBlock:focus {
-  outline: 2px solid #7047d7;
+.kpoparkiveVisualBlock.is-active .kpoparkiveVisualSurface,
+.kpoparkiveVisualSurface:focus {
+  border-color: #a88ce5;
   background: #fff;
+  box-shadow: 0 0 0 2px rgba(112, 71, 215, .09);
 }
 
-.kpoparkiveInlineEditableBlock a {
+.kpoparkiveVisualSurface p {
+  margin: 0 0 .8em;
+}
+
+.kpoparkiveVisualSurface p:last-child {
+  margin-bottom: 0;
+}
+
+.kpoparkiveVisualSurface ul {
+  margin-top: .35em;
+  margin-bottom: .8em;
+}
+
+.kpoparkiveVisualSurface a {
+  color: #0275d8;
+  text-decoration: none;
   cursor: text;
+}
+
+.kpoparkiveVisualSurface a:hover {
+  text-decoration: underline;
+}
+
+.kpoparkiveVisualCitation {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: .08em;
+  margin: 0 2px;
+  border: 1px solid #d8cdef;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: #f5f1ff;
+  color: #6038c5;
+  font-size: .72em;
+  font-weight: 750;
+  line-height: 1.45;
+  user-select: none;
 }
 
 .kpoparkiveRawWikiMissing {
@@ -165,16 +258,27 @@
     padding: 16px;
   }
 
-  .kpoparkiveInlineEditToolbar {
-    grid-template-columns: 1fr;
-    padding: 10px 11px;
+  .kpoparkiveVisualEditorShell {
+    position: relative;
   }
 
-  .kpoparkiveInlineEditActions {
-    justify-content: flex-end;
+  .kpoparkiveVisualToolbar {
+    overflow-x: auto;
   }
 
-  .kpoparkiveInlineSummary {
+  .kpoparkiveVisualMode {
+    display: none;
+  }
+
+  .kpoparkiveVisualMeta {
+    grid-template-columns: 1fr auto;
+  }
+
+  .kpoparkiveVisualMeta > strong {
+    grid-column: 1 / -1;
+  }
+
+  .kpoparkiveVisualSummary {
     grid-column: 1;
   }
 }
