@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { findEasyEditBlock, parseEasyEditSections } from "../../../lib/wikiEasyEdit";
+import { applyWikiInfoboxChanges, parseWikiInfobox } from "../../../lib/wikiInfoboxEdit";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -133,15 +134,30 @@ export async function GET(request: Request) {
       })),
     }));
 
+    const infobox = parseWikiInfobox(source);
+
     return response({
       ok: true,
-      editorVersion: "visual-v1",
+      editorVersion: "visual-v1.1",
       document: {
         title: document.source_title,
         publicRevisionNo: document.content_status === "published" ? document.content_revision_no : 0,
         sourceMode: document.content_status === "published" ? "published" : "captured",
       },
       sections,
+      infobox: infobox ? {
+        key: infobox.key,
+        editableCount: infobox.editableCount,
+        lockedCount: infobox.lockedCount,
+        fields: infobox.fields.map((field) => ({
+          key: field.key,
+          label: field.label,
+          valueWikitext: field.editable ? field.valueWikitext : "",
+          plainText: field.plainText,
+          editable: field.editable,
+          lockedReason: field.lockedReason,
+        })),
+      } : null,
     });
   } catch (error) {
     return errorResponse(error);
@@ -151,10 +167,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as {
+      kind?: "block" | "infobox";
       title?: string;
       blockKey?: string;
       proposedText?: string;
       proposedWikitext?: string;
+      infoboxChanges?: Array<{ key?: string; proposedWikitext?: string }>;
       summary?: string;
       displayName?: string;
       baseRevisionNo?: number;
@@ -164,18 +182,9 @@ export async function POST(request: Request) {
     if (body.website) return response({ ok: true, submitted: true });
 
     const title = normalizeTitle(body.title);
-    const blockKey = (body.blockKey || "").trim();
-    const proposedText = (typeof body.proposedText === "string" ? body.proposedText : "").replace(/\r\n?/g, "\n").trim();
-    const proposedWikitext = normalizeWiki(typeof body.proposedWikitext === "string" ? body.proposedWikitext : proposedText);
     const summary = (body.summary || "").trim().slice(0, 500) || null;
     const displayName = (body.displayName || "").trim().slice(0, 80) || null;
-
-    if (!title || !blockKey) return errorResponse(new Error("title and blockKey are required"), 400);
-    if (!proposedText || !proposedWikitext) return errorResponse(new Error("Suggested content cannot be empty"), 400);
-    if (proposedText.length > MAX_PROPOSAL_CHARS || proposedWikitext.length > MAX_PROPOSAL_CHARS) {
-      return errorResponse(new Error("Suggested content is too long"), 413);
-    }
-    validateVisualWikitext(proposedWikitext);
+    if (!title) return errorResponse(new Error("title is required"), 400);
 
     const hash = submitterHash(request);
     await enforceRateLimit(hash);
@@ -188,6 +197,74 @@ export async function POST(request: Request) {
     if (Number(body.baseRevisionNo || 0) !== publicRevisionNo) {
       return errorResponse(new Error("This page changed while you were editing. Reload the editor and try again."), 409);
     }
+
+    if (body.kind === "infobox") {
+      const changes = (Array.isArray(body.infoboxChanges) ? body.infoboxChanges : [])
+        .map((change) => ({
+          key: String(change?.key || "").trim(),
+          proposedWikitext: normalizeWiki(String(change?.proposedWikitext || "")),
+        }))
+        .filter((change) => change.key && change.proposedWikitext);
+
+      if (!changes.length) return errorResponse(new Error("No infobox changes were supplied"), 400);
+      if (changes.length > 30) return errorResponse(new Error("Too many infobox fields were changed at once"), 400);
+
+      let result: ReturnType<typeof applyWikiInfoboxChanges>;
+      try {
+        result = applyWikiInfoboxChanges(source, changes);
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+
+      const originalPlainText = result.parsed.fields
+        .map((field) => `${field.label}: ${field.plainText}`)
+        .join("\n")
+        .slice(0, MAX_PROPOSAL_CHARS);
+      const proposedPlainText = result.changedFields
+        .map((field) => `${field.label}: ${field.proposed}`)
+        .join("\n")
+        .slice(0, MAX_PROPOSAL_CHARS);
+
+      const inserted = await db<Array<{ id: string; created_at: string }>>("source_edit_proposals", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          source_document_id: document.id,
+          source_title: document.source_title,
+          section_key: "infobox:lead",
+          section_heading: "Infobox",
+          block_index: -1,
+          base_revision_no: publicRevisionNo,
+          original_wikitext: result.parsed.originalWikitext,
+          original_plain_text: originalPlainText,
+          proposed_plain_text: proposedPlainText,
+          proposed_wikitext: result.proposedInfobox,
+          summary,
+          display_name: displayName,
+          submitter_hash: hash,
+          status: "pending",
+        }),
+      });
+
+      return response({
+        ok: true,
+        submitted: true,
+        proposalId: inserted[0]?.id || null,
+        editorVersion: "visual-v1.1",
+        changedFields: result.changedFields.map((field) => field.label),
+      });
+    }
+
+    const blockKey = (body.blockKey || "").trim();
+    const proposedText = (typeof body.proposedText === "string" ? body.proposedText : "").replace(/\r\n?/g, "\n").trim();
+    const proposedWikitext = normalizeWiki(typeof body.proposedWikitext === "string" ? body.proposedWikitext : proposedText);
+
+    if (!blockKey) return errorResponse(new Error("blockKey is required"), 400);
+    if (!proposedText || !proposedWikitext) return errorResponse(new Error("Suggested content cannot be empty"), 400);
+    if (proposedText.length > MAX_PROPOSAL_CHARS || proposedWikitext.length > MAX_PROPOSAL_CHARS) {
+      return errorResponse(new Error("Suggested content is too long"), 413);
+    }
+    validateVisualWikitext(proposedWikitext);
 
     const found = findEasyEditBlock(source, blockKey);
     if (!found) return errorResponse(new Error("Editable block no longer exists"), 409);
@@ -217,7 +294,7 @@ export async function POST(request: Request) {
       }),
     });
 
-    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1" });
+    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1.1" });
   } catch (error) {
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) || 500 : 500;
     return errorResponse(error, status);
