@@ -94,16 +94,31 @@ function contentSpan(cell: CellSpan) {
   let end = cell.end - trailing.length;
   let value = cell.text.slice(optionPrefix.length + leading.length, cell.text.length - trailing.length);
 
-  // Preserve simple NamuMark presentation wrappers and expose only the human text.
-  // Examples: {{{#fff,#fff 원이}}}, {{{-2 2024.02.29}}}.
-  for (let depth = 0; depth < 4; depth += 1) {
-    const match = value.match(/^\{\{\{(?:[+-]\d+|#[^\s{}]+)\s+([\s\S]*?)\}\}\}$/);
-    if (!match) break;
-    const inner = match[1];
-    const innerIndex = value.indexOf(inner);
-    start += innerIndex;
-    end = start + inner.length;
-    value = inner;
+  // Peel presentation-only wrappers while keeping their source around the editable span.
+  // This means a member cell such as [[원이|{{{#fff '''원이'''}}}]] only edits the label;
+  // the link target, color, bold wrapper and table options remain byte-for-byte intact.
+  for (let depth = 0; depth < 6; depth += 1) {
+    const linked = value.match(/^\[\[([^\]|]+)\|([\s\S]+)\]\]$/);
+    if (linked) {
+      const inner = linked[2];
+      const innerIndex = value.indexOf(inner);
+      start += innerIndex;
+      end = start + inner.length;
+      value = inner;
+      continue;
+    }
+
+    const styled = value.match(/^\{\{\{(?:[+-]\d+|#[^\s{}]+)\s+([\s\S]*?)\}\}\}$/);
+    if (styled) {
+      const inner = styled[1];
+      const innerIndex = value.indexOf(inner);
+      start += innerIndex;
+      end = start + inner.length;
+      value = inner;
+      continue;
+    }
+
+    break;
   }
 
   return { value, start, end };
