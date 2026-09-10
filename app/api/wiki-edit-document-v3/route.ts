@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
+import { applyNamuAstOperationsComplete, type NamuAstCompleteEditOperation } from "../../../lib/namumarkAstEditComplete";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
 import { parseNamuTableAstLossless as parseNamuTableAst } from "../../../lib/namumarkTableAstLossless";
+import { scanNamuMediaCalls } from "../../../lib/namumarkMediaScan";
+import { parseNamuMediaAst } from "../../../lib/namumarkMediaAst";
 import { parseNamuTemplateAst, scanNamuTemplateCalls } from "../../../lib/namumarkTemplateAst";
+import type { NamuAstInlineNode } from "../../../lib/namumarkAst";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -92,6 +95,24 @@ async function enforceRateLimit(hash: string) {
   }
 }
 
+type PublicMedia = {
+  ownerType: "document" | "table";
+  ownerNodeId: string;
+  nodeId: string | null;
+  callId: string | null;
+  sectionIndex: number;
+  sourceStart: number;
+  sourceEnd: number;
+  kind: string;
+  macroName: string;
+  target: string;
+  targetStart: number;
+  targetEnd: number;
+  paramCount: number;
+  editableParamCount: number;
+  params: ReturnType<typeof parseNamuMediaAst>["params"];
+};
+
 function publicEditorModel(source: string) {
   const ast = parseNamuMarkAstForEditing(source);
   assertEditingAstLossless(source, ast);
@@ -127,11 +148,45 @@ function publicEditorModel(source: string) {
     editableParamCount: number;
     params: ReturnType<typeof parseNamuTemplateAst>["params"];
   }> = [];
+  const media: PublicMedia[] = [];
+
+  const addInlineMedia = (nodes: NamuAstInlineNode[], ownerNodeId: string, sectionIndex: number) => {
+    for (const node of nodes) {
+      if (node.type === "inline-media") {
+        try {
+          const model = parseNamuMediaAst(node.raw);
+          media.push({
+            ownerType: "document",
+            ownerNodeId,
+            nodeId: node.id,
+            callId: null,
+            sectionIndex,
+            sourceStart: node.sourceStart,
+            sourceEnd: node.sourceEnd,
+            kind: model.kind,
+            macroName: model.macroName,
+            target: model.target,
+            targetStart: node.sourceStart + model.targetStart,
+            targetEnd: node.sourceStart + model.targetEnd,
+            paramCount: model.paramCount,
+            editableParamCount: model.editableParamCount,
+            params: model.params,
+          });
+        } catch {
+          // Keep unsupported media syntax lossless and protected.
+        }
+      }
+      if ((node.type === "link" || node.type === "external-link" || node.type === "format") && node.children?.length) {
+        addInlineMedia(node.children, ownerNodeId, sectionIndex);
+      }
+    }
+  };
 
   let sectionIndex = 0;
   for (const block of ast.blocks) {
     if (block.type === "heading") {
       sectionIndex += 1;
+      addInlineMedia(block.children, block.id, sectionIndex);
       continue;
     }
     if (block.type === "table") {
@@ -149,6 +204,25 @@ function publicEditorModel(source: string) {
         rows: model.rows,
         templateCalls,
       });
+      for (const call of scanNamuMediaCalls(block.raw)) {
+        media.push({
+          ownerType: "table",
+          ownerNodeId: block.id,
+          nodeId: null,
+          callId: call.id,
+          sectionIndex,
+          sourceStart: block.sourceStart + call.sourceStart,
+          sourceEnd: block.sourceStart + call.sourceEnd,
+          kind: call.kind,
+          macroName: call.macroName,
+          target: call.target,
+          targetStart: block.sourceStart + call.targetStart,
+          targetEnd: block.sourceStart + call.targetEnd,
+          paramCount: call.paramCount,
+          editableParamCount: call.editableParamCount,
+          params: call.params,
+        });
+      }
       continue;
     }
     if (block.type === "template") {
@@ -167,10 +241,38 @@ function publicEditorModel(source: string) {
       } catch {
         // Preserve unusual template source as an atomic AST block rather than failing the whole editor.
       }
+      continue;
     }
+    if (block.type === "media") {
+      try {
+        const model = parseNamuMediaAst(block.raw);
+        media.push({
+          ownerType: "document",
+          ownerNodeId: block.id,
+          nodeId: block.id,
+          callId: null,
+          sectionIndex,
+          sourceStart: block.sourceStart,
+          sourceEnd: block.sourceEnd,
+          kind: model.kind,
+          macroName: model.macroName,
+          target: model.target,
+          targetStart: block.sourceStart + model.targetStart,
+          targetEnd: block.sourceStart + model.targetEnd,
+          paramCount: model.paramCount,
+          editableParamCount: model.editableParamCount,
+          params: model.params,
+        });
+      } catch {
+        // Preserve unsupported media source as an atomic block.
+      }
+      continue;
+    }
+    if (block.type === "paragraph") addInlineMedia(block.children, block.id, sectionIndex);
+    if (block.type === "list") for (const line of block.lines) addInlineMedia(line.children, block.id, sectionIndex);
   }
 
-  return { ast: publicAst, tables, templates };
+  return { ast: publicAst, tables, templates, media };
 }
 
 export async function GET(request: Request) {
@@ -198,9 +300,10 @@ export async function GET(request: Request) {
       ast: editor.ast,
       tables: editor.tables,
       templates: editor.templates,
+      media: editor.media,
       capabilities: {
-        direct: ["text", "heading", "link", "external-link", "table-field"],
-        structuredBridge: ["table", "table-template-parameter", "template-parameter", "media"],
+        direct: ["text", "heading", "link", "external-link", "footnote", "table-field"],
+        structuredBridge: ["table", "table-template-parameter", "template-parameter", "media", "table-media", "block-insert", "block-delete"],
         sourceFallback: ["styled-block", "raw-block"],
       },
     });
@@ -216,7 +319,7 @@ export async function POST(request: Request) {
       title?: string;
       baseRevisionNo?: number;
       baseSourceHash?: string;
-      operations?: NamuAstEditOperation[];
+      operations?: NamuAstCompleteEditOperation[];
       summary?: string;
       displayName?: string;
       website?: string;
@@ -242,7 +345,7 @@ export async function POST(request: Request) {
     const hash = submitterHash(request);
     await enforceRateLimit(hash);
 
-    const result = applyNamuAstOperations(original, Array.isArray(body.operations) ? body.operations : []);
+    const result = applyNamuAstOperationsComplete(original, Array.isArray(body.operations) ? body.operations : []);
     const proposed = result.proposed;
     if (proposed.length > MAX_DOCUMENT_CHARS) return json({ error: "Edited document is too large" }, 413);
     assertEditingAstLossless(proposed, result.afterAst);
