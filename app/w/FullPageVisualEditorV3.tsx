@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { applyVisualCommand, editorElementToWikitext, wikiBlockToEditorHtml } from "../../lib/wikiVisualEdit";
 import VisualEditorV3TemplateInspector, {
-  collectV3TemplateOperations,
+  collectV3TemplateEdits,
   createV3TemplateDrafts,
+  createV3TemplateTargets,
+  type V3NestedTemplateCall,
   type V3TemplateDrafts,
   type V3TemplateModel,
+  type V3TemplateTarget,
 } from "./VisualEditorV3TemplateInspector";
 import {
   buildV3TableSurfaces,
@@ -41,6 +44,10 @@ type AstBlock = {
   editingMode?: string;
 };
 
+type AstTableModel = V3TableModel & {
+  templateCalls?: V3NestedTemplateCall[];
+};
+
 type AstPayload = {
   ok: boolean;
   editorVersion: string;
@@ -65,7 +72,7 @@ type AstPayload = {
       fallbackBlockCount: number;
     };
   };
-  tables?: V3TableModel[];
+  tables?: AstTableModel[];
   templates?: V3TemplateModel[];
   capabilities: {
     direct: string[];
@@ -97,7 +104,12 @@ type AstOperation =
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "unlink"; nodeId: string }
   | { op: "set-link"; nodeId: string; target: string; label?: string }
-  | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
+  | {
+      op: "table-structure";
+      nodeId: string;
+      fields?: Array<{ fieldId: string; proposedWikitext: string }>;
+      templateParams?: Array<{ callId: string; paramId: string; proposedValue: string }>;
+    }
   | { op: "template-fields"; nodeId: string; changes: Array<{ paramId: string; proposedValue: string }> };
 
 const V3_STYLES = `
@@ -447,7 +459,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const [activeHeadingLevel, setActiveHeadingLevel] = useState(2);
   const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
-  const [selectedTemplateNodeId, setSelectedTemplateNodeId] = useState<string | null>(null);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [templateDrafts, setTemplateDrafts] = useState<V3TemplateDrafts>({});
   const surfacesRef = useRef<SurfaceRecord[]>([]);
   const headingsRef = useRef<HeadingRecord[]>([]);
@@ -456,8 +468,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const startedSectionRef = useRef<number | null>(null);
 
   const stats = useMemo(() => payload?.ast.stats || null, [payload]);
-  const templates = payload?.templates || [];
-  const templateParamCount = templates.reduce((sum, template) => sum + template.editableParamCount, 0);
+  const templateTargets = useMemo<V3TemplateTarget[]>(
+    () => createV3TemplateTargets(payload?.templates || [], payload?.tables || []),
+    [payload],
+  );
+  const templateParamCount = templateTargets.reduce((sum, target) => sum + target.editableParamCount, 0);
 
   const activateSurface = (surface: HTMLElement, heading?: HeadingRecord) => {
     activeSurfaceRef.current = surface;
@@ -486,7 +501,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     activeSurfaceRef.current = null;
     setActiveHeadingId(null);
     setTemplatePanelOpen(false);
-    setSelectedTemplateNodeId(null);
+    setSelectedTemplateKey(null);
     setTemplateDrafts({});
     document.body.classList.remove("kpoparkiveAstEditing");
     document.querySelector(".thetreeWikiBaseline")?.classList.remove("kpoparkiveAstCanvas");
@@ -604,12 +619,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     setTableFieldCount(tableResult.records.length);
     setMappedTableCount(tableResult.mappedTables);
 
-    const editableTemplates = (data.templates || []).filter((template) => template.paramCount > 0);
-    setTemplateDrafts(createV3TemplateDrafts(data.templates || []));
-    setSelectedTemplateNodeId(editableTemplates[0]?.nodeId || null);
+    const targets = createV3TemplateTargets(data.templates || [], data.tables || []);
+    setTemplateDrafts(createV3TemplateDrafts(targets));
+    setSelectedTemplateKey(targets.find((target) => target.paramCount > 0)?.key || null);
 
     const complexBlocks = data.ast.blocks.filter((block) => block.type === "table" || block.type === "template" || block.type === "styled-block" || block.type === "raw-block" || block.type === "media").length;
-    const tableBlocks = data.ast.blocks.filter((block) => block.type === "table").length;
     const structuredTemplates = (data.templates || []).filter((template) => template.editableParamCount > 0).length;
     const protectedComplex = Math.max(0, complexBlocks - tableResult.mappedTables - structuredTemplates);
     setProtectedCount(protectedComplex);
@@ -622,7 +636,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
     setStatus(
       `${created.length} text/list + ${headingsRef.current.length} headings + ${tableResult.records.length} table fields + ` +
-      `${(data.templates || []).reduce((sum, template) => sum + template.editableParamCount, 0)} template parameters are AST-backed`,
+      `${targets.reduce((sum, target) => sum + target.editableParamCount, 0)} template parameters are AST-backed`,
     );
   };
 
@@ -722,10 +736,10 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     sectionRootsFromPage().get(sectionIndex)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const updateTemplateDraft = (nodeId: string, paramId: string, value: string) => {
+  const updateTemplateDraft = (targetKey: string, paramId: string, value: string) => {
     setTemplateDrafts((current) => ({
       ...current,
-      [nodeId]: { ...(current[nodeId] || {}), [paramId]: value },
+      [targetKey]: { ...(current[targetKey] || {}), [paramId]: value },
     }));
   };
 
@@ -751,8 +765,21 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       operations.push({ op: "replace-node", nodeId: record.nodeId, wikitext });
     }
 
-    operations.push(...collectV3TableOperations(tableSurfacesRef.current));
-    operations.push(...collectV3TemplateOperations(payload.templates || [], templateDrafts));
+    const tableFieldOps = collectV3TableOperations(tableSurfacesRef.current);
+    const templateEdits = collectV3TemplateEdits(templateTargets, templateDrafts);
+    const fieldByTable = new Map(tableFieldOps.map((operation) => [operation.nodeId, operation.changes]));
+    const tableNodeIds = new Set([...fieldByTable.keys(), ...templateEdits.tableParams.keys()]);
+    for (const nodeId of tableNodeIds) {
+      const fields = fieldByTable.get(nodeId) || [];
+      const templateParams = templateEdits.tableParams.get(nodeId) || [];
+      operations.push({
+        op: "table-structure",
+        nodeId,
+        fields: fields.length ? fields : undefined,
+        templateParams: templateParams.length ? templateParams : undefined,
+      });
+    }
+    operations.push(...templateEdits.standalone);
 
     if (!operations.length) {
       setStatus("No changes were made");
@@ -813,7 +840,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("bulletList")}>List</button>
         <button
           type="button"
-          disabled={!templates.some((template) => template.paramCount > 0)}
+          disabled={!templateTargets.some((target) => target.paramCount > 0)}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => setTemplatePanelOpen((value) => !value)}
         >Templates</button>
@@ -823,16 +850,16 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       <div className="kpoparkiveAstStatus">
         <b>Lossless AST</b>
         <span>{status}</span>
-        {stats ? <span>{stats.linkCount} links · {stats.headingCount} headings · {stats.tableCount} tables · {stats.templateCount} templates</span> : null}
+        {stats ? <span>{stats.linkCount} links · {stats.headingCount} headings · {stats.tableCount} tables · {stats.templateCount} standalone templates</span> : null}
         <span>{mappedCount} text/list · {headingCount} headings · {tableFieldCount} table fields · {templateParamCount} template params · {protectedCount} protected</span>
       </div>
       <VisualEditorV3TemplateInspector
         open={templatePanelOpen}
-        templates={templates}
-        selectedNodeId={selectedTemplateNodeId}
+        targets={templateTargets}
+        selectedKey={selectedTemplateKey}
         drafts={templateDrafts}
         onClose={() => setTemplatePanelOpen(false)}
-        onSelect={setSelectedTemplateNodeId}
+        onSelect={setSelectedTemplateKey}
         onChange={updateTemplateDraft}
         onRevealSection={revealTemplateSection}
       />
