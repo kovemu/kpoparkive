@@ -1,0 +1,466 @@
+.kpoparkivePageEditorLoading {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 9999;
+  padding: 9px 12px;
+  border: 1px solid #d9d9e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #5f35d5;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 8px 28px rgba(31, 25, 48, .12);
+}
+
+body.kpoparkivePageEditing {
+  padding-top: 104px;
+}
+
+.kpoparkivePageEditorToolbar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 10020;
+  display: grid;
+  grid-template-columns: minmax(140px, auto) 1fr auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 62px;
+  padding: 9px 14px;
+  border-bottom: 1px solid #d7d7df;
+  background: rgba(250, 250, 252, .97);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 3px 18px rgba(24, 20, 38, .08);
+}
+
+.kpoparkivePageEditorTitle {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.kpoparkivePageEditorTitle span {
+  color: #777481;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+.kpoparkivePageEditorTitle strong {
+  margin-top: 4px;
+  color: #35313b;
+  font-size: 16px;
+}
+
+.kpoparkivePageEditorTools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.kpoparkivePageEditorTools > button,
+.kpoparkiveInsertButton,
+.kpoparkiveColorTool {
+  min-width: 34px;
+  height: 36px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #37333d;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kpoparkivePageEditorTools > button:hover,
+.kpoparkiveInsertButton:hover,
+.kpoparkiveColorTool:hover {
+  background: #eceaf2;
+}
+
+.kpoparkiveToolDivider {
+  align-self: stretch;
+  width: 1px;
+  min-width: 1px;
+  margin: 4px 6px;
+  background: #d6d3dd;
+}
+
+.kpoparkiveColorTool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  text-decoration: underline 3px #6d3ce8;
+  text-underline-offset: 4px;
+}
+
+.kpoparkiveColorTool input {
+  position: absolute;
+  inset: auto 3px 2px auto;
+  width: 12px;
+  height: 9px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.kpoparkiveStructureButton small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #ebe7fb;
+  color: #6640cc;
+  font-size: 10px;
+}
+
+.kpoparkiveInsertMenuWrap {
+  position: relative;
+}
+
+.kpoparkiveInsertButton {
+  background: #dcecf5;
+  color: #153e57;
+  font-weight: 800;
+}
+
+.kpoparkiveInsertMenu {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  z-index: 10040;
+  display: grid;
+  width: 190px;
+  padding: 6px;
+  border: 1px solid #d5d2dd;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(24, 20, 38, .18);
+}
+
+.kpoparkiveInsertMenu button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #322e39;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kpoparkiveInsertMenu button:hover {
+  background: #f1eff6;
+}
+
+.kpoparkivePageEditorActions {
+  display: flex;
+  gap: 7px;
+}
+
+.kpoparkivePageEditorActions button {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.kpoparkivePageEditorActions .is-cancel {
+  border: 1px solid #d1ced8;
+  background: #fff;
+  color: #49434f;
+}
+
+.kpoparkivePageEditorActions .is-save {
+  border: 1px solid #6b3ce8;
+  background: #6b3ce8;
+  color: #fff;
+}
+
+.kpoparkivePageEditorStatus {
+  position: fixed;
+  top: 62px;
+  left: 0;
+  right: 0;
+  z-index: 10015;
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(160px, 260px) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 14px;
+  border-bottom: 1px solid #e0dde7;
+  background: #fff;
+}
+
+.kpoparkivePageEditorStatus input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d7d3df;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.kpoparkivePageEditorStatus span {
+  color: #6c6773;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.kpoparkivePageEditSurface {
+  position: relative;
+  min-height: 28px;
+  margin: 2px 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: 0;
+  background: transparent;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.kpoparkivePageEditSurface:hover {
+  border-color: #dcd2fa;
+  background: rgba(108, 60, 232, .025);
+}
+
+.kpoparkivePageEditSurface:focus {
+  border-color: #8257ee;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(109, 60, 232, .09);
+}
+
+.kpoparkivePageEditSurface p {
+  margin: 0 0 .65em;
+}
+
+.kpoparkivePageEditSurface p:last-child {
+  margin-bottom: 0;
+}
+
+.kpoparkivePageEditSurface a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(40, 105, 180, .4);
+}
+
+.kpoparkiveQueuedInsertions {
+  position: fixed;
+  top: 112px;
+  right: 16px;
+  z-index: 10010;
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 460px;
+  gap: 5px;
+  pointer-events: auto;
+}
+
+.kpoparkiveQueuedInsertions span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid #d7d0ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #5a3cac;
+  font-size: 11px;
+  box-shadow: 0 5px 14px rgba(36, 24, 70, .08);
+}
+
+.kpoparkiveQueuedInsertions button {
+  border: 0;
+  background: transparent;
+  color: #7c7585;
+  cursor: pointer;
+}
+
+.kpoparkiveGenericInspector {
+  position: fixed;
+  z-index: 10050;
+  top: 112px;
+  right: 18px;
+  bottom: 18px;
+  width: min(520px, calc(100vw - 36px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d8d4e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 55px rgba(31, 23, 54, .22);
+  overflow: hidden;
+}
+
+.kpoparkiveGenericInspector.is-small {
+  bottom: auto;
+  max-height: calc(100vh - 130px);
+}
+
+.kpoparkiveGenericInspector > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2dfe7;
+  background: #faf9fc;
+}
+
+.kpoparkiveGenericInspector > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.kpoparkiveGenericInspector > header strong {
+  font-size: 16px;
+}
+
+.kpoparkiveGenericInspector > header span {
+  color: #77717d;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.kpoparkiveGenericInspector > header button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.kpoparkiveInspectorBody {
+  padding: 12px;
+  overflow: auto;
+}
+
+.kpoparkiveInspectorGroup {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #e1dee7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.kpoparkiveInspectorGroup h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.kpoparkiveInspectorGroup > p {
+  margin: 4px 0 10px;
+  color: #817b86;
+  font-size: 11px;
+}
+
+.kpoparkiveTableGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.kpoparkiveTableGrid label,
+.kpoparkiveInspectorField {
+  display: grid;
+  gap: 4px;
+}
+
+.kpoparkiveTableGrid span,
+.kpoparkiveInspectorField span {
+  color: #77717f;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.kpoparkiveTableGrid input,
+.kpoparkiveInspectorField input,
+.kpoparkiveTemplateParamRow input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #d7d3de;
+  border-radius: 5px;
+  background: #fff;
+  color: #302c35;
+}
+
+.kpoparkiveTemplateParamRow {
+  display: grid;
+  grid-template-columns: minmax(90px, .8fr) minmax(0, 1.4fr) 30px;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.kpoparkiveTemplateParamRow button,
+.kpoparkiveAddParam {
+  border: 1px solid #ddd8e5;
+  border-radius: 5px;
+  background: #faf9fc;
+  cursor: pointer;
+}
+
+.kpoparkiveAddParam {
+  margin-top: 8px;
+  padding: 7px 9px;
+  color: #6040bd;
+  font-weight: 700;
+}
+
+.kpoparkiveInsertPreview {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px dashed #cfc8dd;
+  border-radius: 6px;
+  background: #faf9fc;
+  color: #69616f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: auto;
+}
+
+.kpoparkivePrimaryPanelAction {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #6b3ce8;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  body.kpoparkivePageEditing { padding-top: 150px; }
+  .kpoparkivePageEditorToolbar {
+    grid-template-columns: 1fr auto;
+    min-height: 100px;
+    align-items: start;
+  }
+  .kpoparkivePageEditorTitle { grid-column: 1 / 2; }
+  .kpoparkivePageEditorActions { grid-column: 2 / 3; grid-row: 1; }
+  .kpoparkivePageEditorTools { grid-column: 1 / 3; }
+  .kpoparkivePageEditorStatus {
+    top: 100px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .kpoparkivePageEditorStatus span { grid-column: 1 / 3; }
+  .kpoparkiveGenericInspector { top: 154px; right: 8px; bottom: 8px; width: calc(100vw - 16px); }
+  .kpoparkiveTableGrid { grid-template-columns: 1fr; }
+}
