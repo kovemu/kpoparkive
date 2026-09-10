@@ -49,8 +49,7 @@ function renderInline(value: string): string {
       if (end > index) {
         const raw = value.slice(index, end + 1);
         const body = value.slice(index + 2, end).trim();
-        const label = body.replace(/^\S+\s+/, "").trim() || body || "citation";
-        html += `<span class="kpoparkiveVisualCitation" contenteditable="false" data-wiki-footnote="${escapeAttr(raw)}" title="${escapeAttr(label)}">[citation]</span>`;
+        html += `<span class="kpoparkiveVisualCitation" contenteditable="false" data-wiki-footnote="${escapeAttr(raw)}" title="${escapeAttr(body || "citation")}">[citation]</span>`;
         index = end + 1;
         continue;
       }
@@ -113,18 +112,22 @@ function renderInline(value: string): string {
 export function wikiBlockToEditorHtml(wikitext: string) {
   const lines = wikitext.replace(/\r\n?/g, "\n").split("\n");
   const chunks: string[] = [];
-  let listItems: string[] = [];
+  let listItems: Array<{ prefix: string; body: string }> = [];
 
   const flushList = () => {
     if (!listItems.length) return;
-    chunks.push(`<ul>${listItems.map((item) => `<li>${renderInline(item)}</li>`).join("")}</ul>`);
+    chunks.push(
+      `<ul>${listItems
+        .map(({ prefix, body }) => `<li data-wiki-list-prefix="${escapeAttr(prefix)}">${renderInline(body)}</li>`)
+        .join("")}</ul>`,
+    );
     listItems = [];
   };
 
   for (const line of lines) {
-    const listMatch = line.match(/^\s*\*\s?(.*)$/);
+    const listMatch = line.match(/^(\s*\*)\s?(.*)$/);
     if (listMatch) {
-      listItems.push(listMatch[1]);
+      listItems.push({ prefix: listMatch[1], body: listMatch[2] });
       continue;
     }
     flushList();
@@ -182,7 +185,8 @@ export function editorElementToWikitext(root: HTMLElement) {
       for (const child of Array.from(node.children)) {
         if (!(child instanceof HTMLElement) || child.tagName !== "LI") continue;
         const body = Array.from(child.childNodes).map(inlineNodeToWiki).join("").trim();
-        if (body) lines.push(`* ${body}`);
+        const prefix = child.dataset.wikiListPrefix || "*";
+        if (body) lines.push(`${prefix} ${body}`);
       }
       continue;
     }
