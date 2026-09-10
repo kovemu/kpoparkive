@@ -61,29 +61,29 @@ function normalizeInsertedBlock(source: string, value: unknown) {
 function patchInlineRaw(parent: NamuAstBlockNode, edits: Array<{ start: number; end: number; value: string }>) {
   const local = edits.map((edit) => ({ start: edit.start - parent.sourceStart, end: edit.end - parent.sourceStart, value: edit.value }))
     .sort((a, b) => a.start - b.start || a.end - b.end);
-
   for (let index = 0; index < local.length; index += 1) {
     const edit = local[index];
     if (edit.start < 0 || edit.end < edit.start || edit.end > parent.raw.length) throw badRequest("Invalid inline source range");
     if (index && edit.start < local[index - 1].end) throw badRequest("Overlapping inline structural edits are not allowed");
   }
-
   let raw = parent.raw;
-  for (const edit of [...local].sort((a, b) => b.start - a.start || b.end - a.end)) {
-    raw = `${raw.slice(0, edit.start)}${edit.value}${raw.slice(edit.end)}`;
-  }
+  for (const edit of [...local].sort((a, b) => b.start - a.start || b.end - a.end)) raw = `${raw.slice(0, edit.start)}${edit.value}${raw.slice(edit.end)}`;
   return raw;
 }
 
 function preprocessInlineOperations(source: string, operations: NamuAstCompleteEditOperation[]) {
   const document = parseNamuMarkAstForEditing(source);
+  const requestedBlockDeletes = new Set(operations.filter((operation) => operation.op === "delete-node").map((operation) => operation.nodeId));
+  const requestedInlineDeletes = new Set(operations.filter((operation) => operation.op === "delete-inline-node").map((operation) => operation.nodeId));
   const passthrough: NamuAstEditOperation[] = [];
   const grouped = new Map<string, { parent: NamuAstBlockNode; edits: Array<{ start: number; end: number; value: string }> }>();
   const structural: StructuralPatch[] = [];
   const tableStructures = new Map<string, TableStructureOperation>();
   const tableMedia = new Map<string, NamuMediaCallChange[]>();
+  const addedBlockDeletes = new Set<string>();
 
   const addParentEdit = (parent: NamuAstBlockNode, start: number, end: number, value: string) => {
+    if (requestedBlockDeletes.has(parent.id)) return;
     if (!REPLACEABLE_PARENT.has(parent.type)) throw badRequest(`Inline editing inside ${parent.type} is not supported by the visual editor yet`);
     const current = grouped.get(parent.id) || { parent, edits: [] };
     current.edits.push({ start, end, value });
@@ -92,6 +92,7 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
 
   operations.forEach((operation, sequence) => {
     if (isBaseOperation(operation)) {
+      if (requestedBlockDeletes.has(operation.nodeId) || requestedInlineDeletes.has(operation.nodeId)) return;
       if (operation.op === "table-structure") {
         if (tableStructures.has(operation.nodeId)) throw badRequest("Duplicate table structure operations are not allowed");
         tableStructures.set(operation.nodeId, operation);
@@ -100,14 +101,10 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
     }
 
     if (operation.op === "media-fields") {
+      if (requestedInlineDeletes.has(operation.nodeId) || requestedBlockDeletes.has(operation.nodeId)) return;
       const node = findNamuAstNode(document, operation.nodeId);
       if (!node || (node.type !== "media" && node.type !== "inline-media")) throw conflict("The selected media node no longer exists. Reload and try again.");
-      const proposed = applyNamuMediaChanges(node.raw, {
-        target: operation.target,
-        params: operation.params,
-        removeParamIds: operation.removeParamIds,
-        appendParams: operation.appendParams,
-      }).proposed;
+      const proposed = applyNamuMediaChanges(node.raw, { target: operation.target, params: operation.params, removeParamIds: operation.removeParamIds, appendParams: operation.appendParams }).proposed;
       if (node.type === "media") passthrough.push({ op: "replace-raw", nodeId: node.id, wikitext: proposed });
       else {
         const parent = blockContaining(document.blocks, node);
@@ -118,6 +115,7 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
     }
 
     if (operation.op === "table-media") {
+      if (requestedBlockDeletes.has(operation.nodeId)) return;
       const node = document.blocks.find((block) => block.id === operation.nodeId);
       if (!node || node.type !== "table") throw conflict("The selected media table no longer exists. Reload and try again.");
       const current = tableMedia.get(node.id) || [];
@@ -131,13 +129,15 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
       if (!node || !DELETABLE_INLINE.has(node.type)) throw conflict("The selected inline node can no longer be deleted. Reload and try again.");
       const parent = blockContaining(document.blocks, node as NamuAstInlineNode);
       if (!parent) throw conflict("The selected inline node parent no longer exists. Reload and try again.");
-      addParentEdit(parent, node.sourceStart, node.sourceEnd, "");
+      if (!requestedBlockDeletes.has(parent.id)) addParentEdit(parent, node.sourceStart, node.sourceEnd, "");
       return;
     }
 
     if (operation.op === "delete-node") {
+      if (addedBlockDeletes.has(operation.nodeId)) return;
       const block = document.blocks.find((item) => item.id === operation.nodeId);
       if (!block || !DELETABLE_BLOCKS.has(block.type)) throw conflict("The selected block can no longer be deleted. Reload and try again.");
+      addedBlockDeletes.add(block.id);
       structural.push({ op: "delete-node", nodeId: block.id, nodeType: block.type, sourceStart: block.sourceStart, sourceEnd: block.sourceEnd, before: block.raw, after: "", sequence });
       return;
     }
@@ -150,24 +150,18 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
   });
 
   for (const [nodeId, operation] of tableStructures.entries()) {
+    if (requestedBlockDeletes.has(nodeId)) continue;
     const mediaCalls = tableMedia.get(nodeId) || [];
-    if (!mediaCalls.length) {
-      passthrough.push(operation);
-      continue;
-    }
+    if (!mediaCalls.length) { passthrough.push(operation); continue; }
     const node = document.blocks.find((block) => block.id === nodeId);
     if (!node || node.type !== "table") throw conflict("The selected table no longer exists. Reload and try again.");
-    const proposed = applyNamuTableStructuredChanges(node.raw, {
-      fields: operation.fields,
-      templateParams: operation.templateParams,
-      mediaCalls,
-    }).proposed;
+    const proposed = applyNamuTableStructuredChanges(node.raw, { fields: operation.fields, templateParams: operation.templateParams, mediaCalls }).proposed;
     passthrough.push({ op: "replace-raw", nodeId, wikitext: proposed });
     tableMedia.delete(nodeId);
   }
 
   for (const [nodeId, mediaCalls] of tableMedia.entries()) {
-    if (!mediaCalls.length) continue;
+    if (requestedBlockDeletes.has(nodeId) || !mediaCalls.length) continue;
     const node = document.blocks.find((block) => block.id === nodeId);
     if (!node || node.type !== "table") throw conflict("The selected table no longer exists. Reload and try again.");
     const proposed = applyNamuTableStructuredChanges(node.raw, { mediaCalls }).proposed;
@@ -175,6 +169,7 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
   }
 
   for (const { parent, edits } of grouped.values()) {
+    if (requestedBlockDeletes.has(parent.id)) continue;
     const replacement = patchInlineRaw(parent, edits);
     passthrough.push({ op: "replace-node", nodeId: parent.id, wikitext: replacement });
   }
@@ -226,9 +221,13 @@ export function applyNamuAstOperationsComplete(source: string, operations: NamuA
   let baseChanges: NamuAstAppliedChange[] = [];
 
   if (passthrough.length) {
-    const result = applyNamuAstOperations(source, passthrough);
-    proposed = result.proposed;
-    baseChanges = result.changes;
+    try {
+      const result = applyNamuAstOperations(source, passthrough);
+      proposed = result.proposed;
+      baseChanges = result.changes;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "No changes were made") throw error;
+    }
   }
 
   validateStructuralPatches(structural, baseChanges);
