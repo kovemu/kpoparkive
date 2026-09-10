@@ -8,6 +8,7 @@ import {
 } from "./namumarkAst";
 import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
 import { applyNamuTableFieldChanges } from "./namumarkTableAst";
+import { applyNamuTableStructuredChanges } from "./namumarkTableStructuredEdit";
 import { applyNamuTemplateParamChanges } from "./namumarkTemplateAst";
 
 export type NamuAstEditOperation =
@@ -17,6 +18,12 @@ export type NamuAstEditOperation =
   | { op: "set-heading"; nodeId: string; text: string; level?: number }
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
+  | {
+      op: "table-structure";
+      nodeId: string;
+      fields?: Array<{ fieldId: string; proposedWikitext: string }>;
+      templateParams?: Array<{ callId: string; paramId: string; proposedValue: string }>;
+    }
   | { op: "template-fields"; nodeId: string; changes: Array<{ paramId: string; proposedValue: string }> }
   | { op: "replace-raw"; nodeId: string; wikitext: string };
 
@@ -163,6 +170,24 @@ function tableFieldReplacement(nodeRaw: string, changes: Array<{ fieldId: string
   }
 }
 
+function tableStructuredReplacement(
+  nodeRaw: string,
+  fields: Array<{ fieldId: string; proposedWikitext: string }> | undefined,
+  templateParams: Array<{ callId: string; paramId: string; proposedValue: string }> | undefined,
+) {
+  const fieldChanges = Array.isArray(fields) ? fields : [];
+  const paramChanges = Array.isArray(templateParams) ? templateParams : [];
+  if (!fieldChanges.length && !paramChanges.length) throw badRequest("No structured table changes were supplied");
+  if (fieldChanges.length > 200 || paramChanges.length > 200) throw badRequest("Too many structured edits in one table");
+  try {
+    return applyNamuTableStructuredChanges(nodeRaw, { fields: fieldChanges, templateParams: paramChanges }).proposed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not apply structured table edits";
+    if (/no longer exists/i.test(message)) throw conflict(message);
+    throw badRequest(message);
+  }
+}
+
 function templateFieldReplacement(nodeRaw: string, changes: Array<{ paramId: string; proposedValue: string }>) {
   if (!Array.isArray(changes) || !changes.length) throw badRequest("No template parameter changes were supplied");
   if (changes.length > 100) throw badRequest("Too many template parameter edits in one template");
@@ -204,6 +229,9 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   } else if (operation.op === "table-fields") {
     if (node.type !== "table") throw badRequest(`Table field editing is not allowed for ${node.type} nodes`);
     after = tableFieldReplacement(node.raw, operation.changes);
+  } else if (operation.op === "table-structure") {
+    if (node.type !== "table") throw badRequest(`Structured table editing is not allowed for ${node.type} nodes`);
+    after = tableStructuredReplacement(node.raw, operation.fields, operation.templateParams);
   } else if (operation.op === "template-fields") {
     if (node.type !== "template") throw badRequest(`Template parameter editing is not allowed for ${node.type} nodes`);
     after = templateFieldReplacement(node.raw, operation.changes);
