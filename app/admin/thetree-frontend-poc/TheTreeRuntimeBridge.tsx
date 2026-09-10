@@ -65,6 +65,41 @@ export default function TheTreeRuntimeBridge() {
 
     const cleanups: Array<() => void> = [];
 
+    // The pinned frontend renders its external-link marker with an Ionicons
+    // private-use glyph. Kpoparkive does not load that old icon font, so the
+    // glyph appeared as a green box with an X. Use a tiny self-contained link
+    // SVG instead. Namu's image-only links (such as YouTube icon templates)
+    // should not receive a second external-link badge.
+    const externalLinkStyle = document.createElement("style");
+    externalLinkStyle.dataset.kpoparkiveRuntime = "external-link-fidelity";
+    externalLinkStyle.textContent = `
+      .thetreeWikiBaseline .wiki-link-external::before,
+      .namumarkPocDocument.wiki-content .wiki-link-external::before {
+        content: "" !important;
+        display: inline-block !important;
+        box-sizing: border-box !important;
+        position: relative !important;
+        width: 1em !important;
+        height: 1em !important;
+        margin: 0 .16em 0 0 !important;
+        padding: 0 !important;
+        vertical-align: -.12em !important;
+        background-color: transparent !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='2' fill='%2300903d'/%3E%3Cpath d='M6.55 5.15 7.7 4a2.55 2.55 0 0 1 3.6 3.6L10.15 8.75M9.45 10.85 8.3 12a2.55 2.55 0 0 1-3.6-3.6l1.15-1.15M6.45 9.55l3.1-3.1' fill='none' stroke='white' stroke-width='1.45' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        background-size: contain !important;
+        color: transparent !important;
+        font-family: inherit !important;
+      }
+      .thetreeWikiBaseline .wiki-link-external.kpoparkiveExternalMediaLink::before,
+      .namumarkPocDocument.wiki-content .wiki-link-external.kpoparkiveExternalMediaLink::before {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(externalLinkStyle);
+    cleanups.push(() => externalLinkStyle.remove());
+
     for (const root of roots) {
       // The pinned The Tree frontend intentionally gives table wrappers
       // overflow-x:auto. In Chromium that makes the other axis compute to auto
@@ -79,6 +114,12 @@ export default function TheTreeRuntimeBridge() {
           if (previousOverflowY) tableWrap.style.setProperty("overflow-y", previousOverflowY, previousPriority);
           else tableWrap.style.removeProperty("overflow-y");
         });
+      }
+
+      for (const anchor of Array.from(root.querySelectorAll<HTMLAnchorElement>("a.wiki-link-external"))) {
+        if (anchor.querySelector(".wiki-image-align, .wiki-image-wrapper, img.wiki-image, video.wiki-image")) {
+          anchor.classList.add("kpoparkiveExternalMediaLink");
+        }
       }
 
       for (const heading of Array.from(root.querySelectorAll<HTMLElement>(".wiki-heading"))) {
