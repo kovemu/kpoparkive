@@ -2,9 +2,10 @@ import { parse } from "node-html-parser";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
-import InlineSectionEditor from "../InlineSectionEditor";
+import FullPageVisualEditor from "../FullPageVisualEditor";
 import "../wiki.css";
 import "../table-editor.css";
+import "../visual-editor.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -205,7 +206,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
       <main className="kpoparkiveRawWikiPage">
         <TheTreeRuntimeBridge />
-        <InlineSectionEditor title={source.source_title} />
+        <FullPageVisualEditor title={source.source_title} />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
