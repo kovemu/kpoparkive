@@ -8,6 +8,7 @@ import {
 } from "./namumarkAst";
 import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
 import { applyNamuTableFieldChanges } from "./namumarkTableAst";
+import { applyNamuTemplateParamChanges } from "./namumarkTemplateAst";
 
 export type NamuAstEditOperation =
   | { op: "replace-text"; nodeId: string; text: string }
@@ -16,6 +17,7 @@ export type NamuAstEditOperation =
   | { op: "set-heading"; nodeId: string; text: string; level?: number }
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
+  | { op: "template-fields"; nodeId: string; changes: Array<{ paramId: string; proposedValue: string }> }
   | { op: "replace-raw"; nodeId: string; wikitext: string };
 
 export type NamuAstAppliedChange = {
@@ -161,6 +163,18 @@ function tableFieldReplacement(nodeRaw: string, changes: Array<{ fieldId: string
   }
 }
 
+function templateFieldReplacement(nodeRaw: string, changes: Array<{ paramId: string; proposedValue: string }>) {
+  if (!Array.isArray(changes) || !changes.length) throw badRequest("No template parameter changes were supplied");
+  if (changes.length > 100) throw badRequest("Too many template parameter edits in one template");
+  try {
+    return applyNamuTemplateParamChanges(nodeRaw, changes).proposed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not apply template parameter edits";
+    if (/no longer exists/i.test(message)) throw conflict(message);
+    throw badRequest(message);
+  }
+}
+
 function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperation): Patch {
   const node = findNamuAstNode(document, operation.nodeId);
   if (!node) throw conflict(`AST node ${operation.nodeId} no longer exists. Reload and try again.`);
@@ -190,6 +204,9 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   } else if (operation.op === "table-fields") {
     if (node.type !== "table") throw badRequest(`Table field editing is not allowed for ${node.type} nodes`);
     after = tableFieldReplacement(node.raw, operation.changes);
+  } else if (operation.op === "template-fields") {
+    if (node.type !== "template") throw badRequest(`Template parameter editing is not allowed for ${node.type} nodes`);
+    after = templateFieldReplacement(node.raw, operation.changes);
   } else if (operation.op === "replace-raw") {
     if (!rawReplacementAllowed(node.type)) throw badRequest(`Raw source editing is not allowed for ${node.type} nodes`);
     after = String(operation.wikitext ?? "");
