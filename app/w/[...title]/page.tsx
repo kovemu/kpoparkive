@@ -3,6 +3,7 @@ import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
+import FullPageVisualEditorV3 from "../FullPageVisualEditorV3";
 import VisualEditorInteractionGuard from "../VisualEditorInteractionGuard";
 import "../wiki.css";
 import "../table-editor.css";
@@ -33,6 +34,8 @@ type AssetRow = {
   storage_path: string | null;
   metadata: Record<string, unknown> | null;
 };
+
+type SearchParams = Record<string, string | string[] | undefined>;
 
 async function db<T>(path: string): Promise<T> {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -155,8 +158,22 @@ function sourceTitleFromSegments(segments: string[]) {
   return segments.map((segment) => decodeURIComponent(segment)).join("/").normalize("NFKC").trim();
 }
 
-export default async function RawWikiPage({ params }: { params: Promise<{ title: string[] }> }) {
+function visualEditorVersion(searchParams: SearchParams) {
+  const raw = searchParams.ve;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === "3" ? 3 : 2;
+}
+
+export default async function RawWikiPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ title: string[] }>;
+  searchParams?: Promise<SearchParams>;
+}) {
   const { title: segments } = await params;
+  const query = searchParams ? await searchParams : {};
+  const editorVersion = visualEditorVersion(query);
   const sourceTitle = sourceTitleFromSegments(segments);
 
   const docs = await db<DocRow[]>(
@@ -205,10 +222,16 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
   return (
     <>
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
-      <main className="kpoparkiveRawWikiPage">
+      <main className="kpoparkiveRawWikiPage" data-visual-editor-version={editorVersion}>
         <TheTreeRuntimeBridge />
-        <FullPageVisualEditorV2 title={source.source_title} />
-        <VisualEditorInteractionGuard />
+        {editorVersion === 3 ? (
+          <FullPageVisualEditorV3 title={source.source_title} />
+        ) : (
+          <>
+            <FullPageVisualEditorV2 title={source.source_title} />
+            <VisualEditorInteractionGuard />
+          </>
+        )}
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
