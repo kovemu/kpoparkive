@@ -159,7 +159,9 @@ export function parseEasyEditSections(source: string): EasyEditSection[] {
     const flush = () => {
       if (!blockLines.length) return;
       const originalWikitext = blockLines.join("\n").trim();
-      const lockedReason = lockReasonForBlock(blockLines, blockStartDepth);
+      const lockedReason = section.sectionIndex === 0
+        ? "Document lead metadata"
+        : lockReasonForBlock(blockLines, blockStartDepth);
       const plainText = stripInlineMarkup(originalWikitext);
       const editable = !lockedReason && plainText.length > 0;
       const blockIndex = blocks.length;
