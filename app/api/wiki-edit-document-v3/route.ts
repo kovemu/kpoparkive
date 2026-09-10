@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
 import { parseNamuTableAst } from "../../../lib/namumarkTableAst";
+import { parseNamuTemplateAst } from "../../../lib/namumarkTemplateAst";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -104,27 +105,17 @@ function publicEditorModel(source: string) {
     cellCount: number;
     editableFieldCount: number;
     lockedCellCount: number;
-    rows: Array<{
-      id: string;
-      row: number;
-      cells: Array<{
-        id: string;
-        row: number;
-        cell: number;
-        locked: boolean;
-        lockedReason: string | null;
-        fields: Array<{
-          id: string;
-          row: number;
-          cell: number;
-          fragment: number;
-          sourceStart: number;
-          sourceEnd: number;
-          valueWikitext: string;
-          plainText: string;
-        }>;
-      }>;
-    }>;
+    rows: ReturnType<typeof parseNamuTableAst>["rows"];
+  }> = [];
+  const templates: Array<{
+    nodeId: string;
+    sectionIndex: number;
+    sourceStart: number;
+    sourceEnd: number;
+    name: string;
+    paramCount: number;
+    editableParamCount: number;
+    params: ReturnType<typeof parseNamuTemplateAst>["params"];
   }> = [];
 
   let sectionIndex = 0;
@@ -133,33 +124,41 @@ function publicEditorModel(source: string) {
       sectionIndex += 1;
       continue;
     }
-    if (block.type !== "table") continue;
-    const model = parseNamuTableAst(block.raw);
-    tables.push({
-      nodeId: block.id,
-      sectionIndex,
-      sourceStart: block.sourceStart,
-      sourceEnd: block.sourceEnd,
-      rowCount: model.rowCount,
-      cellCount: model.cellCount,
-      editableFieldCount: model.editableFieldCount,
-      lockedCellCount: model.lockedCellCount,
-      rows: model.rows.map((row) => ({
-        id: row.id,
-        row: row.row,
-        cells: row.cells.map((cell) => ({
-          id: cell.id,
-          row: cell.row,
-          cell: cell.cell,
-          locked: cell.locked,
-          lockedReason: cell.lockedReason,
-          fields: cell.fields,
-        })),
-      })),
-    });
+    if (block.type === "table") {
+      const model = parseNamuTableAst(block.raw);
+      tables.push({
+        nodeId: block.id,
+        sectionIndex,
+        sourceStart: block.sourceStart,
+        sourceEnd: block.sourceEnd,
+        rowCount: model.rowCount,
+        cellCount: model.cellCount,
+        editableFieldCount: model.editableFieldCount,
+        lockedCellCount: model.lockedCellCount,
+        rows: model.rows,
+      });
+      continue;
+    }
+    if (block.type === "template") {
+      try {
+        const model = parseNamuTemplateAst(block.raw);
+        templates.push({
+          nodeId: block.id,
+          sectionIndex,
+          sourceStart: block.sourceStart,
+          sourceEnd: block.sourceEnd,
+          name: model.name,
+          paramCount: model.paramCount,
+          editableParamCount: model.editableParamCount,
+          params: model.params,
+        });
+      } catch {
+        // Preserve unusual template source as an atomic AST block rather than failing the whole editor.
+      }
+    }
   }
 
-  return { ast: publicAst, tables };
+  return { ast: publicAst, tables, templates };
 }
 
 export async function GET(request: Request) {
@@ -186,9 +185,10 @@ export async function GET(request: Request) {
       },
       ast: editor.ast,
       tables: editor.tables,
+      templates: editor.templates,
       capabilities: {
         direct: ["text", "heading", "link", "external-link", "table-field"],
-        structuredBridge: ["table", "template", "media"],
+        structuredBridge: ["table", "template-parameter", "media"],
         sourceFallback: ["styled-block", "raw-block"],
       },
     });
