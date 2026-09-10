@@ -8,7 +8,7 @@ process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSE
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v5",
+  version: "modern-namu-compat-v6",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -18,6 +18,8 @@ const compatibilityStats = {
   fileLinkTargetsNormalized: 0,
   structuralNbspNormalized: 0,
   colorWhitespaceNormalized: 0,
+  missingYouTubeIconIncludesExpanded: 0,
+  youtubeIconTemplateAvailable: false,
   charsBefore: 0,
   charsAfter: 0,
   changedDocuments: [],
@@ -43,6 +45,44 @@ function normalizeFileLinkTargets(source, local) {
     local.fileLinkTargetsNormalized += 1;
     return `[[${prefix}${normalized}`;
   });
+}
+
+function parseSimpleIncludeParams(raw) {
+  const params = new Map();
+  for (const piece of String(raw || "").split(",")) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    const equals = trimmed.indexOf("=");
+    if (equals < 0) continue;
+    const name = normalizeWikiTitleFragment(trimmed.slice(0, equals));
+    const value = trimmed.slice(equals + 1).trim();
+    if (name) params.set(name, value);
+  }
+  return params;
+}
+
+function expandMissingYouTubeIconIncludes(source, local) {
+  return source.replace(
+    /\[include\(\s*틀:유튜브\s+아이콘\s*((?:,[^\]\r\n]*)?)\)\]/gi,
+    (full, rawParams) => {
+      const params = parseSimpleIncludeParams(rawParams);
+      const link = String(params.get("링크") || "").trim();
+      if (!link) return full;
+
+      let href = "";
+      if (/^https?:\/\//i.test(link)) href = link;
+      else if (/^[A-Za-z0-9_-]{6,}$/.test(link)) href = `https://www.youtube.com/watch?v=${link}`;
+      else return full;
+
+      const requestedWidth = String(params.get("크기") || "22").trim();
+      const width = /^\d{1,3}$/.test(requestedWidth) && Number(requestedWidth) > 0
+        ? requestedWidth
+        : "22";
+
+      local.missingYouTubeIconIncludesExpanded += 1;
+      return `[[${href}|[[파일:유튜브 아이콘.svg|width=${width}]]]]`;
+    },
+  );
 }
 
 function isSyntaxBearingLine(line) {
@@ -201,7 +241,7 @@ function joinMultilineDirectiveHeaders(lines, local) {
   return output;
 }
 
-function applyCompatibility(raw, title) {
+function applyCompatibility(raw, title, options = {}) {
   const source = normalizeNewlines(raw);
   const local = {
     commentLinesRemoved: 0,
@@ -211,6 +251,7 @@ function applyCompatibility(raw, title) {
     fileLinkTargetsNormalized: 0,
     structuralNbspNormalized: 0,
     colorWhitespaceNormalized: 0,
+    missingYouTubeIconIncludesExpanded: 0,
   };
 
   const whitespaceNormalizedSource = normalizeStructuralNbsp(source, local);
@@ -218,7 +259,11 @@ function applyCompatibility(raw, title) {
   let lines = titleNormalizedSource.split("\n");
   lines = stripModernCommentBlocks(lines, local);
   lines = joinMultilineDirectiveHeaders(lines, local);
-  const result = lines.join("\n");
+  let result = lines.join("\n");
+
+  if (options.expandMissingYouTubeIconTemplate) {
+    result = expandMissingYouTubeIconIncludes(result, local);
+  }
 
   compatibilityStats.documentsSeen += 1;
   compatibilityStats.charsBefore += source.length;
@@ -269,10 +314,18 @@ globalThis.fetch = async (input, init = undefined) => {
     if (!response.ok) return response;
     const rows = await response.json();
     if (!Array.isArray(rows)) return responseWithJson(rows, response);
+
+    const hasYouTubeIconTemplate = rows.some((row) => (
+      normalizeWikiTitleFragment(row?.source_title || "").toLowerCase() === "틀:유튜브 아이콘"
+    ));
+    compatibilityStats.youtubeIconTemplateAvailable = hasYouTubeIconTemplate;
+
     const transformed = rows.map((row) => ({
       ...row,
       source_wikitext: typeof row?.source_wikitext === "string"
-        ? applyCompatibility(row.source_wikitext, row.source_title || "")
+        ? applyCompatibility(row.source_wikitext, row.source_title || "", {
+          expandMissingYouTubeIconTemplate: !hasYouTubeIconTemplate,
+        })
         : row?.source_wikitext,
     }));
     return responseWithJson(transformed, response);
@@ -290,7 +343,7 @@ globalThis.fetch = async (input, init = undefined) => {
         compatibility: {
           ...compatibilityStats,
           enginePatchset: process.env.KPOPARKIVE_THETREE_PATCHSET,
-          note: "Canonical source_wikitext unchanged; renderer input normalized and local cached The Tree patched at runtime.",
+          note: "Canonical source_wikitext unchanged; renderer input normalized, missing standard YouTube icon includes may be expanded only when that template document is absent, and local cached The Tree is patched at runtime.",
         },
       };
       body.source_namumark_engine = "thetree-modern-namu-compat-poc";
