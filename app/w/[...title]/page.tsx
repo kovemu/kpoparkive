@@ -2,6 +2,7 @@ import { parse } from "node-html-parser";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
+import InlineSectionEditor from "../InlineSectionEditor";
 import "../wiki.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
@@ -151,10 +152,6 @@ function sourceTitleFromSegments(segments: string[]) {
   return segments.map((segment) => decodeURIComponent(segment)).join("/").normalize("NFKC").trim();
 }
 
-function easyEditPath(title: string) {
-  return `/edit/${title.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
-}
-
 export default async function RawWikiPage({ params }: { params: Promise<{ title: string[] }> }) {
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
@@ -206,11 +203,8 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
     <>
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
       <main className="kpoparkiveRawWikiPage">
-        <div className="kpoparkiveWikiToolbar">
-          <span>{source.source_title}</span>
-          <a href={easyEditPath(source.source_title)}>Suggest edit</a>
-        </div>
         <TheTreeRuntimeBridge />
+        <InlineSectionEditor title={source.source_title} />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
