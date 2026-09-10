@@ -1,5 +1,7 @@
 "use client";
 
+import { collectV3RegisteredOperations } from "./visualEditorV3OperationRegistry";
+
 export type V3TemplateParam = {
   id: string;
   index: number;
@@ -148,6 +150,12 @@ export function collectV3TemplateEdits(targets: V3TemplateTarget[], drafts: V3Te
     })));
     tableParams.set(target.ownerNodeId, current);
   }
+
+  // FullPageVisualEditorV3 already funnels this array directly into its single
+  // atomic POST. Auxiliary AST editors register here so media/footnote/
+  // structural changes share the same proposal instead of creating parallel saves.
+  const auxiliary = collectV3RegisteredOperations();
+  for (const operation of auxiliary) standalone.push(operation as unknown as V3TemplateFieldOperation);
 
   return { standalone, tableParams };
 }
