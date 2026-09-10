@@ -7,6 +7,7 @@ import {
   type NamuAstText,
 } from "./namumarkAst";
 import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
+import { applyNamuTableFieldChanges } from "./namumarkTableAst";
 
 export type NamuAstEditOperation =
   | { op: "replace-text"; nodeId: string; text: string }
@@ -14,6 +15,7 @@ export type NamuAstEditOperation =
   | { op: "set-link"; nodeId: string; target: string; label?: string }
   | { op: "set-heading"; nodeId: string; text: string; level?: number }
   | { op: "replace-node"; nodeId: string; wikitext: string }
+  | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
   | { op: "replace-raw"; nodeId: string; wikitext: string };
 
 export type NamuAstAppliedChange = {
@@ -147,6 +149,18 @@ function validateEditableNodeReplacement(nodeType: string, before: string, value
   return after;
 }
 
+function tableFieldReplacement(nodeRaw: string, changes: Array<{ fieldId: string; proposedWikitext: string }>) {
+  if (!Array.isArray(changes) || !changes.length) throw badRequest("No table field changes were supplied");
+  if (changes.length > 200) throw badRequest("Too many table cell edits in one table");
+  try {
+    return applyNamuTableFieldChanges(nodeRaw, changes).proposed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not apply table field edits";
+    if (/no longer exists/i.test(message)) throw conflict(message);
+    throw badRequest(message);
+  }
+}
+
 function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperation): Patch {
   const node = findNamuAstNode(document, operation.nodeId);
   if (!node) throw conflict(`AST node ${operation.nodeId} no longer exists. Reload and try again.`);
@@ -173,6 +187,9 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   } else if (operation.op === "replace-node") {
     if (!editableNodeReplacementAllowed(node.type)) throw badRequest(`Visual node replacement is not allowed for ${node.type} nodes`);
     after = validateEditableNodeReplacement(node.type, node.raw, operation.wikitext);
+  } else if (operation.op === "table-fields") {
+    if (node.type !== "table") throw badRequest(`Table field editing is not allowed for ${node.type} nodes`);
+    after = tableFieldReplacement(node.raw, operation.changes);
   } else if (operation.op === "replace-raw") {
     if (!rawReplacementAllowed(node.type)) throw badRequest(`Raw source editing is not allowed for ${node.type} nodes`);
     after = String(operation.wikitext ?? "");
