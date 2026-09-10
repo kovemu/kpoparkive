@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { applyVisualCommand, editorElementToWikitext, wikiBlockToEditorHtml } from "../../lib/wikiVisualEdit";
+import {
+  buildV3TableSurfaces,
+  cleanupV3TableSurfaces,
+  collectV3TableOperations,
+  type V3TableModel,
+  type V3TableSurfaceRecord,
+} from "./visualEditorV3TableBridge";
 
 type AstInlineNode = {
   id: string;
@@ -52,6 +59,7 @@ type AstPayload = {
       fallbackBlockCount: number;
     };
   };
+  tables?: V3TableModel[];
   capabilities: {
     direct: string[];
     structuredBridge: string[];
@@ -78,21 +86,21 @@ type HeadingRecord = {
   surface: HTMLElement;
 };
 
-type AtomicRecord = {
-  nodeId: string;
-  nodeType: string;
-  element: HTMLElement;
-};
-
 type AstOperation =
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "unlink"; nodeId: string }
-  | { op: "set-link"; nodeId: string; target: string; label?: string };
+  | { op: "set-link"; nodeId: string; target: string; label?: string }
+  | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> };
 
 const V3_STYLES = `
 body.kpoparkiveAstEditing { padding-top: 104px; }
 body.kpoparkiveAstEditing .wiki-edit-section { display: none !important; }
-body.kpoparkiveAstEditing .wiki-heading-content { display: block !important; height: auto !important; max-height: none !important; visibility: visible !important; }
+body.kpoparkiveAstEditing .wiki-heading-content {
+  display: block !important;
+  height: auto !important;
+  max-height: none !important;
+  visibility: visible !important;
+}
 body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
 .kpoparkiveAstToolbar {
   position: fixed;
@@ -143,6 +151,8 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
   background: #fbfaff;
   color: #51485e;
   font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 .kpoparkiveAstStatus b { color: #5b34c7; }
 .thetreeWikiBaseline.kpoparkiveAstCanvas { outline: 2px solid rgba(107,60,232,.30); outline-offset: 10px; }
@@ -165,23 +175,18 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
   caret-color: #6b3ce8;
 }
 .kpoparkiveAstHeadingSurface:focus { outline: 2px solid rgba(107,60,232,.65); background: rgba(255,255,255,.85); }
-.kpoparkiveAstAtomic { position: relative; }
-.kpoparkiveAstAtomic::after {
-  content: attr(data-ve3-label);
-  position: absolute;
-  z-index: 4;
-  top: 2px;
-  right: 2px;
-  padding: 2px 6px;
-  border: 1px solid rgba(107,60,232,.25);
-  border-radius: 999px;
-  background: rgba(255,255,255,.88);
-  color: #6845c5;
-  font-size: 9px;
-  font-weight: 800;
-  pointer-events: none;
-  opacity: .62;
+.kpoparkiveAstTableMapped { outline: 1px solid rgba(107,60,232,.16); outline-offset: 2px; }
+.kpoparkiveAstTableSurface {
+  min-height: 1.3em;
+  min-width: 1.5ch;
+  outline: 1px dashed rgba(107,60,232,.42);
+  outline-offset: 2px;
+  border-radius: 3px;
+  caret-color: #6b3ce8;
 }
+.kpoparkiveAstTableSurface:hover { background: rgba(107,60,232,.045); }
+.kpoparkiveAstTableSurface:focus { outline: 2px solid rgba(107,60,232,.68); background: rgba(255,255,255,.94); }
+.kpoparkiveAstTableSurface a { cursor: text !important; }
 @media (max-width: 760px) {
   body.kpoparkiveAstEditing { padding-top: 142px; }
   .kpoparkiveAstToolbar { min-height: 94px; flex-wrap: wrap; }
@@ -304,6 +309,7 @@ function candidateElements(root: HTMLElement, leadOnly = false) {
       if (!normalize(node.innerText || node.textContent || "")) return false;
       if (leadOnly && (node.closest(".wiki-heading-content") || node.closest(".wiki-heading"))) return false;
       if (node.closest(".wiki-table")) return false;
+      if (node.closest("table")) return false;
       if (node.closest(".wiki-folding")) return false;
       if (node.querySelector("iframe, video, table")) return false;
       return true;
@@ -362,12 +368,14 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const [payload, setPayload] = useState<AstPayload | null>(null);
   const [mappedCount, setMappedCount] = useState(0);
   const [headingCount, setHeadingCount] = useState(0);
+  const [tableFieldCount, setTableFieldCount] = useState(0);
+  const [mappedTableCount, setMappedTableCount] = useState(0);
   const [protectedCount, setProtectedCount] = useState(0);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const [activeHeadingLevel, setActiveHeadingLevel] = useState(2);
   const surfacesRef = useRef<SurfaceRecord[]>([]);
   const headingsRef = useRef<HeadingRecord[]>([]);
-  const atomicsRef = useRef<AtomicRecord[]>([]);
+  const tableSurfacesRef = useRef<V3TableSurfaceRecord[]>([]);
   const activeSurfaceRef = useRef<HTMLElement | null>(null);
   const startedSectionRef = useRef<number | null>(null);
 
@@ -384,6 +392,8 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   };
 
   const cleanup = () => {
+    cleanupV3TableSurfaces(tableSurfacesRef.current);
+    tableSurfacesRef.current = [];
     for (const record of surfacesRef.current) {
       record.surface.remove();
       record.original.style.display = record.oldDisplay;
@@ -395,12 +405,6 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       record.host.style.display = record.oldDisplay;
     }
     headingsRef.current = [];
-    for (const record of atomicsRef.current) {
-      record.element.classList.remove("kpoparkiveAstAtomic");
-      record.element.removeAttribute("data-ve3-label");
-      record.element.removeAttribute("data-ve3-node-id");
-    }
-    atomicsRef.current = [];
     activeSurfaceRef.current = null;
     setActiveHeadingId(null);
     document.body.classList.remove("kpoparkiveAstEditing");
@@ -408,6 +412,8 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     setEditing(false);
     setMappedCount(0);
     setHeadingCount(0);
+    setTableFieldCount(0);
+    setMappedTableCount(0);
     setProtectedCount(0);
   };
 
@@ -464,7 +470,6 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     const roots = sectionRootsFromPage();
     const grouped = sectionedBlocks(data.ast.blocks);
     const created: SurfaceRecord[] = [];
-    const atomics: AtomicRecord[] = [];
 
     buildHeadingSurfaces(data);
 
@@ -508,17 +513,31 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       }
     }
 
-    const structuredCount = data.ast.blocks.filter((block) => block.type === "table" || block.type === "template" || block.type === "styled-block" || block.type === "raw-block" || block.type === "media").length;
-    setProtectedCount(structuredCount);
+    const tableResult = buildV3TableSurfaces({
+      tables: data.tables || [],
+      article,
+      sectionRoots: roots,
+      onActivate: (surface) => activateSurface(surface),
+    });
+    tableSurfacesRef.current = tableResult.records;
+    setTableFieldCount(tableResult.records.length);
+    setMappedTableCount(tableResult.mappedTables);
+
+    const complexBlocks = data.ast.blocks.filter((block) => block.type === "table" || block.type === "template" || block.type === "styled-block" || block.type === "raw-block" || block.type === "media").length;
+    const tableBlocks = data.ast.blocks.filter((block) => block.type === "table").length;
+    const protectedComplex = Math.max(0, complexBlocks - tableResult.mappedTables);
+    setProtectedCount(protectedComplex);
     surfacesRef.current = created;
-    atomicsRef.current = atomics;
     setMappedCount(created.length);
     setEditing(true);
 
     if (requestedSection && roots.get(requestedSection)) {
       window.setTimeout(() => roots.get(requestedSection)?.scrollIntoView({ block: "start" }), 30);
     }
-    setStatus(`${created.length} text/list blocks + ${headingsRef.current.length} headings are AST-backed · ${structuredCount} complex blocks preserved`);
+    setStatus(
+      `${created.length} text/list + ${headingsRef.current.length} headings + ${tableResult.records.length} table fields are AST-backed · ` +
+      `${tableResult.mappedTables}/${tableBlocks} tables mapped`,
+    );
   };
 
   const startEditing = async (requestedSection: number | null) => {
@@ -580,11 +599,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const command = (value: Parameters<typeof applyVisualCommand>[0]) => {
     const surface = activeSurfaceRef.current;
     if (!surface) {
-      setStatus("Click editable text first");
+      setStatus("Click editable text or a table field first");
       return;
     }
     applyVisualCommand(value, surface);
-    setStatus(`${value} applied to AST-backed visual block`);
+    setStatus(`${value} applied to AST-backed visual content`);
   };
 
   const unlink = () => {
@@ -596,7 +615,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
     unwrapAnchor(anchor);
     surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "formatRemove" }));
-    setStatus("Link removed visually; save will rewrite the exact AST node range");
+    setStatus("Link removed; save will patch the exact AST-backed source range");
   };
 
   const changeHeadingLevel = (level: number) => {
@@ -611,6 +630,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const save = async () => {
     if (!payload || saving) return;
     const operations: AstOperation[] = [];
+
     for (const record of surfacesRef.current) {
       const wikitext = editorElementToWikitext(record.surface);
       const before = normalize(record.originalWikitext);
@@ -618,6 +638,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       if (before === after) continue;
       operations.push({ op: "replace-node", nodeId: record.nodeId, wikitext });
     }
+
     for (const record of headingsRef.current) {
       const parts = headingParts(record.originalWikitext);
       if (!parts) continue;
@@ -627,13 +648,16 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       if (wikitext === record.originalWikitext) continue;
       operations.push({ op: "replace-node", nodeId: record.nodeId, wikitext });
     }
+
+    operations.push(...collectV3TableOperations(tableSurfacesRef.current));
+
     if (!operations.length) {
       setStatus("No changes were made");
       return;
     }
 
     setSaving(true);
-    setStatus(`Validating ${operations.length} AST range edit${operations.length === 1 ? "" : "s"}…`);
+    setStatus(`Validating ${operations.length} exact AST edit${operations.length === 1 ? "" : "s"}…`);
     try {
       const response = await fetch("/api/wiki-edit-document-v3", {
         method: "POST",
@@ -691,7 +715,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <b>Lossless AST</b>
         <span>{status}</span>
         {stats ? <span>{stats.linkCount} links · {stats.headingCount} headings · {stats.tableCount} tables · {stats.templateCount} templates</span> : null}
-        <span>{mappedCount} text/list · {headingCount} headings · {protectedCount} protected</span>
+        <span>{mappedCount} text/list · {headingCount} headings · {tableFieldCount} table fields · {mappedTableCount} tables · {protectedCount} protected</span>
       </div>
     </>
   );
