@@ -1,16 +1,20 @@
 import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
-import { applyNamuAstOperationsComplete, type NamuAstCompleteEditOperation } from "./namumarkAstEditComplete";
+import { applyNamuAstOperationsComplete, type NamuAstCompleteEditOperation } from "./namumarkAstEditCompleteBase";
 import { applyNamuTableLayoutChanges, type NamuTableLayoutAction } from "./namumarkTableLayoutEdit";
+import { applyNamuTableCellStyleChanges, type NamuTableCellStyleChange } from "./namumarkTableStyleEdit";
 import { applyNamuTableStructuredChanges } from "./namumarkTableStructuredEdit";
 
 export type NamuAstFinalEditOperation =
   | NamuAstCompleteEditOperation
-  | { op: "table-layout"; nodeId: string; actions: NamuTableLayoutAction[] };
+  | { op: "table-layout"; nodeId: string; actions: NamuTableLayoutAction[] }
+  | { op: "table-cell-style"; nodeId: string; changes: NamuTableCellStyleChange[] };
 
 type TableStructureOperation = Extract<NamuAstCompleteEditOperation, { op: "table-structure" }>;
 type TableFieldsOperation = Extract<NamuAstCompleteEditOperation, { op: "table-fields" }>;
 type TableMediaOperation = Extract<NamuAstCompleteEditOperation, { op: "table-media" }>;
 type DeleteNodeOperation = Extract<NamuAstCompleteEditOperation, { op: "delete-node" }>;
+type LayoutOperation = Extract<NamuAstFinalEditOperation, { op: "table-layout" }>;
+type StyleOperation = Extract<NamuAstFinalEditOperation, { op: "table-cell-style" }>;
 
 function badRequest(message: string) {
   return Object.assign(new Error(message), { status: 400 });
@@ -20,37 +24,47 @@ function conflict(message: string) {
   return Object.assign(new Error(message), { status: 409 });
 }
 
-function isLayout(operation: NamuAstFinalEditOperation): operation is Extract<NamuAstFinalEditOperation, { op: "table-layout" }> {
+function isLayout(operation: NamuAstFinalEditOperation): operation is LayoutOperation {
   return operation.op === "table-layout";
 }
 
-function isTableSibling(operation: NamuAstFinalEditOperation, nodeId: string): operation is TableStructureOperation | TableFieldsOperation | TableMediaOperation {
-  return (operation.op === "table-structure" || operation.op === "table-fields" || operation.op === "table-media") && operation.nodeId === nodeId;
+function isStyle(operation: NamuAstFinalEditOperation): operation is StyleOperation {
+  return operation.op === "table-cell-style";
 }
 
-function combineLayoutTable(source: string, nodeId: string, operations: NamuAstFinalEditOperation[]) {
+function isTableSibling(
+  operation: NamuAstFinalEditOperation,
+  nodeId: string,
+): operation is TableStructureOperation | TableFieldsOperation | TableMediaOperation {
+  return (
+    (operation.op === "table-structure" || operation.op === "table-fields" || operation.op === "table-media") &&
+    operation.nodeId === nodeId
+  );
+}
+
+function combineTable(source: string, nodeId: string, operations: NamuAstFinalEditOperation[]) {
   const document = parseNamuMarkAstForEditing(source);
   const node = document.blocks.find((block) => block.id === nodeId);
   if (!node || node.type !== "table") throw conflict("The selected table no longer exists. Reload and try again.");
 
-  const layouts = operations.filter((operation): operation is Extract<NamuAstFinalEditOperation, { op: "table-layout" }> => isLayout(operation) && operation.nodeId === nodeId);
-  if (!layouts.length) throw badRequest("No table layout operation was supplied");
-
-  const actions = layouts.flatMap((operation) => Array.isArray(operation.actions) ? operation.actions : []);
-  if (!actions.length) throw badRequest("No table layout actions were supplied");
-
   const fields: Array<{ fieldId: string; proposedWikitext: string }> = [];
   const templateParams: Array<{ callId: string; paramId: string; proposedValue: string }> = [];
-  const mediaCalls: any[] = [];
+  const mediaCalls: TableMediaOperation["mediaCalls"] = [];
+  const styles: NamuTableCellStyleChange[] = [];
+  const layouts: NamuTableLayoutAction[] = [];
 
   for (const operation of operations) {
-    if (!isTableSibling(operation, nodeId)) continue;
-    if (operation.op === "table-fields") fields.push(...(operation.changes || []));
-    if (operation.op === "table-structure") {
-      fields.push(...(operation.fields || []));
-      templateParams.push(...(operation.templateParams || []));
+    if (isTableSibling(operation, nodeId)) {
+      if (operation.op === "table-fields") fields.push(...(operation.changes || []));
+      if (operation.op === "table-structure") {
+        fields.push(...(operation.fields || []));
+        templateParams.push(...(operation.templateParams || []));
+      }
+      if (operation.op === "table-media") mediaCalls.push(...(operation.mediaCalls || []));
+      continue;
     }
-    if (operation.op === "table-media") mediaCalls.push(...(operation.mediaCalls || []));
+    if (isStyle(operation) && operation.nodeId === nodeId) styles.push(...(operation.changes || []));
+    if (isLayout(operation) && operation.nodeId === nodeId) layouts.push(...(operation.actions || []));
   }
 
   let raw = node.raw;
@@ -61,7 +75,9 @@ function combineLayoutTable(source: string, nodeId: string, operations: NamuAstF
       mediaCalls: mediaCalls.length ? mediaCalls : undefined,
     }).proposed;
   }
-  return applyNamuTableLayoutChanges(raw, actions).proposed;
+  if (styles.length) raw = applyNamuTableCellStyleChanges(raw, styles).proposed;
+  if (layouts.length) raw = applyNamuTableLayoutChanges(raw, layouts).proposed;
+  return raw;
 }
 
 export function applyNamuAstOperationsFinal(source: string, operations: NamuAstFinalEditOperation[]) {
@@ -74,28 +90,35 @@ export function applyNamuAstOperationsFinal(source: string, operations: NamuAstF
       .map((operation) => operation.nodeId),
   );
 
-  const layoutNodeIds = Array.from(new Set(
+  const specialTableNodeIds = Array.from(new Set(
     operations
-      .filter((operation): operation is Extract<NamuAstFinalEditOperation, { op: "table-layout" }> => isLayout(operation))
+      .filter((operation): operation is LayoutOperation | StyleOperation => isLayout(operation) || isStyle(operation))
       .map((operation) => operation.nodeId)
       .filter((nodeId) => !deleted.has(nodeId)),
   ));
 
-  if (!layoutNodeIds.length) return applyNamuAstOperationsComplete(source, operations as NamuAstCompleteEditOperation[]);
+  if (!specialTableNodeIds.length) {
+    const baseOnly = operations.filter((operation) => !isLayout(operation) && !isStyle(operation)) as NamuAstCompleteEditOperation[];
+    return applyNamuAstOperationsComplete(source, baseOnly);
+  }
 
   const replacements = new Map<string, string>();
-  for (const nodeId of layoutNodeIds) replacements.set(nodeId, combineLayoutTable(source, nodeId, operations));
+  for (const nodeId of specialTableNodeIds) replacements.set(nodeId, combineTable(source, nodeId, operations));
 
-  const consumed = new Set(layoutNodeIds);
+  const consumed = new Set(specialTableNodeIds);
   const normalized: NamuAstCompleteEditOperation[] = [];
   for (const operation of operations) {
-    if (isLayout(operation)) continue;
-    if ("nodeId" in operation && consumed.has(operation.nodeId)) {
-      if (operation.op === "delete-node") normalized.push(operation);
-      else if (operation.op === "table-structure" || operation.op === "table-fields" || operation.op === "table-media") continue;
-      else if (operation.op === "replace-raw") throw badRequest("Table layout cannot be combined with Advanced raw replacement on the same table");
-      else normalized.push(operation as NamuAstCompleteEditOperation);
-      continue;
+    if (isLayout(operation) || isStyle(operation)) continue;
+
+    if ("nodeId" in operation && operation.nodeId && consumed.has(operation.nodeId)) {
+      if (operation.op === "delete-node") {
+        normalized.push(operation);
+        continue;
+      }
+      if (operation.op === "table-structure" || operation.op === "table-fields" || operation.op === "table-media") continue;
+      if (operation.op === "replace-raw") {
+        throw badRequest("Table visual/style/layout changes cannot be combined with Advanced raw replacement on the same table");
+      }
     }
     normalized.push(operation as NamuAstCompleteEditOperation);
   }
@@ -103,6 +126,5 @@ export function applyNamuAstOperationsFinal(source: string, operations: NamuAstF
   for (const [nodeId, wikitext] of replacements.entries()) {
     if (!deleted.has(nodeId)) normalized.push({ op: "replace-raw", nodeId, wikitext });
   }
-
   return applyNamuAstOperationsComplete(source, normalized);
 }
