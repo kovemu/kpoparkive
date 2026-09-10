@@ -97,6 +97,13 @@ type DirectSurfaceRecord = {
   cleanup: () => void;
 };
 
+type GenericTextSurfaceRecord = {
+  sectionKey: string;
+  originalText: string;
+  surface: HTMLElement;
+  cleanup: () => void;
+};
+
 type HeadingSurfaceRecord = {
   sectionKey: string;
   sectionIndex: number;
@@ -241,6 +248,29 @@ body.kpoparkivePageEditing .wiki-edit-section { display: none !important; }
   cursor: pointer;
 }
 .kpoparkiveInsertMenuFloating button:hover { background: #f1edfb; color: #5730c0; }
+.thetreeWikiBaseline.kpoparkiveWholePageEditCanvas {
+  outline: 2px solid rgba(107, 60, 232, .42);
+  outline-offset: 10px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 5px rgba(107, 60, 232, .035);
+}
+.kpoparkiveGenericTextSurface {
+  border: 0;
+  border-radius: 3px;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  caret-color: #6b3ce8;
+  cursor: text;
+}
+.kpoparkiveGenericTextSurface:hover {
+  background: rgba(107, 60, 232, .055);
+  box-shadow: 0 0 0 2px rgba(107, 60, 232, .055);
+}
+.kpoparkiveGenericTextSurface:focus {
+  background: rgba(107, 60, 232, .08);
+  box-shadow: 0 0 0 2px rgba(107, 60, 232, .18);
+}
 .kpoparkivePageEditSurface,
 .kpoparkiveTableInlineSurface,
 .kpoparkiveTemplateInlineSurface { caret-color: #6b3ce8; }
@@ -534,6 +564,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
 
   const surfacesRef = useRef<SurfaceRecord[]>([]);
   const directSurfacesRef = useRef<DirectSurfaceRecord[]>([]);
+  const genericTextSurfacesRef = useRef<GenericTextSurfaceRecord[]>([]);
   const headingSurfacesRef = useRef<HeadingSurfaceRecord[]>([]);
   const activeEditorRef = useRef<HTMLElement | null>(null);
   const activeSectionRef = useRef<string>("section:1");
@@ -566,6 +597,8 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
   };
 
   const restoreSurfaces = () => {
+    for (const item of genericTextSurfacesRef.current.slice().reverse()) item.cleanup();
+    genericTextSurfacesRef.current = [];
     for (const item of directSurfacesRef.current.slice().reverse()) item.cleanup();
     directSurfacesRef.current = [];
     for (const item of surfacesRef.current) {
@@ -581,6 +614,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
     headingSurfacesRef.current = [];
     activeEditorRef.current = null;
     setActiveHeadingKey(null);
+    document.querySelector<HTMLElement>(".thetreeWikiBaseline")?.classList.remove("kpoparkiveWholePageEditCanvas");
     document.body.classList.remove("kpoparkivePageEditing");
   };
 
@@ -620,6 +654,68 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
       headingSurfacesRef.current.push(record);
     }
   };
+
+  const buildGenericTextSurfaces = (sectionRoots: Map<number, HTMLElement>) => {
+  const article = document.querySelector<HTMLElement>(".thetreeWikiBaseline");
+  if (!article) return;
+  article.classList.add("kpoparkiveWholePageEditCanvas");
+  const excludedSelector = [
+    ".kpoparkivePageEditSurface", ".kpoparkiveTableInlineSurface", ".kpoparkiveTemplateInlineSurface",
+    ".kpoparkiveHeadingEditSurface", ".kpoparkiveDirectOriginalHolder",
+    "[data-kpoparkive-page-edit-hidden='1']", "[data-kpoparkive-direct-hidden='1']",
+    ".wiki-heading", ".wiki-edit-section", ".wiki-toc", ".wiki-macro-toc",
+    ".kpoparkivePageEditorToolbar", ".kpoparkivePageEditorStatus", ".kpoparkiveGenericInspector",
+    "script", "style", "textarea", "input", "button", "select", "option",
+    "iframe", "video", "audio", "canvas", "svg", "math", "noscript", "nav",
+  ].join(",");
+  const roots = Array.from(sectionRoots.entries());
+  const sectionKeyForNode = (node: Node) => {
+    for (const [sectionIndex, root] of roots) if (root.contains(node)) return `section:${sectionIndex}`;
+    return "section:0";
+  };
+  const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) if (current instanceof Text) nodes.push(current);
+  for (const node of nodes) {
+    if (!node.isConnected) continue;
+    const parent = node.parentElement;
+    const raw = node.nodeValue || "";
+    const match = raw.match(/^(\s*)([\s\S]*?\S)(\s*)$/);
+    if (!parent || !match || parent.closest(excludedSelector)) continue;
+    if (parent.closest("[contenteditable='true'], [contenteditable='plaintext-only'], [hidden], [aria-hidden='true']")) continue;
+    const style = window.getComputedStyle(parent);
+    if (style.display === "none" || style.visibility === "hidden") continue;
+    const [_, prefix, originalText, suffix] = match;
+    if (!normalized(originalText)) continue;
+    const prefixNode = document.createTextNode(prefix);
+    const suffixNode = document.createTextNode(suffix);
+    const surface = document.createElement("span");
+    surface.className = "kpoparkiveGenericTextSurface";
+    surface.contentEditable = "plaintext-only";
+    surface.spellcheck = true;
+    surface.textContent = originalText;
+    const sectionKey = sectionKeyForNode(parent);
+    surface.dataset.sectionKey = sectionKey;
+    surface.dataset.editorKind = "generic-text";
+    surface.addEventListener("focus", () => activateSection(sectionKey, surface, null));
+    surface.addEventListener("click", (event) => { if ((event.target as Element | null)?.closest("a")) event.preventDefault(); });
+    surface.addEventListener("keydown", (event) => { if (event.key === "Enter") event.preventDefault(); });
+    parent.insertBefore(prefixNode, node);
+    parent.insertBefore(surface, node);
+    parent.insertBefore(suffixNode, node);
+    node.remove();
+    genericTextSurfacesRef.current.push({
+      sectionKey, originalText, surface,
+      cleanup: () => {
+        if (!surface.isConnected && !prefixNode.isConnected && !suffixNode.isConnected) return;
+        const anchor = prefixNode.isConnected ? prefixNode : surface;
+        const host = anchor.parentNode;
+        if (host) host.insertBefore(document.createTextNode(raw), anchor);
+        prefixNode.remove(); surface.remove(); suffixNode.remove();
+      },
+    });
+  }
+};
 
   const buildSurfaces = (data: PagePayload, preferredSectionIndex: number | null) => {
     restoreSurfaces();
@@ -727,6 +823,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
       }
     }
 
+    buildGenericTextSurfaces(sectionRoots);
     document.body.classList.add("kpoparkivePageEditing");
     const preferredKey = preferredSectionIndex === null ? null : `section:${preferredSectionIndex}`;
     if (preferredKey) {
@@ -735,7 +832,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
     }
     const preferredHeading = preferredKey ? headingSurfacesRef.current.find((item) => item.sectionKey === preferredKey) : null;
     const preferredBody = preferredKey
-      ? [...surfacesRef.current.map((item) => ({ sectionKey: item.sectionKey, surface: item.surface })), ...directSurfacesRef.current]
+      ? [...surfacesRef.current.map((item) => ({ sectionKey: item.sectionKey, surface: item.surface })), ...directSurfacesRef.current, ...genericTextSurfacesRef.current]
         .find((item) => item.sectionKey === preferredKey)?.surface
       : null;
     (preferredBody || preferredHeading?.surface)?.focus({ preventScroll: true });
@@ -871,6 +968,10 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
     }))
     .filter((item) => normalized(item.proposedWikitext) !== normalized(item.originalWikitext) || item.level !== item.originalLevel);
 
+  const genericTextChanges = () => genericTextSurfacesRef.current
+  .map((item) => ({ sectionKey: item.sectionKey, originalText: item.originalText, proposedText: item.surface.textContent || "" }))
+  .filter((item) => item.proposedText !== item.originalText);
+
   const templateHasChanges = () => Boolean(payload?.templates.some((template) => {
     const draft = templateDrafts[template.key];
     if (!draft) return false;
@@ -882,6 +983,11 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
   const saveAll = async () => {
     if (!payload || saving) return;
     const headings = headingChanges();
+    const genericTexts = genericTextChanges();
+  if (genericTexts.some((item) => item.proposedText.includes("\n") || item.proposedText.includes("\r"))) {
+    window.alert("Inline page text cannot contain line breaks yet. Use Paragraph or Heading insertion for new blocks.");
+    return;
+  }
     if (headings.some((item) => !normalized(item.proposedWikitext) || item.proposedWikitext.includes("\n"))) {
       window.alert("Section titles must contain one non-empty line.");
       return;
@@ -919,7 +1025,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
       return original !== next;
     });
 
-    if (!blockChanges.length && !tableChanges.length && !templateChanges.length && !headings.length && !insertions.length) {
+    if (!blockChanges.length && !tableChanges.length && !templateChanges.length && !headings.length && !genericTexts.length && !insertions.length) {
       window.alert("No changes were made.");
       return;
     }
@@ -939,6 +1045,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
           tableChanges,
           templateChanges,
           headingChanges: headings.map(({ sectionKey, proposedWikitext, level }) => ({ sectionKey, proposedWikitext, level })),
+          genericTextChanges: genericTexts,
           insertions: insertions.map(({ sectionKey, wikitext }) => ({ sectionKey, wikitext })),
         }),
       });
@@ -960,7 +1067,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
   const cancelAll = () => {
     const textChanged = surfacesRef.current.some((item) => normalized(editorElementToWikitext(item.surface)) !== normalized(item.block.originalWikitext));
     const tableChanged = payload?.tables.some((table) => table.fields.some((field) => normalized(tableDrafts[table.key]?.[field.key] ?? field.valueWikitext) !== normalized(field.valueWikitext))) || false;
-    const changed = insertions.length || textChanged || tableChanged || headingChanges().length || templateHasChanges();
+    const changed = insertions.length || textChanged || tableChanged || headingChanges().length || genericTextChanges().length || templateHasChanges();
     if (changed && !window.confirm("Discard your page edits?")) return;
     restoreSurfaces();
     editingRef.current = false;
@@ -1022,7 +1129,7 @@ export default function FullPageVisualEditorV2({ title }: { title: string }) {
       <div className="kpoparkivePageEditorStatus kpoparkiveEditorV2Status">
         <input value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={500} placeholder="Describe what you changed (optional)" />
         <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} placeholder="Display name (optional)" />
-        <span>Whole page editing · headings, text, tables and templates · Insert location: {currentSectionName}{queuedCount ? ` · ${queuedCount} new block${queuedCount === 1 ? "" : "s"} queued` : ""}</span>
+        <span>Whole page canvas · all visible text is directly editable · headings, tables and templates keep structured editing · Insert location: {currentSectionName}{queuedCount ? ` · ${queuedCount} new block${queuedCount === 1 ? "" : "s"} queued` : ""}</span>
       </div>
 
       {insertOpen ? (
