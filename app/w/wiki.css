@@ -9,6 +9,39 @@
   line-height: 1.5;
 }
 
+.kpoparkiveWikiToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -4px 0 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ece9f2;
+  color: #767986;
+  font-size: 12px;
+}
+
+.kpoparkiveWikiToolbar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpoparkiveWikiToolbar a {
+  flex: 0 0 auto;
+  border: 1px solid #d9d1ef;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #f8f5ff;
+  color: #6d3df2;
+  font-weight: 800;
+}
+
+.kpoparkiveWikiToolbar a:hover {
+  background: #f0ebff;
+  text-decoration: none;
+}
+
 .kpoparkiveRawWikiPage .wiki-content {
   overflow: hidden;
 }
@@ -45,5 +78,9 @@
     width: 100%;
     margin-top: 0;
     padding: 16px;
+  }
+
+  .kpoparkiveWikiToolbar {
+    margin-top: 0;
   }
 }
