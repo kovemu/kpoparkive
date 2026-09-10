@@ -234,6 +234,225 @@
   user-select: none;
 }
 
+/* Contextual infobox editing: keep the wiki table in place and edit safe fields in a side inspector. */
+.kpoparkiveInfoboxEditableHost {
+  position: relative !important;
+}
+
+.kpoparkiveInfoboxEditButton {
+  position: absolute;
+  z-index: 15;
+  top: 7px;
+  right: 7px;
+  height: 27px;
+  border: 1px solid rgba(255, 255, 255, .72);
+  border-radius: 5px;
+  padding: 0 9px;
+  background: rgba(55, 37, 96, .72);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  opacity: .82;
+  backdrop-filter: blur(5px);
+  transition: opacity .12s ease, background .12s ease;
+}
+
+.kpoparkiveInfoboxEditableHost:hover .kpoparkiveInfoboxEditButton,
+.kpoparkiveInfoboxEditableHost.is-infobox-editing .kpoparkiveInfoboxEditButton {
+  opacity: 1;
+  background: #7047d7;
+}
+
+.kpoparkiveInfoboxEditableHost.is-infobox-editing {
+  outline: 2px solid rgba(112, 71, 215, .55);
+  outline-offset: 3px;
+}
+
+.kpoparkiveInfoboxEditorPanel {
+  position: fixed;
+  z-index: 1200;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  width: min(390px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  border: 1px solid #d6cde9;
+  border-radius: 12px;
+  background: #fff;
+  color: #282431;
+  box-shadow: 0 22px 70px rgba(36, 25, 61, .25);
+}
+
+.kpoparkiveInfoboxEditorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid #ece8f2;
+}
+
+.kpoparkiveInfoboxEditorHeader strong {
+  display: block;
+  color: #3f286f;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.kpoparkiveInfoboxEditorHeader span {
+  display: block;
+  margin-top: 4px;
+  color: #77717f;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kpoparkiveInfoboxClose {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6f6877;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.kpoparkiveInfoboxClose:hover {
+  background: #f2eff7;
+  color: #5c37b8;
+}
+
+.kpoparkiveInfoboxToolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #eeeaf3;
+  background: #faf9fc;
+}
+
+.kpoparkiveInfoboxEditorBody {
+  overflow-y: auto;
+  padding: 6px 14px 14px;
+}
+
+.kpoparkiveInfoboxField {
+  padding: 11px 0;
+  border-bottom: 1px solid #efecf3;
+}
+
+.kpoparkiveInfoboxField > label {
+  display: block;
+  margin-bottom: 6px;
+  color: #51485d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kpoparkiveInfoboxFieldSurface {
+  min-height: 38px;
+  border: 1px solid #dcd5e8;
+  border-radius: 6px;
+  padding: 8px 9px;
+  outline: 0;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+  cursor: text;
+}
+
+.kpoparkiveInfoboxFieldSurface:focus {
+  border-color: #8c67db;
+  box-shadow: 0 0 0 3px rgba(112, 71, 215, .10);
+}
+
+.kpoparkiveInfoboxFieldSurface p {
+  margin: 0;
+}
+
+.kpoparkiveInfoboxFieldSurface a {
+  color: #0877cc;
+  text-decoration: none;
+  cursor: text;
+}
+
+.kpoparkiveInfoboxField.is-locked {
+  opacity: .72;
+}
+
+.kpoparkiveInfoboxLockedValue {
+  overflow: hidden;
+  border: 1px dashed #ddd8e4;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: #f7f6f8;
+  color: #77717c;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpoparkiveInfoboxProtectedNote {
+  margin: 12px 0 0;
+  color: #8b8493;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kpoparkiveInfoboxEditorFooter {
+  padding: 11px 14px 13px;
+  border-top: 1px solid #e8e4ee;
+  background: #faf9fc;
+}
+
+.kpoparkiveInfoboxSummary {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ddd7e6;
+  border-radius: 6px;
+  padding: 8px 9px;
+  outline: 0;
+  background: #fff;
+  color: #3a3442;
+  font: inherit;
+  font-size: 12px;
+}
+
+.kpoparkiveInfoboxSummary:focus {
+  border-color: #9a7adb;
+}
+
+.kpoparkiveInfoboxFooterActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.kpoparkiveInfoboxFooterActions button {
+  height: 34px;
+  border-radius: 6px;
+  padding: 0 13px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.kpoparkiveInfoboxFooterActions button:disabled,
+.kpoparkiveInfoboxClose:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
 .kpoparkiveRawWikiMissing {
   width: min(900px, calc(100% - 32px));
   margin: 64px auto;
@@ -280,5 +499,17 @@
 
   .kpoparkiveVisualSummary {
     grid-column: 1;
+  }
+
+  .kpoparkiveInfoboxEditorPanel {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    max-height: min(78vh, 680px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
   }
 }
