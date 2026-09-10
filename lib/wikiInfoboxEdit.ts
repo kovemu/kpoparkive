@@ -34,6 +34,7 @@ type ParsedEditableField = WikiInfoboxField & {
   mode: "literal" | "date";
   templateParam: boolean;
   dateMacroSpans?: DateMacroSpan[];
+  dateLinked?: boolean;
 };
 
 type InternalInfoboxModel = Omit<WikiInfoboxModel, "fields"> & {
@@ -396,7 +397,9 @@ function parseInternal(sourceValue: string): InternalInfoboxModel | null {
     let parsedSomething = false;
 
     if (baseLabel === "데뷔일") {
-      const dateMatch = line.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+      const linkedMatch = line.match(/\[\[(\d{4})년\]\]\s*\[\[(\d{1,2})월\s*(\d{1,2})일\]\]/);
+      const plainMatch = linkedMatch ? null : line.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+      const dateMatch = linkedMatch || plainMatch;
       if (dateMatch && typeof dateMatch.index === "number") {
         const year = Number(dateMatch[1]);
         const month = Number(dateMatch[2]);
@@ -405,22 +408,26 @@ function parseInternal(sourceValue: string): InternalInfoboxModel | null {
         const dateStart = lineStart + dateMatch.index;
         const dateEnd = dateStart + dateMatch[0].length;
         const macroSpans: DateMacroSpan[] = [];
-        const nextLine = localLines[localIndex + 1] || "";
-        const nextStart = offsets[localIndex + 1] ?? 0;
         const originalDate = parseIsoDate(iso);
         if (originalDate) {
-          const macroPattern = /\[(?:dday|age)\((\d{4}-\d{2}-\d{2})\)\]/g;
-          let macroMatch: RegExpExecArray | null;
-          while ((macroMatch = macroPattern.exec(nextLine))) {
-            const macroDate = parseIsoDate(macroMatch[1]);
-            if (!macroDate) continue;
-            const deltaDays = Math.round((macroDate.getTime() - originalDate.getTime()) / 86400000);
-            const valueOffset = macroMatch.index + macroMatch[0].indexOf(macroMatch[1]);
-            macroSpans.push({
-              start: nextStart + valueOffset,
-              end: nextStart + valueOffset + macroMatch[1].length,
-              deltaDays,
-            });
+          const macroSources = [
+            { text: line, start: lineStart },
+            { text: localLines[localIndex + 1] || "", start: offsets[localIndex + 1] ?? 0 },
+          ];
+          for (const macroSource of macroSources) {
+            const macroPattern = /\[(?:dday|age)\((\d{4}-\d{2}-\d{2})\)\]/g;
+            let macroMatch: RegExpExecArray | null;
+            while ((macroMatch = macroPattern.exec(macroSource.text))) {
+              const macroDate = parseIsoDate(macroMatch[1]);
+              if (!macroDate) continue;
+              const deltaDays = Math.round((macroDate.getTime() - originalDate.getTime()) / 86400000);
+              const valueOffset = macroMatch.index + macroMatch[0].indexOf(macroMatch[1]);
+              macroSpans.push({
+                start: macroSource.start + valueOffset,
+                end: macroSource.start + valueOffset + macroMatch[1].length,
+                deltaDays,
+              });
+            }
           }
         }
         const locationLabel = country ? `${baseLabel} · ${country}` : baseLabel;
@@ -430,7 +437,7 @@ function parseInternal(sourceValue: string): InternalInfoboxModel | null {
           group: baseLabel,
           inputKind: "date",
           valueWikitext: iso,
-          plainText: dateMatch[0],
+          plainText: `${year}년 ${month}월 ${day}일`,
           editable: true,
           lockedReason: null,
           lineIndex: startLine + localIndex,
@@ -439,6 +446,7 @@ function parseInternal(sourceValue: string): InternalInfoboxModel | null {
           mode: "date",
           templateParam: false,
           dateMacroSpans: macroSpans,
+          dateLinked: Boolean(linkedMatch),
         });
         parsedSomething = true;
       }
@@ -548,6 +556,7 @@ export function parseWikiInfobox(source: string): WikiInfoboxModel | null {
       mode: _mode,
       templateParam: _templateParam,
       dateMacroSpans: _dateMacroSpans,
+      dateLinked: _dateLinked,
       ...field
     }) => field),
     editableCount: parsed.editableCount,
@@ -582,7 +591,12 @@ export function applyWikiInfoboxChanges(
     if (field.mode === "date") {
       const parsedDate = parseIsoDate(proposed);
       if (!parsedDate) throw new Error(`${field.label} must be a valid date`);
-      const renderedDate = `${parsedDate.getUTCFullYear()}년 ${parsedDate.getUTCMonth() + 1}월 ${parsedDate.getUTCDate()}일`;
+      const year = parsedDate.getUTCFullYear();
+      const month = parsedDate.getUTCMonth() + 1;
+      const day = parsedDate.getUTCDate();
+      const renderedDate = field.dateLinked
+        ? `[[${year}년]] [[${month}월 ${day}일]]`
+        : `${year}년 ${month}월 ${day}일`;
       replacements.push({ start: field.replaceStart, end: field.replaceEnd, value: renderedDate });
       for (const macro of field.dateMacroSpans || []) {
         replacements.push({
