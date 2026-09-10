@@ -1,11 +1,19 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import {
+  applyVisualCommand,
+  editorElementToWikitext,
+  visualEditorPlainText,
+  wikiBlockToEditorHtml,
+  type VisualEditToolbarCommand,
+} from "../../lib/wikiVisualEdit";
 
 type EasyBlock = {
   key: string;
   blockIndex: number;
   plainText: string;
+  originalWikitext: string;
   editable: boolean;
   lockedReason: string | null;
 };
@@ -21,6 +29,7 @@ type EasySection = {
 
 type EasyEditResponse = {
   ok: boolean;
+  editorVersion?: string;
   document: {
     title: string;
     publicRevisionNo: number;
@@ -29,12 +38,20 @@ type EasyEditResponse = {
   sections: EasySection[];
 };
 
+type EditorItem = {
+  block: EasyBlock;
+  node: HTMLElement;
+  wrapper: HTMLElement;
+  original: HTMLElement | null;
+};
+
 type ActiveEdit = {
   sectionKey: string;
   headingContent: HTMLElement;
-  toolbar: HTMLElement;
+  shell: HTMLElement;
   originals: HTMLElement[];
-  editors: Array<{ block: EasyBlock; node: HTMLElement; original: HTMLElement | null }>;
+  editors: EditorItem[];
+  activeNode: HTMLElement | null;
 };
 
 function normalized(value: string) {
@@ -43,8 +60,7 @@ function normalized(value: string) {
     .replace(/\u00a0/g, " ")
     .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
     .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/ *\n */g, "\n")
+    .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -122,36 +138,21 @@ function findBestCandidate(root: HTMLElement, block: EasyBlock, used: Set<HTMLEl
       bestScore = score;
     }
   }
-  return bestScore >= 0.62 ? best : null;
+  return bestScore >= 0.58 ? best : null;
 }
 
-function serializeEditable(node: HTMLElement, originalPlainText: string) {
-  const items = Array.from(node.querySelectorAll<HTMLElement>("li"));
-  if (items.length) {
-    const lines = items
-      .map((item) => normalized(item.innerText || item.textContent || ""))
-      .filter(Boolean)
-      .map((item) => `• ${item}`);
-    if (lines.length) return lines.join("\n");
-  }
-
-  const text = normalized(node.innerText || node.textContent || "");
-  if (/^•\s/m.test(originalPlainText) && text && !/^•\s/m.test(text)) {
-    return text
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => `• ${line.replace(/^[-*•]\s*/, "")}`)
-      .join("\n");
-  }
-  return text;
-}
-
-function createButton(label: string, className: string) {
+function createButton(label: string, className: string, title?: string) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
   button.textContent = label;
+  if (title) button.title = title;
+  return button;
+}
+
+function commandButton(label: string, command: VisualEditToolbarCommand, title: string) {
+  const button = createButton(label, "kpoparkiveVisualTool", title);
+  button.dataset.command = command;
   return button;
 }
 
@@ -182,8 +183,8 @@ export default function InlineSectionEditor({ title }: { title: string }) {
         original.style.removeProperty("display");
         original.removeAttribute("data-kpoparkive-inline-hidden");
       }
-      for (const editor of active.editors) editor.node.remove();
-      active.toolbar.remove();
+      for (const editor of active.editors) editor.wrapper.remove();
+      active.shell.remove();
       active.headingContent.classList.remove("kpoparkiveSectionEditing");
       activeRef.current = null;
     };
@@ -211,80 +212,119 @@ export default function InlineSectionEditor({ title }: { title: string }) {
         return;
       }
 
-      const editableBlocks = section.blocks.filter((block) => block.editable);
+      const editableBlocks = section.blocks.filter((block) => block.editable && block.originalWikitext);
       if (!editableBlocks.length) {
-        window.alert("This section currently contains only protected tables, templates, media, or other structured blocks. Structured visual editing will be added separately.");
+        window.alert("This section is currently a protected table, template, media block, or other structured wiki element. Visual editors for those blocks will be added separately.");
         return;
       }
 
+      const shell = document.createElement("div");
+      shell.className = "kpoparkiveVisualEditorShell";
+
       const toolbar = document.createElement("div");
-      toolbar.className = "kpoparkiveInlineEditToolbar";
-      toolbar.innerHTML = `
-        <div class="kpoparkiveInlineEditTitle">
-          <strong>Editing: ${section.heading.replace(/[<&]/g, "")}</strong>
-          <span>Edit the page directly. Tables, templates, media, links and references are preserved unless they are inside an editable text block.</span>
-        </div>
-      `;
+      toolbar.className = "kpoparkiveVisualToolbar";
+
+      const commandGroups: Array<Array<[string, VisualEditToolbarCommand, string]>> = [
+        [["↶", "undo", "Undo"], ["↷", "redo", "Redo"]],
+        [["B", "bold", "Bold"], ["I", "italic", "Italic"], ["S", "strike", "Strikethrough"]],
+        [["• List", "bulletList", "Bulleted list"], ["Link", "link", "Add wiki or web link"], ["Cite", "citation", "Add citation / footnote"]],
+      ];
+
+      for (const groupSpec of commandGroups) {
+        const group = document.createElement("div");
+        group.className = "kpoparkiveVisualToolGroup";
+        for (const [label, command, tooltip] of groupSpec) {
+          const button = commandButton(label, command, tooltip);
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", () => {
+            const active = activeRef.current;
+            if (!active) return;
+            applyVisualCommand(command, active.activeNode || active.editors[0]?.node || null);
+          });
+          group.append(button);
+        }
+        toolbar.append(group);
+      }
+
+      const spacer = document.createElement("div");
+      spacer.className = "kpoparkiveVisualToolbarSpacer";
+      toolbar.append(spacer);
+
+      const mode = document.createElement("span");
+      mode.className = "kpoparkiveVisualMode";
+      mode.textContent = "VISUAL EDITOR";
+      toolbar.append(mode);
 
       const actions = document.createElement("div");
-      actions.className = "kpoparkiveInlineEditActions";
-      const cancelButton = createButton("Cancel", "kpoparkiveInlineCancel");
-      const submitButton = createButton("Submit", "kpoparkiveInlineSubmit");
+      actions.className = "kpoparkiveVisualActions";
+      const cancelButton = createButton("Cancel", "kpoparkiveVisualCancel");
+      const submitButton = createButton("Submit", "kpoparkiveVisualSubmit");
       actions.append(cancelButton, submitButton);
-      toolbar.append(actions);
 
+      const meta = document.createElement("div");
+      meta.className = "kpoparkiveVisualMeta";
+      const metaTitle = document.createElement("strong");
+      metaTitle.textContent = `Editing ${section.heading}`;
       const summary = document.createElement("input");
       summary.type = "text";
       summary.maxLength = 500;
       summary.placeholder = "Describe what you changed (optional)";
-      summary.className = "kpoparkiveInlineSummary";
-      toolbar.append(summary);
+      summary.className = "kpoparkiveVisualSummary";
+      meta.append(metaTitle, summary, actions);
 
-      headingContent.parentElement?.insertBefore(toolbar, headingContent);
+      shell.append(toolbar, meta);
+      headingContent.parentElement?.insertBefore(shell, headingContent);
       headingContent.classList.add("kpoparkiveSectionEditing");
 
       const used = new Set<HTMLElement>();
       const originals: HTMLElement[] = [];
-      const editors: ActiveEdit["editors"] = [];
+      const editors: EditorItem[] = [];
 
       for (const block of editableBlocks) {
         const original = findBestCandidate(headingContent, block, used);
-        let editorNode: HTMLElement;
-
         if (original) {
           used.add(original);
           original.dataset.kpoparkiveInlineHidden = "1";
           original.style.display = "none";
           originals.push(original);
-          editorNode = original.cloneNode(true) as HTMLElement;
-          editorNode.style.removeProperty("display");
-          editorNode.removeAttribute("data-kpoparkive-inline-hidden");
-          editorNode.removeAttribute("id");
-          original.insertAdjacentElement("afterend", editorNode);
-        } else {
-          editorNode = document.createElement("div");
-          editorNode.textContent = block.plainText;
-          headingContent.prepend(editorNode);
         }
 
-        editorNode.classList.add("kpoparkiveInlineEditableBlock");
+        const wrapper = document.createElement("div");
+        wrapper.className = "kpoparkiveVisualBlock";
+        wrapper.dataset.blockKey = block.key;
+
+        const editorNode = document.createElement("div");
+        editorNode.className = "kpoparkiveVisualSurface";
         editorNode.contentEditable = "true";
         editorNode.spellcheck = true;
-        editorNode.dataset.blockKey = block.key;
         editorNode.setAttribute("role", "textbox");
         editorNode.setAttribute("aria-label", `Edit ${section.heading}`);
-        editorNode.querySelectorAll("a").forEach((link) => {
-          link.addEventListener("click", (event) => event.preventDefault());
+        editorNode.innerHTML = wikiBlockToEditorHtml(block.originalWikitext);
+
+        editorNode.addEventListener("focus", () => {
+          if (activeRef.current) activeRef.current.activeNode = editorNode;
+          wrapper.classList.add("is-active");
         });
-        editors.push({ block, node: editorNode, original });
+        editorNode.addEventListener("blur", () => wrapper.classList.remove("is-active"));
+        editorNode.addEventListener("click", (event) => {
+          const link = (event.target as Element | null)?.closest("a");
+          if (link) event.preventDefault();
+          if (activeRef.current) activeRef.current.activeNode = editorNode;
+        });
+
+        wrapper.append(editorNode);
+        if (original) original.insertAdjacentElement("afterend", wrapper);
+        else headingContent.append(wrapper);
+        editors.push({ block, node: editorNode, wrapper, original });
       }
 
       const active: ActiveEdit = {
         sectionKey,
         headingContent,
-        toolbar,
+        shell,
         originals,
         editors,
+        activeNode: editors[0]?.node || null,
       };
       activeRef.current = active;
 
@@ -293,9 +333,10 @@ export default function InlineSectionEditor({ title }: { title: string }) {
         const changes = editors
           .map(({ block, node }) => ({
             block,
-            proposedText: serializeEditable(node, block.plainText),
+            proposedWikitext: editorElementToWikitext(node),
+            proposedText: visualEditorPlainText(node),
           }))
-          .filter(({ block, proposedText }) => normalized(proposedText) !== normalized(block.plainText));
+          .filter(({ block, proposedWikitext }) => normalized(proposedWikitext) !== normalized(block.originalWikitext));
 
         if (!changes.length) {
           window.alert("No changes were made.");
@@ -315,6 +356,7 @@ export default function InlineSectionEditor({ title }: { title: string }) {
                 title,
                 blockKey: change.block.key,
                 proposedText: change.proposedText,
+                proposedWikitext: change.proposedWikitext,
                 summary: summary.value,
                 baseRevisionNo: data.document.publicRevisionNo,
                 website: "",
