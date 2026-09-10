@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { findEasyEditBlock, parseEasyEditSections } from "../../../lib/wikiEasyEdit";
 import { applyWikiInfoboxChanges, parseWikiInfobox } from "../../../lib/wikiInfoboxEdit";
+import { applyWikiTableChanges, parseWikiTables } from "../../../lib/wikiTableEdit";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -135,10 +136,11 @@ export async function GET(request: Request) {
     }));
 
     const infobox = parseWikiInfobox(source);
+    const tables = parseWikiTables(source);
 
     return response({
       ok: true,
-      editorVersion: "visual-v1.2",
+      editorVersion: "visual-v1.3",
       document: {
         title: document.source_title,
         publicRevisionNo: document.content_status === "published" ? document.content_revision_no : 0,
@@ -160,6 +162,7 @@ export async function GET(request: Request) {
           lockedReason: field.lockedReason,
         })),
       } : null,
+      tables,
     });
   } catch (error) {
     return errorResponse(error);
@@ -169,12 +172,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as {
-      kind?: "block" | "infobox";
+      kind?: "block" | "infobox" | "table";
       title?: string;
       blockKey?: string;
       proposedText?: string;
       proposedWikitext?: string;
       infoboxChanges?: Array<{ key?: string; proposedWikitext?: string }>;
+      tableChanges?: Array<{ key?: string; proposedWikitext?: string }>;
       summary?: string;
       displayName?: string;
       baseRevisionNo?: number;
@@ -252,8 +256,67 @@ export async function POST(request: Request) {
         ok: true,
         submitted: true,
         proposalId: inserted[0]?.id || null,
-        editorVersion: "visual-v1.2",
+        editorVersion: "visual-v1.3",
         changedFields: result.changedFields.map((field) => field.label),
+      });
+    }
+
+    if (body.kind === "table") {
+      const blockKey = (body.blockKey || "").trim();
+      const changes = (Array.isArray(body.tableChanges) ? body.tableChanges : [])
+        .map((change) => ({
+          key: String(change?.key || "").trim(),
+          proposedWikitext: normalizeWiki(String(change?.proposedWikitext || "")),
+        }))
+        .filter((change) => change.key && change.proposedWikitext);
+
+      if (!blockKey) return errorResponse(new Error("blockKey is required for table edits"), 400);
+      if (!changes.length) return errorResponse(new Error("No table changes were supplied"), 400);
+      if (changes.length > 100) return errorResponse(new Error("Too many table cells were changed at once"), 400);
+
+      let result: ReturnType<typeof applyWikiTableChanges>;
+      try {
+        result = applyWikiTableChanges(source, blockKey, changes);
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+
+      const originalPlainText = result.parsed.fields
+        .map((field) => `${field.label}: ${field.plainText}`)
+        .join("\n")
+        .slice(0, MAX_PROPOSAL_CHARS);
+      const proposedPlainText = result.changedCells
+        .map((cell) => `${cell.label}: ${cell.proposed}`)
+        .join("\n")
+        .slice(0, MAX_PROPOSAL_CHARS);
+
+      const inserted = await db<Array<{ id: string; created_at: string }>>("source_edit_proposals", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          source_document_id: document.id,
+          source_title: document.source_title,
+          section_key: result.found.section.key,
+          section_heading: `${result.found.section.heading} · Table`,
+          block_index: result.found.block.blockIndex,
+          base_revision_no: publicRevisionNo,
+          original_wikitext: result.parsed.originalWikitext,
+          original_plain_text: originalPlainText,
+          proposed_plain_text: proposedPlainText,
+          proposed_wikitext: result.proposedTable,
+          summary,
+          display_name: displayName,
+          submitter_hash: hash,
+          status: "pending",
+        }),
+      });
+
+      return response({
+        ok: true,
+        submitted: true,
+        proposalId: inserted[0]?.id || null,
+        editorVersion: "visual-v1.3",
+        changedCells: result.changedCells.map((cell) => cell.label),
       });
     }
 
@@ -296,7 +359,7 @@ export async function POST(request: Request) {
       }),
     });
 
-    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1.2" });
+    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1.3" });
   } catch (error) {
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) || 500 : 500;
     return errorResponse(error, status);
