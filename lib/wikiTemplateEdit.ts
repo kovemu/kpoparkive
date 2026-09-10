@@ -71,8 +71,7 @@ function topLevelEquals(value: string) {
 }
 
 function findIncludeEnd(source: string, start: number) {
-  const open = source.slice(start, start + 9).toLowerCase();
-  if (open !== "[include(") return -1;
+  if (source.slice(start, start + 9).toLowerCase() !== "[include(") return -1;
   let depth = 1;
   let square = 0;
   for (let i = start + 9; i < source.length; i += 1) {
@@ -83,7 +82,6 @@ function findIncludeEnd(source: string, start: number) {
     if (square > 0) continue;
     if (char === "(") depth += 1;
     else if (char === ")") depth -= 1;
-    else if (char === "]" && depth === 0) return i;
     if (depth === 0 && source[i + 1] === "]") return i + 1;
   }
   return -1;
@@ -106,15 +104,13 @@ export function parseWikiTemplates(input: string): WikiTemplateModel[] {
     const name = parts.shift() || "";
     const params: WikiTemplateParam[] = parts.map((part, index) => {
       const eq = topLevelEquals(part);
-      if (eq < 0) {
-        return { key: `p:${index + 1}`, name: null, value: part.trim(), positional: true };
-      }
+      if (eq < 0) return { key: `p:${index + 1}`, name: null, value: part.trim(), positional: true };
       const paramName = part.slice(0, eq).trim();
-      const value = part.slice(eq + 1).trim();
-      return { key: `n:${paramName}:${index}`, name: paramName, value, positional: false };
+      return { key: `n:${paramName}:${index}`, name: paramName, value: part.slice(eq + 1).trim(), positional: false };
     });
+    const ordinal = models.length;
     models.push({
-      key: `template:${start}`,
+      key: `template:${ordinal}:${name}`,
       name,
       start,
       end: end + 1,
