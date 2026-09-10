@@ -151,6 +151,10 @@ function sourceTitleFromSegments(segments: string[]) {
   return segments.map((segment) => decodeURIComponent(segment)).join("/").normalize("NFKC").trim();
 }
 
+function easyEditPath(title: string) {
+  return `/edit/${title.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
 export default async function RawWikiPage({ params }: { params: Promise<{ title: string[] }> }) {
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
@@ -202,6 +206,10 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
     <>
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
       <main className="kpoparkiveRawWikiPage">
+        <div className="kpoparkiveWikiToolbar">
+          <span>{source.source_title}</span>
+          <a href={easyEditPath(source.source_title)}>Suggest edit</a>
+        </div>
         <TheTreeRuntimeBridge />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
