@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
-import { parseNamuTableAst } from "../../../lib/namumarkTableAst";
+import { parseNamuTableAstLossless as parseNamuTableAst } from "../../../lib/namumarkTableAstLossless";
 import { parseNamuTemplateAst, scanNamuTemplateCalls } from "../../../lib/namumarkTemplateAst";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");

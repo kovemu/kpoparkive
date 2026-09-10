@@ -7,7 +7,6 @@ import {
   type NamuAstText,
 } from "./namumarkAst";
 import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
-import { applyNamuTableFieldChanges } from "./namumarkTableAst";
 import { applyNamuTableStructuredChanges } from "./namumarkTableStructuredEdit";
 import { applyNamuTemplateParamChanges } from "./namumarkTemplateAst";
 
@@ -162,7 +161,7 @@ function tableFieldReplacement(nodeRaw: string, changes: Array<{ fieldId: string
   if (!Array.isArray(changes) || !changes.length) throw badRequest("No table field changes were supplied");
   if (changes.length > 200) throw badRequest("Too many table cell edits in one table");
   try {
-    return applyNamuTableFieldChanges(nodeRaw, changes).proposed;
+    return applyNamuTableStructuredChanges(nodeRaw, { fields: changes }).proposed;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not apply table field edits";
     if (/no longer exists/i.test(message)) throw conflict(message);
@@ -222,7 +221,7 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
     after = replacementForLink(link, operation.target, operation.label);
   } else if (operation.op === "set-heading") {
     const heading = asHeadingNode(node);
-    after = headingReplacement(heading, operation.text, operation.level);
+    after = headingReplacement(node, operation.text, operation.level);
   } else if (operation.op === "replace-node") {
     if (!editableNodeReplacementAllowed(node.type)) throw badRequest(`Visual node replacement is not allowed for ${node.type} nodes`);
     after = validateEditableNodeReplacement(node.type, node.raw, operation.wikitext);

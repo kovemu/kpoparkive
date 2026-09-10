@@ -1,4 +1,7 @@
-import { applyNamuTableFieldChanges, parseNamuTableAst } from "./namumarkTableAst";
+import {
+  applyNamuTableFieldChangesLossless as applyNamuTableFieldChanges,
+  parseNamuTableAstLossless as parseNamuTableAst,
+} from "./namumarkTableAstLossless";
 import { applyNamuTemplateCallParamChanges, scanNamuTemplateCalls } from "./namumarkTemplateAst";
 
 export type NamuTableStructuredChanges = {
