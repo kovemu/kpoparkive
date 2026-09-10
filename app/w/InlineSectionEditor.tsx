@@ -45,6 +45,26 @@ type InfoboxEditModel = {
   fields: InfoboxField[];
 };
 
+type TableField = {
+  key: string;
+  row: number;
+  column: number;
+  label: string;
+  valueWikitext: string;
+  plainText: string;
+};
+
+type TableEditModel = {
+  key: string;
+  sectionKey: string;
+  sectionHeading: string;
+  blockKey: string;
+  blockIndex: number;
+  editableCount: number;
+  lockedCount: number;
+  fields: TableField[];
+};
+
 type EasyEditResponse = {
   ok: boolean;
   editorVersion?: string;
@@ -55,6 +75,7 @@ type EasyEditResponse = {
   };
   sections: EasySection[];
   infobox?: InfoboxEditModel | null;
+  tables?: TableEditModel[];
 };
 
 type EditorItem = {
@@ -75,6 +96,12 @@ type ActiveEdit = {
 
 type InfoboxEditorItem = {
   field: InfoboxField;
+  node: HTMLElement;
+};
+
+type TableEditorItem = {
+  model: TableEditModel;
+  field: TableField;
   node: HTMLElement;
 };
 
@@ -232,6 +259,7 @@ export default function InlineSectionEditor({ title }: { title: string }) {
   useEffect(() => {
     let disposed = false;
     let infoboxPanel: HTMLElement | null = null;
+    let tablePanel: HTMLElement | null = null;
     let infoboxEditButton: HTMLButtonElement | null = null;
     let infoboxHost: HTMLElement | null = null;
 
@@ -267,8 +295,14 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       infoboxHost?.classList.remove("is-infobox-editing");
     };
 
+    const closeTableEditor = () => {
+      tablePanel?.remove();
+      tablePanel = null;
+    };
+
     const openInfoboxEditor = async () => {
       closeEditor();
+      closeTableEditor();
       closeInfoboxEditor();
 
       let data: EasyEditResponse;
@@ -470,12 +504,185 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       editorItems[0]?.node.focus();
     };
 
+    const openTableEditor = (section: EasySection, models: TableEditModel[], data: EasyEditResponse) => {
+      closeEditor();
+      closeInfoboxEditor();
+      closeTableEditor();
+
+      const panel = document.createElement("aside");
+      panel.className = "kpoparkiveInfoboxEditorPanel kpoparkiveTableEditorPanel";
+      panel.setAttribute("aria-label", `Edit tables in ${section.heading}`);
+
+      const header = document.createElement("div");
+      header.className = "kpoparkiveInfoboxEditorHeader";
+      const heading = document.createElement("div");
+      const editableTotal = models.reduce((sum, model) => sum + model.editableCount, 0);
+      const lockedTotal = models.reduce((sum, model) => sum + model.lockedCount, 0);
+      heading.innerHTML = `<strong>Edit ${section.heading} table</strong><span>${editableTotal} safe cell${editableTotal === 1 ? "" : "s"} can be changed. Row/column options, colors, spans, files, templates and other structural NamuMark stay untouched.</span>`;
+      const closeButton = createButton("×", "kpoparkiveInfoboxClose", "Close table editor");
+      header.append(heading, closeButton);
+
+      const miniToolbar = document.createElement("div");
+      miniToolbar.className = "kpoparkiveInfoboxToolbar";
+      let activeFieldNode: HTMLElement | null = null;
+      const tableCommands: Array<[string, VisualEditToolbarCommand, string]> = [
+        ["B", "bold", "Bold"],
+        ["I", "italic", "Italic"],
+        ["Link", "link", "Add wiki or web link"],
+      ];
+      for (const [label, command, tooltip] of tableCommands) {
+        const button = commandButton(label, command, tooltip);
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", () => applyVisualCommand(command, activeFieldNode));
+        miniToolbar.append(button);
+      }
+
+      const body = document.createElement("div");
+      body.className = "kpoparkiveInfoboxEditorBody kpoparkiveTableEditorBody";
+      const editorItems: TableEditorItem[] = [];
+
+      models.forEach((model, modelIndex) => {
+        const tableGroup = document.createElement("section");
+        tableGroup.className = "kpoparkiveInfoboxGroup kpoparkiveTableGroup";
+        const tableHeading = document.createElement("div");
+        tableHeading.className = "kpoparkiveInfoboxGroupTitle";
+        tableHeading.textContent = models.length === 1 ? "Table" : `Table ${modelIndex + 1}`;
+        tableGroup.append(tableHeading);
+
+        const rows = new Map<number, TableField[]>();
+        for (const field of model.fields) {
+          const row = rows.get(field.row) || [];
+          row.push(field);
+          rows.set(field.row, row);
+        }
+
+        for (const [rowNumber, fields] of rows) {
+          const rowGroup = document.createElement("div");
+          rowGroup.className = "kpoparkiveTableRow";
+          const rowHeading = document.createElement("div");
+          rowHeading.className = "kpoparkiveTableRowTitle";
+          rowHeading.textContent = `Row ${rowNumber}`;
+          rowGroup.append(rowHeading);
+
+          for (const field of fields) {
+            const fieldWrap = document.createElement("div");
+            fieldWrap.className = "kpoparkiveInfoboxField kpoparkiveTableField";
+            const label = document.createElement("label");
+            label.textContent = `Column ${field.column}`;
+            label.title = field.plainText;
+            const surface = document.createElement("div");
+            surface.className = "kpoparkiveInfoboxFieldSurface kpoparkiveTableFieldSurface";
+            surface.contentEditable = "true";
+            surface.spellcheck = true;
+            surface.setAttribute("role", "textbox");
+            surface.setAttribute("aria-label", `${section.heading} row ${field.row} column ${field.column}`);
+            surface.innerHTML = wikiBlockToEditorHtml(field.valueWikitext);
+            surface.addEventListener("focus", () => { activeFieldNode = surface; });
+            surface.addEventListener("keydown", (event) => {
+              if (event.key === "Enter") event.preventDefault();
+            });
+            preventEditorLinkNavigation(surface);
+            fieldWrap.append(label, surface);
+            rowGroup.append(fieldWrap);
+            editorItems.push({ model, field, node: surface });
+          }
+          tableGroup.append(rowGroup);
+        }
+        body.append(tableGroup);
+      });
+
+      if (lockedTotal) {
+        const note = document.createElement("p");
+        note.className = "kpoparkiveInfoboxProtectedNote";
+        note.textContent = `${lockedTotal} structural or dynamic cell${lockedTotal === 1 ? " is" : "s are"} intentionally hidden from this editor and will be preserved exactly.`;
+        body.append(note);
+      }
+
+      const footer = document.createElement("div");
+      footer.className = "kpoparkiveInfoboxEditorFooter";
+      const summary = document.createElement("input");
+      summary.type = "text";
+      summary.maxLength = 500;
+      summary.placeholder = "Describe what you changed (optional)";
+      summary.className = "kpoparkiveInfoboxSummary";
+      const cancel = createButton("Cancel", "kpoparkiveVisualCancel");
+      const submit = createButton("Submit", "kpoparkiveVisualSubmit");
+      const footerActions = document.createElement("div");
+      footerActions.className = "kpoparkiveInfoboxFooterActions";
+      footerActions.append(cancel, submit);
+      footer.append(summary, footerActions);
+
+      panel.append(header, miniToolbar, body, footer);
+      document.body.append(panel);
+      tablePanel = panel;
+      closeButton.addEventListener("click", closeTableEditor);
+      cancel.addEventListener("click", closeTableEditor);
+
+      submit.addEventListener("click", async () => {
+        const changedByModel = models
+          .map((model) => ({
+            model,
+            changes: editorItems
+              .filter((item) => item.model.key === model.key)
+              .map(({ field, node }) => ({ key: field.key, proposedWikitext: editorElementToWikitext(node) }))
+              .filter(({ key, proposedWikitext }) => {
+                const field = model.fields.find((item) => item.key === key);
+                return field && normalized(proposedWikitext) !== normalized(field.valueWikitext);
+              }),
+          }))
+          .filter((item) => item.changes.length > 0);
+
+        if (!changedByModel.length) {
+          window.alert("No changes were made.");
+          return;
+        }
+
+        submit.disabled = true;
+        cancel.disabled = true;
+        closeButton.disabled = true;
+        submit.textContent = "Submitting…";
+
+        try {
+          let submittedCells = 0;
+          for (const item of changedByModel) {
+            const response = await fetch("/api/wiki-edit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                kind: "table",
+                title,
+                blockKey: item.model.blockKey,
+                tableChanges: item.changes,
+                summary: summary.value,
+                baseRevisionNo: data.document.publicRevisionNo,
+                website: "",
+              }),
+            });
+            const result = (await response.json()) as { ok?: boolean; error?: string; changedCells?: string[] };
+            if (!response.ok || !result.ok) throw new Error(result.error || "Could not submit this table edit.");
+            submittedCells += result.changedCells?.length || item.changes.length;
+          }
+          closeTableEditor();
+          window.alert(`${submittedCells} table cell edit${submittedCells === 1 ? " was" : "s were"} submitted for review.`);
+        } catch (error) {
+          submit.disabled = false;
+          cancel.disabled = false;
+          closeButton.disabled = false;
+          submit.textContent = "Submit";
+          window.alert(error instanceof Error ? error.message : "Could not submit this table edit.");
+        }
+      });
+
+      editorItems[0]?.node.focus();
+    };
+
     const openEditor = async (anchor: HTMLAnchorElement) => {
       const sectionIndex = sectionNumberFromEditLink(anchor);
       const headingContent = findHeadingContent(anchor);
       if (sectionIndex === null || !headingContent) return;
 
       closeInfoboxEditor();
+      closeTableEditor();
       if (activeRef.current) closeEditor();
 
       let data: EasyEditResponse;
@@ -495,8 +702,13 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       }
 
       const editableBlocks = section.blocks.filter((block) => block.editable && block.originalWikitext);
+      const sectionTables = (data.tables || []).filter((table) => table.sectionKey === sectionKey && table.editableCount > 0);
       if (!editableBlocks.length) {
-        window.alert("This section is currently a protected table, template, media block, or other structured wiki element. Visual editors for those blocks will be added separately.");
+        if (sectionTables.length) {
+          openTableEditor(section, sectionTables, data);
+          return;
+        }
+        window.alert("This section is currently a protected template, media block, or deeply structured wiki element. Its source will stay unchanged until a dedicated editor supports it.");
         return;
       }
 
@@ -525,6 +737,15 @@ export default function InlineSectionEditor({ title }: { title: string }) {
           });
           group.append(button);
         }
+        toolbar.append(group);
+      }
+
+      if (sectionTables.length) {
+        const group = document.createElement("div");
+        group.className = "kpoparkiveVisualToolGroup";
+        const tableButton = createButton("Table", "kpoparkiveVisualTool", "Edit safe cells in this section's table");
+        tableButton.addEventListener("click", () => openTableEditor(section, sectionTables, data));
+        group.append(tableButton);
         toolbar.append(group);
       }
 
@@ -689,6 +910,7 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       document.removeEventListener("click", onClick, true);
       closeEditor();
       closeInfoboxEditor();
+      closeTableEditor();
       infoboxEditButton?.remove();
       infoboxHost?.classList.remove("kpoparkiveInfoboxEditableHost", "is-infobox-editing");
     };
