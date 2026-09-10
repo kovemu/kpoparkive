@@ -138,7 +138,7 @@ export async function GET(request: Request) {
 
     return response({
       ok: true,
-      editorVersion: "visual-v1.1",
+      editorVersion: "visual-v1.2",
       document: {
         title: document.source_title,
         publicRevisionNo: document.content_status === "published" ? document.content_revision_no : 0,
@@ -152,6 +152,8 @@ export async function GET(request: Request) {
         fields: infobox.fields.map((field) => ({
           key: field.key,
           label: field.label,
+          group: field.group,
+          inputKind: field.inputKind,
           valueWikitext: field.editable ? field.valueWikitext : "",
           plainText: field.plainText,
           editable: field.editable,
@@ -207,7 +209,7 @@ export async function POST(request: Request) {
         .filter((change) => change.key && change.proposedWikitext);
 
       if (!changes.length) return errorResponse(new Error("No infobox changes were supplied"), 400);
-      if (changes.length > 30) return errorResponse(new Error("Too many infobox fields were changed at once"), 400);
+      if (changes.length > 60) return errorResponse(new Error("Too many infobox fields were changed at once"), 400);
 
       let result: ReturnType<typeof applyWikiInfoboxChanges>;
       try {
@@ -250,7 +252,7 @@ export async function POST(request: Request) {
         ok: true,
         submitted: true,
         proposalId: inserted[0]?.id || null,
-        editorVersion: "visual-v1.1",
+        editorVersion: "visual-v1.2",
         changedFields: result.changedFields.map((field) => field.label),
       });
     }
@@ -294,7 +296,7 @@ export async function POST(request: Request) {
       }),
     });
 
-    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1.1" });
+    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1.2" });
   } catch (error) {
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) || 500 : 500;
     return errorResponse(error, status);
