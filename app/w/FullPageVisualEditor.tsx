@@ -5,7 +5,6 @@ import {
   applyVisualCommand,
   applyVisualTextColor,
   editorElementToWikitext,
-  visualEditorPlainText,
   wikiBlockToEditorHtml,
   type VisualEditToolbarCommand,
 } from "../../lib/wikiVisualEdit";
@@ -83,6 +82,12 @@ type SurfaceRecord = {
   surface: HTMLElement;
 };
 
+type DirectSurfaceRecord = {
+  sectionKey: string;
+  surface: HTMLElement;
+  cleanup: () => void;
+};
+
 type Insertion = {
   id: string;
   sectionKey: string;
@@ -106,7 +111,6 @@ function normalized(value: string) {
 function comparable(value: string) {
   return normalized(value)
     .replace(/^[•*\-]\s*/gm, "")
-    .replace(/\s*\(Note:[\s\S]*$/g, "")
     .replace(/\[\s*\d+(?:\s*[-–]\s*\d+)?\s*\]/g, "")
     .replace(/[\s\p{P}\p{S}]+/gu, "")
     .toLowerCase();
@@ -114,7 +118,6 @@ function comparable(value: string) {
 
 function tokenOverlapScore(expected: string, actual: string) {
   const tokens = (value: string) => normalized(value)
-    .replace(/\s*\(Note:[\s\S]*$/g, "")
     .replace(/\[\s*\d+(?:\s*[-–]\s*\d+)?\s*\]/g, "")
     .split(/[\s,./()]+/)
     .map((token) => token.replace(/[\p{P}\p{S}]/gu, "").toLowerCase())
@@ -133,8 +136,8 @@ function textScore(expected: string, actual: string) {
   if (!a || !b) return 0;
   if (a === b) return 1;
   if (a.includes(b) || b.includes(a)) return Math.min(a.length, b.length) / Math.max(a.length, b.length);
-  const prefix = a.slice(0, Math.min(100, a.length));
-  if (prefix.length >= 20 && b.includes(prefix)) return 0.82;
+  const prefix = a.slice(0, Math.min(120, a.length));
+  if (prefix.length >= 20 && b.includes(prefix)) return 0.86;
   return tokenOverlapScore(expected, actual) * 0.9;
 }
 
@@ -162,6 +165,17 @@ function findHeadingContent(anchor: HTMLAnchorElement) {
   return null;
 }
 
+function sectionRootsFromPage() {
+  const roots = new Map<number, HTMLElement>();
+  for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="section="]'))) {
+    const sectionNumber = sectionNumberFromEditLink(anchor);
+    if (sectionNumber === null || roots.has(sectionNumber)) continue;
+    const root = findHeadingContent(anchor);
+    if (root) roots.set(sectionNumber, root);
+  }
+  return roots;
+}
+
 function candidateElements(root: HTMLElement) {
   return Array.from(root.querySelectorAll<HTMLElement>(".wiki-paragraph, .wiki-list, ul, ol, blockquote, .wiki-indent, .wiki-quote"))
     .filter((node) => {
@@ -183,12 +197,115 @@ function findBestCandidate(root: HTMLElement, block: EasyBlock, used: Set<HTMLEl
   let bestScore = 0;
   for (const candidate of available) {
     const score = textScore(block.plainText, candidate.innerText || candidate.textContent || "");
-    if (score > bestScore) { best = candidate; bestScore = score; }
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
   }
   if (bestScore >= 0.52) return best;
   if (available.length === 1) return available[0];
   if (best && bestScore >= 0.34 && comparable(block.plainText).length >= 24) return best;
   return null;
+}
+
+function tableTextCandidates(root: HTMLElement) {
+  const selector = [
+    ".wiki-table td", ".wiki-table th", ".wiki-table a", ".wiki-table span", ".wiki-table p", ".wiki-table div",
+    "table td", "table th", "table a", "table span", "table p", "table div",
+  ].join(",");
+  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter((node) => {
+    if (node.closest(".kpoparkivePageEditorToolbar, .kpoparkivePageEditorStatus, .kpoparkiveGenericInspector")) return false;
+    if (node.closest(".kpoparkiveTableInlineSurface")) return false;
+    if (!normalized(node.innerText || node.textContent || "")) return false;
+    if (!node.matches("td,th") && node.querySelector("table")) return false;
+    if (node.matches("td,th") && node.querySelector("table")) return false;
+    return true;
+  });
+}
+
+function findBestTableTextCandidate(root: HTMLElement, field: TableField, claimed: Set<HTMLElement>) {
+  const expected = comparable(field.plainText);
+  if (!expected) return null;
+  let best: HTMLElement | null = null;
+  let bestRank = -Infinity;
+
+  for (const candidate of tableTextCandidates(root)) {
+    if (claimed.has(candidate)) continue;
+    if (Array.from(claimed).some((node) => node.contains(candidate) || candidate.contains(node))) continue;
+    const actualText = candidate.innerText || candidate.textContent || "";
+    const actual = comparable(actualText);
+    if (!actual) continue;
+    const score = textScore(field.plainText, actualText);
+    const exact = expected === actual;
+    if (!exact && score < (expected.length < 16 ? 0.78 : 0.48)) continue;
+    const lengthPenalty = Math.abs(expected.length - actual.length) / Math.max(expected.length, actual.length, 1);
+    const tagBonus = candidate.matches("a,span,p,.wiki-paragraph") ? 8 : candidate.matches("td,th") ? 2 : 0;
+    const rank = score * 100 + (exact ? 35 : 0) + tagBonus - lengthPenalty * 22;
+    if (rank > bestRank) {
+      bestRank = rank;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function simpleTemplateParam(value: string) {
+  const text = normalized(value);
+  if (text.length < 2 || text.length > 160) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+  if (/^#[0-9a-f]{3,8}$/i.test(text)) return false;
+  if (/^[\d.\-:]+$/.test(text)) return false;
+  if (/\[|\]|\{|\}|\|/.test(text)) return false;
+  return true;
+}
+
+function createDirectSurface(
+  candidate: HTMLElement,
+  wikitext: string,
+  className: string,
+  onInput: (surface: HTMLElement) => void,
+) {
+  const multiline = wikitext.includes("\n") || candidate.matches("div,p,td,th");
+  const surface = document.createElement(multiline ? "div" : "span");
+  surface.className = className;
+  surface.contentEditable = "true";
+  surface.spellcheck = true;
+  surface.innerHTML = wikiBlockToEditorHtml(wikitext);
+  surface.addEventListener("click", (event) => {
+    const link = (event.target as Element | null)?.closest("a");
+    if (link) event.preventDefault();
+  });
+  surface.addEventListener("input", () => onInput(surface));
+
+  if (candidate.matches("td,th")) {
+    const holder = document.createElement("span");
+    holder.className = "kpoparkiveDirectOriginalHolder";
+    while (candidate.firstChild) holder.appendChild(candidate.firstChild);
+    holder.style.display = "none";
+    candidate.append(holder, surface);
+    return {
+      surface,
+      cleanup: () => {
+        if (!holder.isConnected) return;
+        surface.remove();
+        while (holder.firstChild) candidate.insertBefore(holder.firstChild, holder);
+        holder.remove();
+      },
+    };
+  }
+
+  const oldDisplay = candidate.style.display;
+  candidate.style.display = "none";
+  candidate.setAttribute("data-kpoparkive-direct-hidden", "1");
+  candidate.parentNode?.insertBefore(surface, candidate);
+  return {
+    surface,
+    cleanup: () => {
+      surface.remove();
+      candidate.style.display = oldDisplay;
+      candidate.removeAttribute("data-kpoparkive-direct-hidden");
+    },
+  };
 }
 
 function buildTableWikitext(rows: number, columns: number) {
@@ -230,9 +347,15 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
   const [mediaWidth, setMediaWidth] = useState("500");
 
   const surfacesRef = useRef<SurfaceRecord[]>([]);
+  const directSurfacesRef = useRef<DirectSurfaceRecord[]>([]);
   const activeEditorRef = useRef<HTMLElement | null>(null);
   const activeSectionRef = useRef<string>("section:1");
   const editLinkHandlersRef = useRef<Array<{ anchor: HTMLAnchorElement; handler: (event: Event) => void }>>([]);
+  const editingRef = useRef(false);
+  const loadingRef = useRef(false);
+
+  editingRef.current = editing;
+  loadingRef.current = loading;
 
   const loadPayload = async () => {
     const response = await fetch(`/api/wiki-edit-document?title=${encodeURIComponent(title)}`, { cache: "no-store" });
@@ -242,6 +365,8 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
   };
 
   const restoreSurfaces = () => {
+    for (const item of directSurfacesRef.current.slice().reverse()) item.cleanup();
+    directSurfacesRef.current = [];
     for (const item of surfacesRef.current) {
       item.surface.remove();
       item.original.style.removeProperty("display");
@@ -252,15 +377,10 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
     document.body.classList.remove("kpoparkivePageEditing");
   };
 
-  const buildSurfaces = (data: PagePayload) => {
+  const buildSurfaces = (data: PagePayload, preferredSectionIndex: number | null) => {
     restoreSurfaces();
-    const sectionRoots = new Map<number, HTMLElement>();
-    for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="section="]'))) {
-      const sectionNumber = sectionNumberFromEditLink(anchor);
-      if (sectionNumber === null || sectionRoots.has(sectionNumber)) continue;
-      const root = findHeadingContent(anchor);
-      if (root) sectionRoots.set(sectionNumber, root);
-    }
+    const sectionRoots = sectionRootsFromPage();
+    const sectionByKey = new Map(data.sections.map((section) => [section.key, section]));
 
     for (const section of data.sections) {
       if (section.sectionIndex === 0) continue;
@@ -292,12 +412,95 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
         surfacesRef.current.push({ sectionKey: section.key, block, original, surface });
       }
     }
+
+    for (const table of data.tables) {
+      const section = sectionByKey.get(table.sectionKey);
+      if (!section || section.sectionIndex === 0) continue;
+      const root = sectionRoots.get(section.sectionIndex);
+      if (!root) continue;
+      const claimed = new Set<HTMLElement>();
+      const fields = [...table.fields].sort((a, b) => comparable(b.plainText).length - comparable(a.plainText).length);
+
+      for (const field of fields) {
+        const candidate = findBestTableTextCandidate(root, field, claimed);
+        if (!candidate) continue;
+        claimed.add(candidate);
+        const created = createDirectSurface(candidate, field.valueWikitext, "kpoparkiveTableInlineSurface", (surface) => {
+          const proposed = editorElementToWikitext(surface);
+          setTableDrafts((current) => ({
+            ...current,
+            [table.key]: { ...(current[table.key] || {}), [field.key]: proposed },
+          }));
+        });
+        created.surface.dataset.tableKey = table.key;
+        created.surface.dataset.fieldKey = field.key;
+        created.surface.addEventListener("focus", () => {
+          activeEditorRef.current = created.surface;
+          activeSectionRef.current = table.sectionKey;
+        });
+        directSurfacesRef.current.push({ sectionKey: table.sectionKey, ...created });
+      }
+    }
+
+    const article = document.querySelector<HTMLElement>(".thetreeWikiBaseline");
+    if (article) {
+      const valueCounts = new Map<string, number>();
+      for (const template of data.templates) {
+        for (const param of template.params) {
+          if (!simpleTemplateParam(param.value)) continue;
+          const key = normalized(param.value);
+          valueCounts.set(key, (valueCounts.get(key) || 0) + 1);
+        }
+      }
+      for (const template of data.templates) {
+        const draft = data.templates.find((item) => item.key === template.key);
+        if (!draft) continue;
+        template.params.forEach((param, paramIndex) => {
+          if (!simpleTemplateParam(param.value) || valueCounts.get(normalized(param.value)) !== 1) return;
+          const candidates = Array.from(article.querySelectorAll<HTMLElement>("a, span, .wiki-paragraph, p"))
+            .filter((node) => !node.closest("table") && !node.closest(".wiki-heading") && !node.closest(".kpoparkivePageEditSurface") && normalized(node.innerText || node.textContent || "") === normalized(param.value));
+          if (candidates.length !== 1) return;
+          const candidate = candidates[0];
+          const created = createDirectSurface(candidate, param.value, "kpoparkiveTemplateInlineSurface", (surface) => {
+            const proposed = editorElementToWikitext(surface);
+            setTemplateDrafts((current) => {
+              const currentDraft = current[template.key] || {
+                name: template.name,
+                params: template.params.map((item) => ({ name: item.name || "", value: item.value })),
+              };
+              return {
+                ...current,
+                [template.key]: {
+                  ...currentDraft,
+                  params: currentDraft.params.map((item, index) => index === paramIndex ? { ...item, value: proposed } : item),
+                },
+              };
+            });
+          });
+          created.surface.dataset.templateKey = template.key;
+          created.surface.addEventListener("focus", () => {
+            activeEditorRef.current = created.surface;
+          });
+          directSurfacesRef.current.push({ sectionKey: activeSectionRef.current, ...created });
+        });
+      }
+    }
+
     document.body.classList.add("kpoparkivePageEditing");
-    surfacesRef.current[0]?.surface.focus();
+    const preferredKey = preferredSectionIndex === null ? null : `section:${preferredSectionIndex}`;
+    if (preferredKey) activeSectionRef.current = preferredKey;
+    const preferred = preferredKey
+      ? [...surfacesRef.current.map((item) => ({ sectionKey: item.sectionKey, surface: item.surface })), ...directSurfacesRef.current]
+        .find((item) => item.sectionKey === preferredKey)?.surface
+      : null;
+    preferred?.focus({ preventScroll: true });
   };
 
-  const startEditing = async () => {
-    if (editing || loading) return;
+  const startEditing = async (preferredSectionIndex: number | null, anchor?: HTMLAnchorElement) => {
+    if (editingRef.current || loadingRef.current) return;
+    const heading = anchor?.closest<HTMLElement>(".wiki-heading") || null;
+    const viewportTop = heading?.getBoundingClientRect().top ?? null;
+    loadingRef.current = true;
     setLoading(true);
     try {
       const data = await loadPayload();
@@ -309,11 +512,21 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
       }])));
       setInsertions([]);
       setSummary("");
+      editingRef.current = true;
       setEditing(true);
-      requestAnimationFrame(() => buildSurfaces(data));
+      requestAnimationFrame(() => {
+        buildSurfaces(data, preferredSectionIndex);
+        requestAnimationFrame(() => {
+          if (heading && viewportTop !== null) {
+            const moved = heading.getBoundingClientRect().top - viewportTop;
+            if (Math.abs(moved) > 0.5) window.scrollBy({ top: moved, left: 0, behavior: "auto" });
+          }
+        });
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Could not start Visual Editor.");
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   };
@@ -327,7 +540,8 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
           if (!/편집|edit/i.test(anchor.textContent || "")) return;
           event.preventDefault();
           event.stopPropagation();
-          void startEditing();
+          const sectionNumber = sectionNumberFromEditLink(anchor);
+          void startEditing(sectionNumber, anchor);
         };
         anchor.addEventListener("click", handler);
         editLinkHandlersRef.current.push({ anchor, handler });
@@ -341,7 +555,7 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
       restoreSurfaces();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, editing, loading]);
+  }, [title]);
 
   const runCommand = (command: VisualEditToolbarCommand) => {
     applyVisualCommand(command, activeEditorRef.current);
@@ -419,6 +633,7 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
       const result = await response.json() as { ok?: boolean; error?: string; changes?: string[] };
       if (!response.ok || !result.ok) throw new Error(result.error || "Could not submit this page edit.");
       restoreSurfaces();
+      editingRef.current = false;
       setEditing(false);
       setPanel(null);
       setInsertOpen(false);
@@ -431,10 +646,11 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
   };
 
   const cancelAll = () => {
-    if (insertions.length || surfacesRef.current.some((item) => normalized(editorElementToWikitext(item.surface)) !== normalized(item.block.originalWikitext))) {
-      if (!window.confirm("Discard your page edits?")) return;
-    }
+    const textChanged = surfacesRef.current.some((item) => normalized(editorElementToWikitext(item.surface)) !== normalized(item.block.originalWikitext));
+    const tableChanged = payload?.tables.some((table) => table.fields.some((field) => normalized(tableDrafts[table.key]?.[field.key] ?? field.valueWikitext) !== normalized(field.valueWikitext))) || false;
+    if ((insertions.length || textChanged || tableChanged) && !window.confirm("Discard your page edits?")) return;
     restoreSurfaces();
+    editingRef.current = false;
     setEditing(false);
     setPanel(null);
     setInsertOpen(false);
@@ -443,7 +659,10 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
   const tableCount = payload?.tables.length || 0;
   const templateCount = payload?.templates.length || 0;
   const queuedCount = insertions.length;
-  const currentSectionName = useMemo(() => payload?.sections.find((section) => section.key === activeSectionRef.current)?.heading || "current section", [payload, editing]);
+  const currentSectionName = useMemo(
+    () => payload?.sections.find((section) => section.key === activeSectionRef.current)?.heading || "current section",
+    [payload, editing],
+  );
 
   if (!editing) return loading ? <div className="kpoparkivePageEditorLoading">Opening Visual Editor…</div> : null;
 
@@ -498,7 +717,7 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
       <div className="kpoparkivePageEditorStatus">
         <input value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={500} placeholder="Describe what you changed (optional)" />
         <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} placeholder="Display name (optional)" />
-        <span>Editing whole page · Insert location: {currentSectionName}{queuedCount ? ` · ${queuedCount} new block${queuedCount === 1 ? "" : "s"} queued` : ""}</span>
+        <span>Editing whole page · click visible text to edit · Insert location: {currentSectionName}{queuedCount ? ` · ${queuedCount} new block${queuedCount === 1 ? "" : "s"} queued` : ""}</span>
       </div>
 
       {queuedCount ? (
@@ -509,15 +728,15 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
 
       {panel === "tables" && payload ? (
         <aside className="kpoparkiveGenericInspector">
-          <header><div><strong>Tables</strong><span>Generic table editor. Cell content changes without rewriting table layout, colors, spans or options.</span></div><button type="button" onClick={() => setPanel(null)}>×</button></header>
+          <header><div><strong>Tables</strong><span>Visible table text is editable directly on the page. Use this panel for fields that cannot be safely mapped in place.</span></div><button type="button" onClick={() => setPanel(null)}>×</button></header>
           <div className="kpoparkiveInspectorBody">
             {payload.tables.map((table, index) => (
               <section key={table.key} className="kpoparkiveInspectorGroup">
                 <h3>{table.sectionHeading === "Document lead" ? `Lead table ${index + 1}` : table.sectionHeading}</h3>
-                <p>{table.editableCount} editable cells · {table.lockedCount} protected structural cells</p>
+                <p>{table.editableCount} editable text fields · {table.lockedCount} protected structural cells</p>
                 <div className="kpoparkiveTableGrid">
                   {table.fields.map((field) => (
-                    <label key={field.key}><span>R{field.row} C{field.column}</span><input value={tableDrafts[table.key]?.[field.key] ?? field.valueWikitext} onChange={(event) => setTableDrafts((current) => ({ ...current, [table.key]: { ...(current[table.key] || {}), [field.key]: event.target.value } }))} /></label>
+                    <label key={field.key}><span>R{field.row} C{field.column}</span><textarea rows={field.valueWikitext.includes("\n") ? 4 : 1} value={tableDrafts[table.key]?.[field.key] ?? field.valueWikitext} onChange={(event) => setTableDrafts((current) => ({ ...current, [table.key]: { ...(current[table.key] || {}), [field.key]: event.target.value } }))} /></label>
                   ))}
                 </div>
               </section>
@@ -528,7 +747,7 @@ export default function FullPageVisualEditor({ title }: { title: string }) {
 
       {panel === "templates" && payload ? (
         <aside className="kpoparkiveGenericInspector">
-          <header><div><strong>Templates</strong><span>Every include() call uses the same generic parameter form. No page-specific template logic.</span></div><button type="button" onClick={() => setPanel(null)}>×</button></header>
+          <header><div><strong>Templates</strong><span>Simple visible parameter text is editable in place. Structural and hidden parameters remain available here.</span></div><button type="button" onClick={() => setPanel(null)}>×</button></header>
           <div className="kpoparkiveInspectorBody">
             {payload.templates.map((template, index) => {
               const draft = templateDrafts[template.key] || { name: template.name, params: template.params.map((param) => ({ name: param.name || "", value: param.value })) };
