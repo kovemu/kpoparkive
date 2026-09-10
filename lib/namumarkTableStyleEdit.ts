@@ -52,7 +52,7 @@ function splitCell(raw: string) {
 
 function safeValue(value: unknown, label: string) {
   const text = String(value ?? "").trim();
-  if (text.length > 120 || /[>\r\n]/.test(text)) throw new Error(`${label} contains unsupported table option syntax`);
+  if (text.length > 120 || /[<>\r\n]/.test(text)) throw new Error(`${label} contains unsupported table option syntax`);
   return text;
 }
 
