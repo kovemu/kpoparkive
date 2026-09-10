@@ -43,10 +43,45 @@ function countToken(line: string, token: string) {
   return count;
 }
 
+function replaceFootnotes(value: string) {
+  let result = "";
+  let index = 0;
+
+  while (index < value.length) {
+    if (!value.startsWith("[*", index)) {
+      result += value[index];
+      index += 1;
+      continue;
+    }
+
+    let depth = 1;
+    let cursor = index + 2;
+    for (; cursor < value.length; cursor += 1) {
+      if (value[cursor] === "[") depth += 1;
+      else if (value[cursor] === "]") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+
+    if (depth !== 0) {
+      result += value[index];
+      index += 1;
+      continue;
+    }
+
+    const note = value.slice(index + 2, cursor).trim();
+    result += note ? ` (Note: ${note})` : "";
+    index = cursor + 1;
+  }
+
+  return result;
+}
+
 function stripInlineMarkup(value: string) {
   let text = value;
   text = text.replace(/\[br\]/gi, "\n");
-  text = text.replace(/\[\*\s*([^\]]*)\]/g, (_match, note: string) => note.trim() ? ` (Note: ${note.trim()})` : "");
+  text = replaceFootnotes(text);
   text = text.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_match, _target: string, label: string) => label);
   text = text.replace(/\[\[([^\]]+)\]\]/g, (_match, target: string) => target);
   text = text.replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, (_match, label: string) => label);
@@ -61,12 +96,22 @@ function stripInlineMarkup(value: string) {
   return text.trim();
 }
 
+function structuralReasonForLine(line: string, macroDepth: number) {
+  if (macroDepth > 0) return "Inside a protected wiki block";
+  for (const [pattern, reason] of STRUCTURAL_PATTERNS) {
+    if (pattern.test(line)) return reason;
+  }
+  if (line.includes("{{{") || line.includes("}}}")) return "Formatted wiki block";
+  return null;
+}
+
 function lockReasonForBlock(lines: string[], macroDepthAtStart: number) {
   if (macroDepthAtStart > 0) return "Inside a protected wiki block";
   for (const line of lines) {
     for (const [pattern, reason] of STRUCTURAL_PATTERNS) {
       if (pattern.test(line)) return reason;
     }
+    if (line.includes("{{{") || line.includes("}}}")) return "Formatted wiki block";
   }
   const text = lines.join("\n").trim();
   if (!text) return "Empty block";
@@ -109,6 +154,7 @@ export function parseEasyEditSections(source: string): EasyEditSection[] {
     let macroDepth = 0;
     let blockLines: string[] = [];
     let blockStartDepth = 0;
+    let blockProtected: boolean | null = null;
 
     const flush = () => {
       if (!blockLines.length) return;
@@ -126,6 +172,7 @@ export function parseEasyEditSections(source: string): EasyEditSection[] {
         lockedReason: editable ? null : (lockedReason || "Unsupported wiki syntax"),
       });
       blockLines = [];
+      blockProtected = null;
     };
 
     for (const line of section.body) {
@@ -135,7 +182,18 @@ export function parseEasyEditSections(source: string): EasyEditSection[] {
         continue;
       }
 
-      if (!blockLines.length) blockStartDepth = macroDepth;
+      const depthBefore = macroDepth;
+      const lineReason = structuralReasonForLine(line, depthBefore);
+      const lineProtected = Boolean(lineReason);
+
+      if (blockLines.length && blockProtected !== null && blockProtected !== lineProtected && depthBefore === 0) {
+        flush();
+      }
+
+      if (!blockLines.length) {
+        blockStartDepth = depthBefore;
+        blockProtected = lineProtected;
+      }
       blockLines.push(line);
 
       macroDepth += countToken(line, "{{{");
