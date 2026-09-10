@@ -4,6 +4,7 @@ import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import InlineSectionEditor from "../InlineSectionEditor";
 import "../wiki.css";
+import "../table-editor.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
