@@ -45,6 +45,21 @@ export default function TheTreeRuntimeBridge() {
     const cleanups: Array<() => void> = [];
 
     for (const root of roots) {
+      // The pinned The Tree frontend intentionally gives table wrappers
+      // overflow-x:auto. In Chromium that makes the other axis compute to auto
+      // as well; nested 100%-width tables with negative margins can then create
+      // a tiny y-overflow and an unwanted vertical scrollbar. Table wrappers
+      // are auto-height, so vertical scrolling is never needed here.
+      for (const tableWrap of Array.from(root.querySelectorAll<HTMLElement>(".wiki-table-wrap"))) {
+        const previousOverflowY = tableWrap.style.overflowY;
+        const previousPriority = tableWrap.style.getPropertyPriority("overflow-y");
+        tableWrap.style.setProperty("overflow-y", "hidden", "important");
+        cleanups.push(() => {
+          if (previousOverflowY) tableWrap.style.setProperty("overflow-y", previousOverflowY, previousPriority);
+          else tableWrap.style.removeProperty("overflow-y");
+        });
+      }
+
       for (const heading of Array.from(root.querySelectorAll<HTMLElement>(".wiki-heading"))) {
         const handler = (event: Event) => {
           if ((event.target as HTMLElement | null)?.closest("a")) return;
