@@ -1,12 +1,12 @@
 import {
   findNamuAstNode,
-  parseNamuMarkAst,
   type NamuAstDocument,
   type NamuAstExternalLink,
   type NamuAstHeading,
   type NamuAstLink,
   type NamuAstText,
 } from "./namumarkAst";
+import { parseNamuMarkAstForEditing } from "./namumarkAstEditing";
 
 export type NamuAstEditOperation =
   | { op: "replace-text"; nodeId: string; text: string }
@@ -139,7 +139,7 @@ function validateEditableNodeReplacement(nodeType: string, before: string, value
   after = preserveNodeEol(before, after);
   if (!after.trim()) throw badRequest("Visual blocks cannot be empty yet. Use the delete-block tool instead.");
 
-  const parsed = parseNamuMarkAst(after);
+  const parsed = parseNamuMarkAstForEditing(after);
   const semantic = parsed.blocks.filter((block) => block.type !== "whitespace");
   if (semantic.length !== 1 || semantic[0].type !== nodeType) {
     throw badRequest(`The edited ${nodeType} changed document structure. Use a structural insert/delete tool instead.`);
@@ -207,7 +207,7 @@ export function applyNamuAstOperations(source: string, operations: NamuAstEditOp
   if (!Array.isArray(operations) || !operations.length) throw badRequest("No AST edit operations were supplied");
   if (operations.length > 500) throw badRequest("Too many AST edit operations in one proposal");
 
-  const document = parseNamuMarkAst(source);
+  const document = parseNamuMarkAstForEditing(source);
   const patches = operations.map((operation) => operationPatch(document, operation));
   validatePatches(patches);
 
@@ -226,6 +226,6 @@ export function applyNamuAstOperations(source: string, operations: NamuAstEditOp
     proposed,
     changes: changed,
     beforeAst: document,
-    afterAst: parseNamuMarkAst(proposed),
+    afterAst: parseNamuMarkAstForEditing(proposed),
   };
 }
