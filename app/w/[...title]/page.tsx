@@ -3,6 +3,7 @@ import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
+import VisualEditorInteractionGuard from "../VisualEditorInteractionGuard";
 import "../wiki.css";
 import "../table-editor.css";
 import "../visual-editor.css";
@@ -207,6 +208,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
       <main className="kpoparkiveRawWikiPage">
         <TheTreeRuntimeBridge />
         <FullPageVisualEditorV2 title={source.source_title} />
+        <VisualEditorInteractionGuard />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
