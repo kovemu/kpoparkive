@@ -1,0 +1,414 @@
+name: Apply full-page visual editor canvas patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/full-page-canvas-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch editor and API
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f"patch marker not found: {label}")
+              return text.replace(old, new, 1)
+
+          editor_path = Path("app/w/FullPageVisualEditorV2.tsx")
+          text = editor_path.read_text()
+
+          text = replace_once(text,
+          '''type DirectSurfaceRecord = {
+            sectionKey: string;
+            surface: HTMLElement;
+            cleanup: () => void;
+          };
+
+          type HeadingSurfaceRecord = {''',
+          '''type DirectSurfaceRecord = {
+            sectionKey: string;
+            surface: HTMLElement;
+            cleanup: () => void;
+          };
+
+          type GenericTextSurfaceRecord = {
+            sectionKey: string;
+            originalText: string;
+            surface: HTMLElement;
+            cleanup: () => void;
+          };
+
+          type HeadingSurfaceRecord = {''', "generic surface type")
+
+          text = replace_once(text,
+          '''.kpoparkivePageEditSurface,
+          .kpoparkiveTableInlineSurface,
+          .kpoparkiveTemplateInlineSurface { caret-color: #6b3ce8; }''',
+          '''.thetreeWikiBaseline.kpoparkiveWholePageEditCanvas {
+            outline: 2px solid rgba(107, 60, 232, .42);
+            outline-offset: 10px;
+            border-radius: 4px;
+            box-shadow: 0 0 0 5px rgba(107, 60, 232, .035);
+          }
+          .kpoparkiveGenericTextSurface {
+            border: 0;
+            border-radius: 3px;
+            outline: 0;
+            background: transparent;
+            color: inherit;
+            caret-color: #6b3ce8;
+            cursor: text;
+          }
+          .kpoparkiveGenericTextSurface:hover {
+            background: rgba(107, 60, 232, .055);
+            box-shadow: 0 0 0 2px rgba(107, 60, 232, .055);
+          }
+          .kpoparkiveGenericTextSurface:focus {
+            background: rgba(107, 60, 232, .08);
+            box-shadow: 0 0 0 2px rgba(107, 60, 232, .18);
+          }
+          .kpoparkivePageEditSurface,
+          .kpoparkiveTableInlineSurface,
+          .kpoparkiveTemplateInlineSurface { caret-color: #6b3ce8; }''', "whole canvas styles")
+
+          text = replace_once(text,
+          '''  const surfacesRef = useRef<SurfaceRecord[]>([]);
+            const directSurfacesRef = useRef<DirectSurfaceRecord[]>([]);
+            const headingSurfacesRef = useRef<HeadingSurfaceRecord[]>([]);''',
+          '''  const surfacesRef = useRef<SurfaceRecord[]>([]);
+            const directSurfacesRef = useRef<DirectSurfaceRecord[]>([]);
+            const genericTextSurfacesRef = useRef<GenericTextSurfaceRecord[]>([]);
+            const headingSurfacesRef = useRef<HeadingSurfaceRecord[]>([]);''', "generic surface ref")
+
+          text = replace_once(text,
+          '''  const restoreSurfaces = () => {
+            for (const item of directSurfacesRef.current.slice().reverse()) item.cleanup();
+            directSurfacesRef.current = [];
+            for (const item of surfacesRef.current) {''',
+          '''  const restoreSurfaces = () => {
+            for (const item of genericTextSurfacesRef.current.slice().reverse()) item.cleanup();
+            genericTextSurfacesRef.current = [];
+            for (const item of directSurfacesRef.current.slice().reverse()) item.cleanup();
+            directSurfacesRef.current = [];
+            for (const item of surfacesRef.current) {''', "generic cleanup")
+
+          text = replace_once(text,
+          '''    document.body.classList.remove("kpoparkivePageEditing");
+            };
+
+            const buildHeadingSurfaces''',
+          '''    document.querySelector<HTMLElement>(".thetreeWikiBaseline")?.classList.remove("kpoparkiveWholePageEditCanvas");
+            document.body.classList.remove("kpoparkivePageEditing");
+            };
+
+            const buildHeadingSurfaces''', "canvas cleanup class")
+
+          generic_builder = r'''
+            const buildGenericTextSurfaces = (sectionRoots: Map<number, HTMLElement>) => {
+              const article = document.querySelector<HTMLElement>(".thetreeWikiBaseline");
+              if (!article) return;
+              article.classList.add("kpoparkiveWholePageEditCanvas");
+
+              const excludedSelector = [
+                ".kpoparkivePageEditSurface",
+                ".kpoparkiveTableInlineSurface",
+                ".kpoparkiveTemplateInlineSurface",
+                ".kpoparkiveHeadingEditSurface",
+                ".kpoparkiveDirectOriginalHolder",
+                "[data-kpoparkive-page-edit-hidden='1']",
+                "[data-kpoparkive-direct-hidden='1']",
+                ".wiki-heading",
+                ".wiki-edit-section",
+                ".wiki-toc",
+                ".wiki-macro-toc",
+                ".kpoparkivePageEditorToolbar",
+                ".kpoparkivePageEditorStatus",
+                ".kpoparkiveGenericInspector",
+                "script", "style", "textarea", "input", "button", "select", "option",
+                "iframe", "video", "audio", "canvas", "svg", "math", "noscript", "nav",
+              ].join(",");
+
+              const roots = Array.from(sectionRoots.entries());
+              const sectionKeyForNode = (node: Node) => {
+                for (const [sectionIndex, root] of roots) {
+                  if (root.contains(node)) return `section:${sectionIndex}`;
+                }
+                return "section:0";
+              };
+
+              const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+              const nodes: Text[] = [];
+              for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+                if (current instanceof Text) nodes.push(current);
+              }
+
+              for (const node of nodes) {
+                if (!node.isConnected) continue;
+                const parent = node.parentElement;
+                const raw = node.nodeValue || "";
+                const match = raw.match(/^(\s*)([\s\S]*?\S)(\s*)$/);
+                if (!parent || !match) continue;
+                if (parent.closest(excludedSelector)) continue;
+                if (parent.closest("[contenteditable='true'], [contenteditable='plaintext-only']")) continue;
+                if (parent.closest("[hidden], [aria-hidden='true']")) continue;
+                const style = window.getComputedStyle(parent);
+                if (style.display === "none" || style.visibility === "hidden") continue;
+
+                const prefix = match[1];
+                const originalText = match[2];
+                const suffix = match[3];
+                if (!normalized(originalText)) continue;
+
+                const prefixNode = document.createTextNode(prefix);
+                const suffixNode = document.createTextNode(suffix);
+                const surface = document.createElement("span");
+                surface.className = "kpoparkiveGenericTextSurface";
+                surface.contentEditable = "plaintext-only";
+                surface.spellcheck = true;
+                surface.textContent = originalText;
+                const sectionKey = sectionKeyForNode(parent);
+                surface.dataset.sectionKey = sectionKey;
+                surface.dataset.editorKind = "generic-text";
+                surface.addEventListener("focus", () => activateSection(sectionKey, surface, null));
+                surface.addEventListener("click", (event) => {
+                  if ((event.target as Element | null)?.closest("a")) event.preventDefault();
+                });
+                surface.addEventListener("keydown", (event) => {
+                  if (event.key === "Enter") event.preventDefault();
+                });
+
+                parent.insertBefore(prefixNode, node);
+                parent.insertBefore(surface, node);
+                parent.insertBefore(suffixNode, node);
+                node.remove();
+
+                genericTextSurfacesRef.current.push({
+                  sectionKey,
+                  originalText,
+                  surface,
+                  cleanup: () => {
+                    if (!surface.isConnected && !prefixNode.isConnected && !suffixNode.isConnected) return;
+                    const anchor = prefixNode.isConnected ? prefixNode : surface;
+                    const host = anchor.parentNode;
+                    if (host) host.insertBefore(document.createTextNode(raw), anchor);
+                    prefixNode.remove();
+                    surface.remove();
+                    suffixNode.remove();
+                  },
+                });
+              }
+            };
+
+          '''
+          text = replace_once(text,
+          '''  const buildSurfaces = (data: PagePayload, preferredSectionIndex: number | null) => {''',
+          generic_builder + '''  const buildSurfaces = (data: PagePayload, preferredSectionIndex: number | null) => {''', "generic builder")
+
+          text = replace_once(text,
+          '''    document.body.classList.add("kpoparkivePageEditing");
+            const preferredKey''',
+          '''    buildGenericTextSurfaces(sectionRoots);
+            document.body.classList.add("kpoparkivePageEditing");
+            const preferredKey''', "build generic surfaces")
+
+          text = replace_once(text,
+          '''      ? [...surfacesRef.current.map((item) => ({ sectionKey: item.sectionKey, surface: item.surface })), ...directSurfacesRef.current]
+                .find((item) => item.sectionKey === preferredKey)?.surface''',
+          '''      ? [...surfacesRef.current.map((item) => ({ sectionKey: item.sectionKey, surface: item.surface })), ...directSurfacesRef.current, ...genericTextSurfacesRef.current]
+                .find((item) => item.sectionKey === preferredKey)?.surface''', "preferred generic surface")
+
+          text = replace_once(text,
+          '''  const templateHasChanges = () => Boolean(payload?.templates.some((template) => {''',
+          '''  const genericTextChanges = () => genericTextSurfacesRef.current
+            .map((item) => ({
+              sectionKey: item.sectionKey,
+              originalText: item.originalText,
+              proposedText: item.surface.textContent || "",
+            }))
+            .filter((item) => item.proposedText !== item.originalText);
+
+            const templateHasChanges = () => Boolean(payload?.templates.some((template) => {''', "generic changes")
+
+          text = replace_once(text,
+          '''    const headings = headingChanges();
+            if (headings.some''',
+          '''    const headings = headingChanges();
+            const genericTexts = genericTextChanges();
+            if (genericTexts.some((item) => item.proposedText.includes("\\n") || item.proposedText.includes("\\r"))) {
+              window.alert("Inline page text cannot contain line breaks yet. Use Paragraph or Heading insertion for new blocks.");
+              return;
+            }
+            if (headings.some''', "collect generic changes")
+
+          text = replace_once(text,
+          '''    if (!blockChanges.length && !tableChanges.length && !templateChanges.length && !headings.length && !insertions.length) {''',
+          '''    if (!blockChanges.length && !tableChanges.length && !templateChanges.length && !headings.length && !genericTexts.length && !insertions.length) {''', "no changes condition")
+
+          text = replace_once(text,
+          '''          headingChanges: headings.map(({ sectionKey, proposedWikitext, level }) => ({ sectionKey, proposedWikitext, level })),
+                    insertions:''',
+          '''          headingChanges: headings.map(({ sectionKey, proposedWikitext, level }) => ({ sectionKey, proposedWikitext, level })),
+                    genericTextChanges: genericTexts,
+                    insertions:''', "post generic changes")
+
+          text = replace_once(text,
+          '''    const changed = insertions.length || textChanged || tableChanged || headingChanges().length || templateHasChanges();''',
+          '''    const changed = insertions.length || textChanged || tableChanged || headingChanges().length || genericTextChanges().length || templateHasChanges();''', "cancel generic changes")
+
+          text = replace_once(text,
+          '''        <span>Whole page editing · headings, text, tables and templates · Insert location:''',
+          '''        <span>Whole page canvas · all visible text is directly editable · headings, tables and templates keep structured editing · Insert location:''', "status copy")
+
+          editor_path.write_text(text)
+
+          api_path = Path("app/api/wiki-edit-document-v2/route.ts")
+          api = api_path.read_text()
+
+          api = replace_once(api,
+          '''type HeadingChange = { sectionKey?: string; proposedWikitext?: string; level?: number };
+          type Insertion = { sectionKey?: string; wikitext?: string };''',
+          '''type HeadingChange = { sectionKey?: string; proposedWikitext?: string; level?: number };
+          type GenericTextChange = { sectionKey?: string; originalText?: string; proposedText?: string };
+          type Insertion = { sectionKey?: string; wikitext?: string };''', "api generic type")
+
+          generic_api = r'''
+          function sectionBodyLineRange(lines: string[], sectionKey: string) {
+            const wanted = sectionIndexFromKey(sectionKey);
+            if (wanted < 0) throw Object.assign(new Error("Invalid text section"), { status: 400 });
+            if (wanted === 0) {
+              const end = lines.findIndex((line) => HEADING_RE.test(line));
+              return { start: 0, end: end < 0 ? lines.length : end };
+            }
+            let sectionIndex = 0;
+            let start = -1;
+            let end = lines.length;
+            for (let i = 0; i < lines.length; i += 1) {
+              if (!HEADING_RE.test(lines[i])) continue;
+              sectionIndex += 1;
+              if (sectionIndex === wanted) {
+                start = i + 1;
+                continue;
+              }
+              if (start >= 0 && sectionIndex > wanted) {
+                end = i;
+                break;
+              }
+            }
+            if (start < 0) throw Object.assign(new Error("The edited section no longer exists. Reload and try again."), { status: 409 });
+            return { start, end };
+          }
+
+          function replaceGenericVisibleText(source: string, change: GenericTextChange) {
+            const sectionKey = String(change.sectionKey || "").trim();
+            const originalText = String(change.originalText || "");
+            const proposedText = String(change.proposedText ?? "");
+            if (!sectionKey || !originalText || originalText.length > 4000 || proposedText.length > 4000) {
+              throw Object.assign(new Error("Invalid visual text edit"), { status: 400 });
+            }
+            if (originalText.includes("\n") || originalText.includes("\r") || proposedText.includes("\n") || proposedText.includes("\r")) {
+              throw Object.assign(new Error("Inline visual text edits must stay on one line"), { status: 400 });
+            }
+            if (originalText === proposedText) return { source, changed: false };
+
+            const lines = source.replace(/\r\n?/g, "\n").split("\n");
+            const range = sectionBodyLineRange(lines, sectionKey);
+            const segment = lines.slice(range.start, range.end).join("\n");
+            const matches: number[] = [];
+            for (let at = segment.indexOf(originalText); at >= 0; at = segment.indexOf(originalText, at + Math.max(1, originalText.length))) {
+              const linkOpen = segment.lastIndexOf("[[", at);
+              const linkClosedBefore = segment.lastIndexOf("]]", at);
+              if (linkOpen > linkClosedBefore) {
+                const linkClose = segment.indexOf("]]", at + originalText.length);
+                if (linkClose >= 0) {
+                  const inner = segment.slice(linkOpen + 2, linkClose);
+                  if (/^(?:파일|file):/i.test(inner.trim())) continue;
+                }
+              }
+              matches.push(at);
+            }
+            if (!matches.length) {
+              throw Object.assign(new Error(`Rendered text could not be mapped safely to NamuMark in ${sectionKey}. This text is probably generated by a template or macro.`), { status: 409 });
+            }
+            if (matches.length > 1) {
+              throw Object.assign(new Error(`Rendered text is ambiguous in ${sectionKey}. Edit a larger text fragment or use the structured editor for this item.`), { status: 409 });
+            }
+
+            const at = matches[0];
+            let updatedSegment = segment;
+            const linkOpen = segment.lastIndexOf("[[", at);
+            const linkClosedBefore = segment.lastIndexOf("]]", at);
+            if (linkOpen > linkClosedBefore) {
+              const linkClose = segment.indexOf("]]", at + originalText.length);
+              if (linkClose >= 0) {
+                const innerStart = linkOpen + 2;
+                const inner = segment.slice(innerStart, linkClose);
+                const pipe = inner.indexOf("|");
+                const relativeAt = at - innerStart;
+                if (pipe < 0) {
+                  if (inner !== originalText) {
+                    throw Object.assign(new Error("This link label cannot yet be mapped safely. Use the Link tool instead."), { status: 409 });
+                  }
+                  updatedSegment = `${segment.slice(0, linkOpen)}[[${inner}|${proposedText}]]${segment.slice(linkClose + 2)}`;
+                } else {
+                  if (relativeAt <= pipe) {
+                    throw Object.assign(new Error("Editing an internal link target as plain text is not supported. Use the Link tool instead."), { status: 409 });
+                  }
+                  updatedSegment = `${segment.slice(0, at)}${proposedText}${segment.slice(at + originalText.length)}`;
+                }
+              }
+            } else {
+              updatedSegment = `${segment.slice(0, at)}${proposedText}${segment.slice(at + originalText.length)}`;
+            }
+
+            const replacementLines = updatedSegment.split("\n");
+            lines.splice(range.start, range.end - range.start, ...replacementLines);
+            return { source: lines.join("\n"), changed: true };
+          }
+
+          '''
+          api = replace_once(api,
+          '''function insertAtSectionEnd(source: string, sectionKey: string, wikitext: string) {''',
+          generic_api + '''function insertAtSectionEnd(source: string, sectionKey: string, wikitext: string) {''', "api generic mapper")
+
+          api = replace_once(api,
+          '''      headingChanges?: HeadingChange[];
+                insertions?: Insertion[];''',
+          '''      headingChanges?: HeadingChange[];
+                genericTextChanges?: GenericTextChange[];
+                insertions?: Insertion[];''', "api request shape")
+
+          api = replace_once(api,
+          '''    for (const insertion of body.insertions || []) {''',
+          '''    for (const textChange of body.genericTextChanges || []) {
+              const result = replaceGenericVisibleText(proposed, textChange);
+              if (!result.changed) continue;
+              proposed = result.source;
+              changeLabels.push(`Page text: ${String(textChange.originalText || "").slice(0, 80)}`);
+            }
+
+            for (const insertion of body.insertions || []) {''', "api apply generic")
+
+          api_path.write_text(api)
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/full-page-canvas-patch.yml
+      - name: Commit patch
+        run: |
+          git config user.name "kovemu-editor-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/w/FullPageVisualEditorV2.tsx app/api/wiki-edit-document-v2/route.ts .github/workflows/full-page-canvas-patch.yml
+          git commit -m "feat: make visual editor a whole-page text canvas"
+          git push origin HEAD:main
