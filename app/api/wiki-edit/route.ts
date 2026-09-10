@@ -8,6 +8,16 @@ const RATE_SALT = process.env.KPOPARKIVE_ADMIN_KEY || SERVICE_ROLE_KEY || "kpopa
 const MAX_PROPOSALS_PER_HOUR = 10;
 const MAX_PROPOSAL_CHARS = 12000;
 
+const UNSAFE_VISUAL_SYNTAX: Array<[RegExp, string]> = [
+  [/^\s*={2,6}.*={2,6}\s*$/m, "Section headings cannot be changed from the visual paragraph editor yet."],
+  [/^\s*\|\|/m, "Tables must be edited with the table editor."],
+  [/\{\{\{|\}\}\}/, "Styled/raw wiki blocks are protected."],
+  [/\[include\(/i, "Templates are protected."],
+  [/\[youtube\(/i, "Embedded media is protected."],
+  [/\[\[(?:파일|File):/i, "Files must be edited with the media editor."],
+  [/\[\[(?:분류|Category):/i, "Document metadata is protected."],
+];
+
 type SourceDocument = {
   id: string;
   source_title: string;
@@ -49,11 +59,21 @@ function response(data: unknown, status = 200) {
 }
 
 function errorResponse(error: unknown, status = 500) {
-  return response({ error: error instanceof Error ? error.message : "Unknown easy edit error" }, status);
+  return response({ error: error instanceof Error ? error.message : "Unknown visual edit error" }, status);
 }
 
 function normalizeTitle(value: string | null | undefined) {
   return (value || "").normalize("NFKC").trim();
+}
+
+function normalizeWiki(value: string) {
+  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+}
+
+function validateVisualWikitext(value: string) {
+  for (const [pattern, message] of UNSAFE_VISUAL_SYNTAX) {
+    if (pattern.test(value)) throw Object.assign(new Error(message), { status: 400 });
+  }
 }
 
 async function findDocument(title: string) {
@@ -107,6 +127,7 @@ export async function GET(request: Request) {
         key: block.key,
         blockIndex: block.blockIndex,
         plainText: block.plainText,
+        originalWikitext: block.editable ? block.originalWikitext : "",
         editable: block.editable,
         lockedReason: block.lockedReason,
       })),
@@ -114,6 +135,7 @@ export async function GET(request: Request) {
 
     return response({
       ok: true,
+      editorVersion: "visual-v1",
       document: {
         title: document.source_title,
         publicRevisionNo: document.content_status === "published" ? document.content_revision_no : 0,
@@ -132,6 +154,7 @@ export async function POST(request: Request) {
       title?: string;
       blockKey?: string;
       proposedText?: string;
+      proposedWikitext?: string;
       summary?: string;
       displayName?: string;
       baseRevisionNo?: number;
@@ -143,12 +166,16 @@ export async function POST(request: Request) {
     const title = normalizeTitle(body.title);
     const blockKey = (body.blockKey || "").trim();
     const proposedText = (typeof body.proposedText === "string" ? body.proposedText : "").replace(/\r\n?/g, "\n").trim();
+    const proposedWikitext = normalizeWiki(typeof body.proposedWikitext === "string" ? body.proposedWikitext : proposedText);
     const summary = (body.summary || "").trim().slice(0, 500) || null;
     const displayName = (body.displayName || "").trim().slice(0, 80) || null;
 
     if (!title || !blockKey) return errorResponse(new Error("title and blockKey are required"), 400);
-    if (!proposedText) return errorResponse(new Error("Suggested text cannot be empty"), 400);
-    if (proposedText.length > MAX_PROPOSAL_CHARS) return errorResponse(new Error("Suggested text is too long"), 413);
+    if (!proposedText || !proposedWikitext) return errorResponse(new Error("Suggested content cannot be empty"), 400);
+    if (proposedText.length > MAX_PROPOSAL_CHARS || proposedWikitext.length > MAX_PROPOSAL_CHARS) {
+      return errorResponse(new Error("Suggested content is too long"), 413);
+    }
+    validateVisualWikitext(proposedWikitext);
 
     const hash = submitterHash(request);
     await enforceRateLimit(hash);
@@ -164,8 +191,8 @@ export async function POST(request: Request) {
 
     const found = findEasyEditBlock(source, blockKey);
     if (!found) return errorResponse(new Error("Editable block no longer exists"), 409);
-    if (!found.block.editable) return errorResponse(new Error("This block is protected from Easy Edit"), 403);
-    if (proposedText === found.block.plainText.trim()) {
+    if (!found.block.editable) return errorResponse(new Error("This block is protected from Visual Edit"), 403);
+    if (normalizeWiki(proposedWikitext) === normalizeWiki(found.block.originalWikitext)) {
       return errorResponse(new Error("No changes were made"), 400);
     }
 
@@ -182,6 +209,7 @@ export async function POST(request: Request) {
         original_wikitext: found.block.originalWikitext,
         original_plain_text: found.block.plainText,
         proposed_plain_text: proposedText,
+        proposed_wikitext: proposedWikitext,
         summary,
         display_name: displayName,
         submitter_hash: hash,
@@ -189,7 +217,7 @@ export async function POST(request: Request) {
       }),
     });
 
-    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null });
+    return response({ ok: true, submitted: true, proposalId: inserted[0]?.id || null, editorVersion: "visual-v1" });
   } catch (error) {
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) || 500 : 500;
     return errorResponse(error, status);
