@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
 import { parseNamuTableAst } from "../../../lib/namumarkTableAst";
-import { parseNamuTemplateAst } from "../../../lib/namumarkTemplateAst";
+import { parseNamuTemplateAst, scanNamuTemplateCalls } from "../../../lib/namumarkTemplateAst";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -106,6 +106,16 @@ function publicEditorModel(source: string) {
     editableFieldCount: number;
     lockedCellCount: number;
     rows: ReturnType<typeof parseNamuTableAst>["rows"];
+    templateCalls: Array<{
+      id: string;
+      index: number;
+      sourceStart: number;
+      sourceEnd: number;
+      name: string;
+      paramCount: number;
+      editableParamCount: number;
+      params: ReturnType<typeof scanNamuTemplateCalls>[number]["params"];
+    }>;
   }> = [];
   const templates: Array<{
     nodeId: string;
@@ -126,6 +136,7 @@ function publicEditorModel(source: string) {
     }
     if (block.type === "table") {
       const model = parseNamuTableAst(block.raw);
+      const templateCalls = scanNamuTemplateCalls(block.raw).map(({ raw: _callRaw, ...call }) => call);
       tables.push({
         nodeId: block.id,
         sectionIndex,
@@ -136,6 +147,7 @@ function publicEditorModel(source: string) {
         editableFieldCount: model.editableFieldCount,
         lockedCellCount: model.lockedCellCount,
         rows: model.rows,
+        templateCalls,
       });
       continue;
     }
@@ -188,7 +200,7 @@ export async function GET(request: Request) {
       templates: editor.templates,
       capabilities: {
         direct: ["text", "heading", "link", "external-link", "table-field"],
-        structuredBridge: ["table", "template-parameter", "media"],
+        structuredBridge: ["table", "table-template-parameter", "template-parameter", "media"],
         sourceFallback: ["styled-block", "raw-block"],
       },
     });
