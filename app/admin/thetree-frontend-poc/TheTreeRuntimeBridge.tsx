@@ -16,6 +16,11 @@ function hydrateVideoBackedImage(image: HTMLImageElement) {
   const src = explicitVideo || image.dataset.src || image.getAttribute("src") || "";
   if (!src || !isVideoUrl(src)) return false;
 
+  const wrapper = image.closest<HTMLElement>(".wiki-image-wrapper");
+  const sizingPlaceholder = wrapper
+    ? Array.from(wrapper.children).find((child) => child instanceof HTMLImageElement && child !== image) as HTMLImageElement | undefined
+    : undefined;
+
   const video = document.createElement("video");
   video.className = image.className.replace(/\bwiki-image-loading\b/g, "").replace(/\s+/g, " ").trim();
   video.style.cssText = image.style.cssText;
@@ -28,9 +33,25 @@ function hydrateVideoBackedImage(image: HTMLImageElement) {
   video.loop = true;
   video.muted = true;
   video.playsInline = true;
-  video.preload = "auto";
+  video.preload = "metadata";
   video.setAttribute("disablepictureinpicture", "");
+
+  // The Tree normally emits an in-flow sizing image plus an absolutely
+  // positioned real image. For a captured GIF that is stored as MP4 we used
+  // to keep a generic 1x1 SVG sizing image, which forced a 100%-wide video
+  // into a square box. The Namu source only asks for width=100%; its height
+  // is supposed to come from the media's intrinsic aspect ratio. Once video
+  // metadata is available, transfer that intrinsic ratio to the wrapper and
+  // remove the synthetic sizing placeholder from layout.
+  const syncIntrinsicRatio = () => {
+    if (!wrapper || !video.videoWidth || !video.videoHeight) return;
+    wrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    if (sizingPlaceholder) sizingPlaceholder.style.display = "none";
+  };
+  video.addEventListener("loadedmetadata", syncIntrinsicRatio, { once: true });
+
   image.replaceWith(video);
+  if (video.readyState >= 1) syncIntrinsicRatio();
   video.play().catch(() => {});
   return true;
 }
