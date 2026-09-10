@@ -1,0 +1,327 @@
+.page {
+  min-height: 100vh;
+  background: #f7f7fb;
+  color: #1f2230;
+  padding-bottom: 80px;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 0 24px;
+  background: rgba(255, 255, 255, .96);
+  border-bottom: 1px solid #e3e3ec;
+  backdrop-filter: blur(12px);
+}
+
+.brand {
+  color: #6d3df2;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+}
+
+.brand:hover { text-decoration: none; }
+.topActions a { color: #575b6c; font-size: 14px; font-weight: 700; }
+
+.hero,
+.identityCard,
+.sections,
+.footer,
+.errorBanner {
+  width: min(920px, calc(100% - 32px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero {
+  padding: 54px 0 28px;
+}
+
+.eyebrow {
+  color: #8a63f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.hero h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(34px, 5vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -1.4px;
+}
+
+.hero p {
+  max-width: 720px;
+  margin: 0;
+  color: #676b7c;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.stats span {
+  padding: 7px 10px;
+  border: 1px solid #e2def0;
+  border-radius: 999px;
+  background: #fff;
+  color: #66697a;
+  font-size: 12px;
+}
+
+.stats strong { color: #6d3df2; }
+
+.identityCard {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) 1fr;
+  gap: 24px;
+  align-items: end;
+  padding: 18px;
+  border: 1px solid #e4e1ed;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(67, 52, 105, .04);
+}
+
+.identityCard label {
+  display: grid;
+  gap: 7px;
+  color: #3f4352;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.identityCard label span { color: #9699a6; font-weight: 500; }
+.identityCard input,
+.blockFooter input {
+  width: 100%;
+  border: 1px solid #d8d6e0;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #fff;
+  color: #232634;
+  outline: none;
+}
+
+.identityCard input:focus,
+.blockFooter input:focus,
+.editBlock textarea:focus {
+  border-color: #8f6df5;
+  box-shadow: 0 0 0 3px rgba(111, 61, 242, .09);
+}
+
+.identityCard p {
+  margin: 0;
+  color: #777b8c;
+  font-size: 13px;
+}
+
+.honeypot {
+  position: absolute !important;
+  left: -10000px !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+}
+
+.errorBanner {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid #efb7bc;
+  border-radius: 10px;
+  background: #fff3f4;
+  color: #a3323b;
+  font-size: 13px;
+}
+
+.sections {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.sectionCard {
+  overflow: hidden;
+  border: 1px solid #e1dfea;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.sectionHeader {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border: 0;
+  padding: 16px 18px;
+  background: #fff;
+  color: #262936;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sectionHeader:hover { background: #faf9fe; }
+.sectionTitle { font-size: 17px; font-weight: 800; }
+.sectionMeta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  color: #8a8d9b;
+  font-size: 12px;
+}
+.chevron { color: #6d3df2; font-size: 20px; line-height: 1; }
+
+.sectionBody {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+  border-top: 1px solid #f0eef5;
+  background: #fcfbfe;
+}
+
+.editBlock {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #e5e2ec;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.blockTopline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #989aa7;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.submitted {
+  color: #168560;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.editBlock textarea {
+  display: block;
+  width: 100%;
+  min-height: 118px;
+  resize: vertical;
+  border: 1px solid #d9d6e1;
+  border-radius: 9px;
+  padding: 14px;
+  background: #fff;
+  color: #202330;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.7;
+  outline: none;
+}
+
+.editBlock textarea:disabled { background: #f6fbf8; color: #5b665f; }
+
+.blockFooter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.blockFooter input { flex: 1; min-width: 0; }
+.blockFooter button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 13px;
+  background: #6d3df2;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.blockFooter button:disabled { opacity: .45; cursor: default; }
+.blockFooter .resetButton {
+  border: 1px solid #dedbe7;
+  background: #fff;
+  color: #6c6f7d;
+}
+
+.lockedBlock {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed #d8d4e5;
+  border-radius: 10px;
+  background: #f5f3f9;
+  color: #797b88;
+}
+
+.lockedBlock span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #eae6f3;
+  color: #6c607d;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.lockedBlock small { line-height: 1.45; }
+
+.footer {
+  margin-top: 28px;
+  padding: 20px 2px;
+  color: #777a89;
+  font-size: 13px;
+}
+.footer strong { color: #444755; }
+.footer p { margin: 5px 0 0; }
+
+.stateShell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background: #f7f7fb;
+  color: #666a79;
+  font-size: 15px;
+}
+
+@media (max-width: 700px) {
+  .topbar { padding: 0 14px; }
+  .hero,
+  .identityCard,
+  .sections,
+  .footer,
+  .errorBanner { width: min(100% - 20px, 920px); }
+  .hero { padding-top: 34px; }
+  .hero p { font-size: 15px; }
+  .identityCard { grid-template-columns: 1fr; gap: 10px; }
+  .sectionHeader { padding: 14px; }
+  .sectionTitle { font-size: 16px; }
+  .sectionMeta { font-size: 11px; }
+  .blockFooter { align-items: stretch; flex-direction: column; }
+  .blockFooter button { width: 100%; }
+  .lockedBlock { align-items: flex-start; flex-direction: column; }
+}
