@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
+import { parseNamuTableAst } from "../../../lib/namumarkTableAst";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -90,11 +91,75 @@ async function enforceRateLimit(hash: string) {
   }
 }
 
-function publicAst(source: string) {
+function publicEditorModel(source: string) {
   const ast = parseNamuMarkAstForEditing(source);
   assertEditingAstLossless(source, ast);
-  const { source: _source, raw: _raw, ...payload } = ast;
-  return payload;
+  const { source: _source, raw: _raw, ...publicAst } = ast;
+  const tables: Array<{
+    nodeId: string;
+    sectionIndex: number;
+    sourceStart: number;
+    sourceEnd: number;
+    rowCount: number;
+    cellCount: number;
+    editableFieldCount: number;
+    lockedCellCount: number;
+    rows: Array<{
+      id: string;
+      row: number;
+      cells: Array<{
+        id: string;
+        row: number;
+        cell: number;
+        locked: boolean;
+        lockedReason: string | null;
+        fields: Array<{
+          id: string;
+          row: number;
+          cell: number;
+          fragment: number;
+          sourceStart: number;
+          sourceEnd: number;
+          valueWikitext: string;
+          plainText: string;
+        }>;
+      }>;
+    }>;
+  }> = [];
+
+  let sectionIndex = 0;
+  for (const block of ast.blocks) {
+    if (block.type === "heading") {
+      sectionIndex += 1;
+      continue;
+    }
+    if (block.type !== "table") continue;
+    const model = parseNamuTableAst(block.raw);
+    tables.push({
+      nodeId: block.id,
+      sectionIndex,
+      sourceStart: block.sourceStart,
+      sourceEnd: block.sourceEnd,
+      rowCount: model.rowCount,
+      cellCount: model.cellCount,
+      editableFieldCount: model.editableFieldCount,
+      lockedCellCount: model.lockedCellCount,
+      rows: model.rows.map((row) => ({
+        id: row.id,
+        row: row.row,
+        cells: row.cells.map((cell) => ({
+          id: cell.id,
+          row: cell.row,
+          cell: cell.cell,
+          locked: cell.locked,
+          lockedReason: cell.lockedReason,
+          fields: cell.fields,
+        })),
+      })),
+    });
+  }
+
+  return { ast: publicAst, tables };
 }
 
 export async function GET(request: Request) {
@@ -109,7 +174,7 @@ export async function GET(request: Request) {
     if (!source) return json({ error: "Public source is unavailable" }, 404);
     if (source.length > MAX_DOCUMENT_CHARS) return json({ error: "Document is too large for visual editing" }, 413);
 
-    const ast = publicAst(source);
+    const editor = publicEditorModel(source);
     return json({
       ok: true,
       editorVersion: "ast-visual-v3",
@@ -119,9 +184,10 @@ export async function GET(request: Request) {
         sourceMode: document.content_status === "published" ? "published" : "captured",
         sourceHash: sourceHash(source),
       },
-      ast,
+      ast: editor.ast,
+      tables: editor.tables,
       capabilities: {
-        direct: ["text", "heading", "link", "external-link"],
+        direct: ["text", "heading", "link", "external-link", "table-field"],
         structuredBridge: ["table", "template", "media"],
         sourceFallback: ["styled-block", "raw-block"],
       },
