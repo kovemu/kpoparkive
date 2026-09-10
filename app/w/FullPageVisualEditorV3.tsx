@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { applyVisualCommand, editorElementToWikitext, wikiBlockToEditorHtml } from "../../lib/wikiVisualEdit";
+import VisualEditorV3TemplateInspector, {
+  collectV3TemplateOperations,
+  createV3TemplateDrafts,
+  type V3TemplateDrafts,
+  type V3TemplateModel,
+} from "./VisualEditorV3TemplateInspector";
 import {
   buildV3TableSurfaces,
   cleanupV3TableSurfaces,
@@ -60,6 +66,7 @@ type AstPayload = {
     };
   };
   tables?: V3TableModel[];
+  templates?: V3TemplateModel[];
   capabilities: {
     direct: string[];
     structuredBridge: string[];
@@ -90,7 +97,8 @@ type AstOperation =
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "unlink"; nodeId: string }
   | { op: "set-link"; nodeId: string; target: string; label?: string }
-  | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> };
+  | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
+  | { op: "template-fields"; nodeId: string; changes: Array<{ paramId: string; proposedValue: string }> };
 
 const V3_STYLES = `
 body.kpoparkiveAstEditing { padding-top: 104px; }
@@ -137,7 +145,8 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
 .kpoparkiveAstToolbar select:hover { border-color: #9274df; background: #f4f0ff; color: #5630c4; }
 .kpoparkiveAstToolbar .primary { border-color: #6b3ce8; background: #6b3ce8; color: #fff; }
 .kpoparkiveAstToolbar .danger { color: #a22a3c; }
-.kpoparkiveAstToolbar select:disabled { opacity: .45; cursor: default; }
+.kpoparkiveAstToolbar select:disabled,
+.kpoparkiveAstToolbar button:disabled { opacity: .45; cursor: default; }
 .kpoparkiveAstStatus {
   position: fixed;
   z-index: 11990;
@@ -187,10 +196,74 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
 .kpoparkiveAstTableSurface:hover { background: rgba(107,60,232,.045); }
 .kpoparkiveAstTableSurface:focus { outline: 2px solid rgba(107,60,232,.68); background: rgba(255,255,255,.94); }
 .kpoparkiveAstTableSurface a { cursor: text !important; }
+.kpoparkiveAstTemplatePanel {
+  position: fixed;
+  z-index: 12100;
+  top: 112px;
+  right: 14px;
+  width: min(420px, calc(100vw - 28px));
+  max-height: calc(100vh - 128px);
+  overflow: auto;
+  border: 1px solid #d8d0eb;
+  border-radius: 12px;
+  background: rgba(255,255,255,.98);
+  box-shadow: 0 18px 55px rgba(39,28,70,.22);
+  color: #342c40;
+}
+.kpoparkiveAstTemplatePanelHeader {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid #e6e0ef;
+  background: #fbf9ff;
+}
+.kpoparkiveAstTemplatePanelHeader > div { display: grid; gap: 2px; }
+.kpoparkiveAstTemplatePanelHeader strong { color: #5832c6; }
+.kpoparkiveAstTemplatePanelHeader span { font-size: 11px; color: #82768e; }
+.kpoparkiveAstTemplatePanelHeader button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ded6eb;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 20px;
+  cursor: pointer;
+}
+.kpoparkiveAstTemplatePicker { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 12px 14px; }
+.kpoparkiveAstTemplatePicker select,
+.kpoparkiveAstTemplatePicker button,
+.kpoparkiveAstTemplateFields input {
+  min-width: 0;
+  border: 1px solid #dcd5e8;
+  border-radius: 7px;
+  background: #fff;
+  color: #352e40;
+  font: inherit;
+}
+.kpoparkiveAstTemplatePicker select { height: 36px; padding: 0 8px; }
+.kpoparkiveAstTemplatePicker button { padding: 0 10px; cursor: pointer; }
+.kpoparkiveAstTemplateMeta { display: grid; gap: 3px; padding: 0 14px 10px; }
+.kpoparkiveAstTemplateMeta b { font-size: 14px; }
+.kpoparkiveAstTemplateMeta span { font-size: 11px; color: #83788d; }
+.kpoparkiveAstTemplateFields { display: grid; gap: 10px; padding: 0 14px 14px; }
+.kpoparkiveAstTemplateFields label { display: grid; gap: 5px; }
+.kpoparkiveAstTemplateFieldName { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 800; }
+.kpoparkiveAstTemplateFieldName small { color: #8c8196; font-weight: 600; }
+.kpoparkiveAstTemplateFields input { height: 36px; padding: 0 9px; }
+.kpoparkiveAstTemplateFields label.locked input { background: #f4f2f6; color: #928b99; }
+.kpoparkiveAstTemplateLock { color: #9a6b36; font-size: 10px; }
+.kpoparkiveAstTemplateNote { margin: 0; padding: 11px 14px 14px; border-top: 1px solid #eee9f4; color: #776e80; font-size: 11px; line-height: 1.5; }
+.kpoparkiveAstTemplateEmpty { padding: 18px 14px; color: #776e80; font-size: 12px; }
 @media (max-width: 760px) {
   body.kpoparkiveAstEditing { padding-top: 142px; }
   .kpoparkiveAstToolbar { min-height: 94px; flex-wrap: wrap; }
   .kpoparkiveAstStatus { top: 94px; }
+  .kpoparkiveAstTemplatePanel { top: 150px; max-height: calc(100vh - 164px); }
 }
 `;
 
@@ -373,6 +446,9 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const [protectedCount, setProtectedCount] = useState(0);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const [activeHeadingLevel, setActiveHeadingLevel] = useState(2);
+  const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
+  const [selectedTemplateNodeId, setSelectedTemplateNodeId] = useState<string | null>(null);
+  const [templateDrafts, setTemplateDrafts] = useState<V3TemplateDrafts>({});
   const surfacesRef = useRef<SurfaceRecord[]>([]);
   const headingsRef = useRef<HeadingRecord[]>([]);
   const tableSurfacesRef = useRef<V3TableSurfaceRecord[]>([]);
@@ -380,6 +456,8 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const startedSectionRef = useRef<number | null>(null);
 
   const stats = useMemo(() => payload?.ast.stats || null, [payload]);
+  const templates = payload?.templates || [];
+  const templateParamCount = templates.reduce((sum, template) => sum + template.editableParamCount, 0);
 
   const activateSurface = (surface: HTMLElement, heading?: HeadingRecord) => {
     activeSurfaceRef.current = surface;
@@ -407,6 +485,9 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     headingsRef.current = [];
     activeSurfaceRef.current = null;
     setActiveHeadingId(null);
+    setTemplatePanelOpen(false);
+    setSelectedTemplateNodeId(null);
+    setTemplateDrafts({});
     document.body.classList.remove("kpoparkiveAstEditing");
     document.querySelector(".thetreeWikiBaseline")?.classList.remove("kpoparkiveAstCanvas");
     setEditing(false);
@@ -523,9 +604,14 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     setTableFieldCount(tableResult.records.length);
     setMappedTableCount(tableResult.mappedTables);
 
+    const editableTemplates = (data.templates || []).filter((template) => template.paramCount > 0);
+    setTemplateDrafts(createV3TemplateDrafts(data.templates || []));
+    setSelectedTemplateNodeId(editableTemplates[0]?.nodeId || null);
+
     const complexBlocks = data.ast.blocks.filter((block) => block.type === "table" || block.type === "template" || block.type === "styled-block" || block.type === "raw-block" || block.type === "media").length;
     const tableBlocks = data.ast.blocks.filter((block) => block.type === "table").length;
-    const protectedComplex = Math.max(0, complexBlocks - tableResult.mappedTables);
+    const structuredTemplates = (data.templates || []).filter((template) => template.editableParamCount > 0).length;
+    const protectedComplex = Math.max(0, complexBlocks - tableResult.mappedTables - structuredTemplates);
     setProtectedCount(protectedComplex);
     surfacesRef.current = created;
     setMappedCount(created.length);
@@ -535,8 +621,8 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       window.setTimeout(() => roots.get(requestedSection)?.scrollIntoView({ block: "start" }), 30);
     }
     setStatus(
-      `${created.length} text/list + ${headingsRef.current.length} headings + ${tableResult.records.length} table fields are AST-backed · ` +
-      `${tableResult.mappedTables}/${tableBlocks} tables mapped`,
+      `${created.length} text/list + ${headingsRef.current.length} headings + ${tableResult.records.length} table fields + ` +
+      `${(data.templates || []).reduce((sum, template) => sum + template.editableParamCount, 0)} template parameters are AST-backed`,
     );
   };
 
@@ -627,6 +713,22 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     setStatus(`Heading level set to H${record.level}`);
   };
 
+  const revealTemplateSection = (sectionIndex: number) => {
+    const article = document.querySelector<HTMLElement>(".thetreeWikiBaseline");
+    if (sectionIndex === 0) {
+      article?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    sectionRootsFromPage().get(sectionIndex)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const updateTemplateDraft = (nodeId: string, paramId: string, value: string) => {
+    setTemplateDrafts((current) => ({
+      ...current,
+      [nodeId]: { ...(current[nodeId] || {}), [paramId]: value },
+    }));
+  };
+
   const save = async () => {
     if (!payload || saving) return;
     const operations: AstOperation[] = [];
@@ -650,6 +752,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
 
     operations.push(...collectV3TableOperations(tableSurfacesRef.current));
+    operations.push(...collectV3TemplateOperations(payload.templates || [], templateDrafts));
 
     if (!operations.length) {
       setStatus("No changes were made");
@@ -708,6 +811,12 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("link")}>Link</button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={unlink}>Unlink</button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("bulletList")}>List</button>
+        <button
+          type="button"
+          disabled={!templates.some((template) => template.paramCount > 0)}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setTemplatePanelOpen((value) => !value)}
+        >Templates</button>
         <button type="button" className="danger" onClick={() => { cleanup(); setStatus("Edit cancelled"); }}>Cancel</button>
         <button type="button" className="primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
       </div>
@@ -715,8 +824,18 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <b>Lossless AST</b>
         <span>{status}</span>
         {stats ? <span>{stats.linkCount} links · {stats.headingCount} headings · {stats.tableCount} tables · {stats.templateCount} templates</span> : null}
-        <span>{mappedCount} text/list · {headingCount} headings · {tableFieldCount} table fields · {mappedTableCount} tables · {protectedCount} protected</span>
+        <span>{mappedCount} text/list · {headingCount} headings · {tableFieldCount} table fields · {templateParamCount} template params · {protectedCount} protected</span>
       </div>
+      <VisualEditorV3TemplateInspector
+        open={templatePanelOpen}
+        templates={templates}
+        selectedNodeId={selectedTemplateNodeId}
+        drafts={templateDrafts}
+        onClose={() => setTemplatePanelOpen(false)}
+        onSelect={setSelectedTemplateNodeId}
+        onChange={updateTemplateDraft}
+        onRevealSection={revealTemplateSection}
+      />
     </>
   );
 }
