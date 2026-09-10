@@ -68,6 +68,16 @@ type SurfaceRecord = {
   oldDisplay: string;
 };
 
+type HeadingRecord = {
+  nodeId: string;
+  originalWikitext: string;
+  originalLevel: number;
+  level: number;
+  host: HTMLElement;
+  oldDisplay: string;
+  surface: HTMLElement;
+};
+
 type AtomicRecord = {
   nodeId: string;
   nodeType: string;
@@ -100,7 +110,8 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
   overflow-x: auto;
 }
 .kpoparkiveAstToolbar strong { white-space: nowrap; margin-right: 7px; color: #5630c4; }
-.kpoparkiveAstToolbar button {
+.kpoparkiveAstToolbar button,
+.kpoparkiveAstToolbar select {
   height: 36px;
   min-width: 36px;
   padding: 0 10px;
@@ -112,11 +123,13 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
-  cursor: pointer;
 }
-.kpoparkiveAstToolbar button:hover { border-color: #9274df; background: #f4f0ff; color: #5630c4; }
+.kpoparkiveAstToolbar button { cursor: pointer; }
+.kpoparkiveAstToolbar button:hover,
+.kpoparkiveAstToolbar select:hover { border-color: #9274df; background: #f4f0ff; color: #5630c4; }
 .kpoparkiveAstToolbar .primary { border-color: #6b3ce8; background: #6b3ce8; color: #fff; }
 .kpoparkiveAstToolbar .danger { color: #a22a3c; }
+.kpoparkiveAstToolbar select:disabled { opacity: .45; cursor: default; }
 .kpoparkiveAstStatus {
   position: fixed;
   z-index: 11990;
@@ -143,6 +156,15 @@ body.kpoparkiveAstEditing .thetreeWikiBaseline a { cursor: text !important; }
 .kpoparkiveAstSurface:hover { background: rgba(107,60,232,.035); }
 .kpoparkiveAstSurface:focus { outline: 2px solid rgba(107,60,232,.62); background: #fff; }
 .kpoparkiveAstSurface a { cursor: text !important; }
+.kpoparkiveAstHeadingSurface {
+  display: inline;
+  min-width: 2ch;
+  outline: 1px dashed rgba(107,60,232,.45);
+  outline-offset: 3px;
+  border-radius: 3px;
+  caret-color: #6b3ce8;
+}
+.kpoparkiveAstHeadingSurface:focus { outline: 2px solid rgba(107,60,232,.65); background: rgba(255,255,255,.85); }
 .kpoparkiveAstAtomic { position: relative; }
 .kpoparkiveAstAtomic::after {
   content: attr(data-ve3-label);
@@ -199,6 +221,20 @@ function renderedPlainText(wikitext: string) {
   return normalize(holder.innerText || holder.textContent || "");
 }
 
+function headingParts(raw: string) {
+  const eol = raw.match(/(?:\r\n|\r|\n)$/)?.[0] || "";
+  const content = eol ? raw.slice(0, -eol.length) : raw;
+  const match = content.match(/^(={2,6})\s*(.*?)\s*\1\s*$/);
+  if (!match) return null;
+  return { level: match[1].length, wikitext: match[2], eol };
+}
+
+function headingEditorHtml(wikitext: string) {
+  const html = wikiBlockToEditorHtml(wikitext);
+  const match = html.match(/^<p(?:\s[^>]*)?>([\s\S]*)<\/p>$/i);
+  return match ? match[1] : html.replace(/<\/?p(?:\s[^>]*)?>/gi, "");
+}
+
 function sectionNumberFromEditLink(anchor: HTMLAnchorElement) {
   try {
     const url = new URL(anchor.href, window.location.href);
@@ -209,6 +245,15 @@ function sectionNumberFromEditLink(anchor: HTMLAnchorElement) {
   } catch {
     return null;
   }
+}
+
+function editAnchorForSection(sectionIndex: number) {
+  for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="section="]'))) {
+    if (sectionNumberFromEditLink(anchor) !== sectionIndex) continue;
+    if (!/편집|edit/i.test(anchor.textContent || "")) continue;
+    return anchor;
+  }
+  return null;
 }
 
 function findHeadingContent(anchor: HTMLAnchorElement) {
@@ -253,10 +298,11 @@ function directSafe(block: AstBlock) {
   return false;
 }
 
-function candidateElements(root: HTMLElement) {
+function candidateElements(root: HTMLElement, leadOnly = false) {
   return Array.from(root.querySelectorAll<HTMLElement>(".wiki-paragraph, .wiki-list, ul, ol, blockquote, .wiki-indent, .wiki-quote"))
     .filter((node) => {
       if (!normalize(node.innerText || node.textContent || "")) return false;
+      if (leadOnly && (node.closest(".wiki-heading-content") || node.closest(".wiki-heading"))) return false;
       if (node.closest(".wiki-table")) return false;
       if (node.closest(".wiki-folding")) return false;
       if (node.querySelector("iframe, video, table")) return false;
@@ -264,10 +310,10 @@ function candidateElements(root: HTMLElement) {
     });
 }
 
-function bestUniqueCandidate(root: HTMLElement, block: AstBlock, used: Set<HTMLElement>) {
+function bestUniqueCandidate(root: HTMLElement, block: AstBlock, used: Set<HTMLElement>, leadOnly = false) {
   const expected = renderedPlainText(block.raw);
   if (!expected) return null;
-  const scored = candidateElements(root)
+  const scored = candidateElements(root, leadOnly)
     .filter((candidate) => !used.has(candidate) && !Array.from(used).some((other) => other.contains(candidate) || candidate.contains(other)))
     .map((candidate) => ({ candidate, score: textScore(expected, candidate.innerText || candidate.textContent || "") }))
     .sort((a, b) => b.score - a.score);
@@ -315,13 +361,27 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const [status, setStatus] = useState("AST Visual Editor V3 ready");
   const [payload, setPayload] = useState<AstPayload | null>(null);
   const [mappedCount, setMappedCount] = useState(0);
+  const [headingCount, setHeadingCount] = useState(0);
   const [protectedCount, setProtectedCount] = useState(0);
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  const [activeHeadingLevel, setActiveHeadingLevel] = useState(2);
   const surfacesRef = useRef<SurfaceRecord[]>([]);
+  const headingsRef = useRef<HeadingRecord[]>([]);
   const atomicsRef = useRef<AtomicRecord[]>([]);
   const activeSurfaceRef = useRef<HTMLElement | null>(null);
   const startedSectionRef = useRef<number | null>(null);
 
   const stats = useMemo(() => payload?.ast.stats || null, [payload]);
+
+  const activateSurface = (surface: HTMLElement, heading?: HeadingRecord) => {
+    activeSurfaceRef.current = surface;
+    if (heading) {
+      setActiveHeadingId(heading.nodeId);
+      setActiveHeadingLevel(heading.level);
+    } else {
+      setActiveHeadingId(null);
+    }
+  };
 
   const cleanup = () => {
     for (const record of surfacesRef.current) {
@@ -330,6 +390,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       record.original.removeAttribute("data-ve3-original");
     }
     surfacesRef.current = [];
+    for (const record of headingsRef.current) {
+      record.surface.remove();
+      record.host.style.display = record.oldDisplay;
+    }
+    headingsRef.current = [];
     for (const record of atomicsRef.current) {
       record.element.classList.remove("kpoparkiveAstAtomic");
       record.element.removeAttribute("data-ve3-label");
@@ -337,11 +402,56 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
     atomicsRef.current = [];
     activeSurfaceRef.current = null;
+    setActiveHeadingId(null);
     document.body.classList.remove("kpoparkiveAstEditing");
     document.querySelector(".thetreeWikiBaseline")?.classList.remove("kpoparkiveAstCanvas");
     setEditing(false);
     setMappedCount(0);
+    setHeadingCount(0);
     setProtectedCount(0);
+  };
+
+  const buildHeadingSurfaces = (data: AstPayload) => {
+    const records: HeadingRecord[] = [];
+    const sourceHeadings = data.ast.blocks.filter((block) => block.type === "heading");
+    sourceHeadings.forEach((block, index) => {
+      const sectionIndex = index + 1;
+      const editAnchor = editAnchorForSection(sectionIndex);
+      const heading = editAnchor?.closest<HTMLElement>(".wiki-heading");
+      const marker = editAnchor?.closest<HTMLElement>(".wiki-edit-section");
+      const host = marker?.parentElement as HTMLElement | null;
+      const parts = headingParts(block.raw);
+      if (!heading || !host || !parts) return;
+
+      const oldDisplay = host.style.display;
+      host.style.display = "none";
+      const surface = document.createElement("span");
+      surface.className = "kpoparkiveAstHeadingSurface";
+      surface.contentEditable = "true";
+      surface.spellcheck = true;
+      surface.dataset.ve3NodeId = block.id;
+      surface.dataset.ve3NodeType = "heading";
+      surface.innerHTML = headingEditorHtml(parts.wikitext);
+      const record: HeadingRecord = {
+        nodeId: block.id,
+        originalWikitext: block.raw,
+        originalLevel: parts.level,
+        level: parts.level,
+        host,
+        oldDisplay,
+        surface,
+      };
+      surface.addEventListener("focusin", () => activateSurface(surface, record));
+      surface.addEventListener("mousedown", () => activateSurface(surface, record));
+      surface.addEventListener("click", (event) => {
+        const anchor = (event.target as Element | null)?.closest?.("a");
+        if (anchor) event.preventDefault();
+      });
+      heading.appendChild(surface);
+      records.push(record);
+    });
+    headingsRef.current = records;
+    setHeadingCount(records.length);
   };
 
   const buildSurfaces = (data: AstPayload, requestedSection: number | null) => {
@@ -356,14 +466,16 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     const created: SurfaceRecord[] = [];
     const atomics: AtomicRecord[] = [];
 
+    buildHeadingSurfaces(data);
+
     for (const [section, blocks] of grouped.entries()) {
-      const root = roots.get(section);
+      const root = section === 0 ? article : roots.get(section);
       if (!root) continue;
       const used = new Set<HTMLElement>();
 
       for (const block of blocks) {
         if (!directSafe(block)) continue;
-        const candidate = bestUniqueCandidate(root, block, used);
+        const candidate = bestUniqueCandidate(root, block, used, section === 0);
         if (!candidate) continue;
         used.add(candidate);
 
@@ -374,8 +486,8 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         surface.dataset.ve3NodeId = block.id;
         surface.dataset.ve3NodeType = block.type;
         surface.innerHTML = wikiBlockToEditorHtml(block.raw);
-        surface.addEventListener("focusin", () => { activeSurfaceRef.current = surface; });
-        surface.addEventListener("mousedown", () => { activeSurfaceRef.current = surface; });
+        surface.addEventListener("focusin", () => activateSurface(surface));
+        surface.addEventListener("mousedown", () => activateSurface(surface));
         surface.addEventListener("click", (event) => {
           const anchor = (event.target as Element | null)?.closest?.("a");
           if (anchor) event.preventDefault();
@@ -396,7 +508,6 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       }
     }
 
-    // Complex structures stay rendered and intact. They are marked as AST-protected rather than converted into fragile contentEditable DOM.
     const structuredCount = data.ast.blocks.filter((block) => block.type === "table" || block.type === "template" || block.type === "styled-block" || block.type === "raw-block" || block.type === "media").length;
     setProtectedCount(structuredCount);
     surfacesRef.current = created;
@@ -407,7 +518,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     if (requestedSection && roots.get(requestedSection)) {
       window.setTimeout(() => roots.get(requestedSection)?.scrollIntoView({ block: "start" }), 30);
     }
-    setStatus(`${created.length} safe AST blocks are directly editable · ${structuredCount} complex blocks preserved structurally`);
+    setStatus(`${created.length} text/list blocks + ${headingsRef.current.length} headings are AST-backed · ${structuredCount} complex blocks preserved`);
   };
 
   const startEditing = async (requestedSection: number | null) => {
@@ -450,7 +561,6 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       style.remove();
       cleanup();
     };
-    // The page title is stable for this component. Editor lifecycle is intentionally document-scoped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 
@@ -486,7 +596,16 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
     unwrapAnchor(anchor);
     surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "formatRemove" }));
-    setStatus("Link removed visually; save will rewrite the exact AST block range");
+    setStatus("Link removed visually; save will rewrite the exact AST node range");
+  };
+
+  const changeHeadingLevel = (level: number) => {
+    if (!activeHeadingId) return;
+    const record = headingsRef.current.find((item) => item.nodeId === activeHeadingId);
+    if (!record) return;
+    record.level = Math.max(2, Math.min(6, Math.round(level)));
+    setActiveHeadingLevel(record.level);
+    setStatus(`Heading level set to H${record.level}`);
   };
 
   const save = async () => {
@@ -497,6 +616,15 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       const before = normalize(record.originalWikitext);
       const after = normalize(wikitext);
       if (before === after) continue;
+      operations.push({ op: "replace-node", nodeId: record.nodeId, wikitext });
+    }
+    for (const record of headingsRef.current) {
+      const parts = headingParts(record.originalWikitext);
+      if (!parts) continue;
+      const inner = editorElementToWikitext(record.surface).trim();
+      const marks = "=".repeat(record.level);
+      const wikitext = `${marks} ${inner} ${marks}${parts.eol}`;
+      if (wikitext === record.originalWikitext) continue;
       operations.push({ op: "replace-node", nodeId: record.nodeId, wikitext });
     }
     if (!operations.length) {
@@ -541,6 +669,14 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <strong>Visual Editor V3 · AST</strong>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("undo")}>Undo</button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("redo")}>Redo</button>
+        <select
+          aria-label="Heading level"
+          disabled={!activeHeadingId}
+          value={activeHeadingLevel}
+          onChange={(event) => changeHeadingLevel(Number(event.target.value))}
+        >
+          {[2, 3, 4, 5, 6].map((level) => <option key={level} value={level}>H{level}</option>)}
+        </select>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("bold")}><b>B</b></button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("italic")}><i>I</i></button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => command("underline")}><u>U</u></button>
@@ -555,7 +691,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
         <b>Lossless AST</b>
         <span>{status}</span>
         {stats ? <span>{stats.linkCount} links · {stats.headingCount} headings · {stats.tableCount} tables · {stats.templateCount} templates</span> : null}
-        <span>{mappedCount} direct · {protectedCount} protected</span>
+        <span>{mappedCount} text/list · {headingCount} headings · {protectedCount} protected</span>
       </div>
     </>
   );
