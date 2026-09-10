@@ -30,82 +30,214 @@ type ParsedTableModel = Omit<WikiTableModel, "fields"> & {
   fields: ParsedTableField[];
 };
 
-type CellSpan = { text: string; start: number; end: number };
+type CellSpan = {
+  text: string;
+  start: number;
+  end: number;
+};
 
-function normalize(value: string) { return value.replace(/\r\n?/g, "\n"); }
+type RowSpan = {
+  text: string;
+  start: number;
+};
+
+type EditableSpan = {
+  value: string;
+  start: number;
+  end: number;
+};
+
+function normalize(value: string) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+function removeBalancedFootnotes(value: string) {
+  let out = "";
+  let index = 0;
+  while (index < value.length) {
+    if (!value.startsWith("[*", index)) {
+      out += value[index];
+      index += 1;
+      continue;
+    }
+    let depth = 0;
+    let cursor = index;
+    for (; cursor < value.length; cursor += 1) {
+      if (value[cursor] === "[") depth += 1;
+      else if (value[cursor] === "]") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    if (depth !== 0) {
+      out += value[index];
+      index += 1;
+      continue;
+    }
+    index = cursor + 1;
+  }
+  return out;
+}
 
 function stripInlineMarkup(value: string) {
-  return value
-    .replace(/\[br\]/gi, " ")
+  return removeBalancedFootnotes(value)
+    .replace(/\[br\]/gi, "\n")
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_match, _target: string, label: string) => label)
     .replace(/\[\[([^\]]+)\]\]/g, (_match, target: string) => target)
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, (_match, label: string) => label)
     .replace(/\[https?:\/\/[^\]]+\]/g, "")
-    .replace(/'''|''|~~|\^\^|__/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/'''|''|__|~~|\^\^/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
 
 function lineOffsets(lines: string[]) {
   const offsets: number[] = [];
   let cursor = 0;
-  for (const line of lines) { offsets.push(cursor); cursor += line.length + 1; }
+  for (const line of lines) {
+    offsets.push(cursor);
+    cursor += line.length + 1;
+  }
   return offsets;
 }
 
-function completeRowCells(line: string, lineStart: number): CellSpan[] | null {
-  const first = line.indexOf("||");
-  if (first < 0 || line.slice(0, first).trim()) return null;
-  const positions: number[] = [];
-  let cursor = first;
-  while (cursor >= 0 && cursor < line.length) {
-    positions.push(cursor);
-    cursor = line.indexOf("||", cursor + 2);
+function countToken(value: string, token: string) {
+  let count = 0;
+  let cursor = 0;
+  while ((cursor = value.indexOf(token, cursor)) >= 0) {
+    count += 1;
+    cursor += token.length;
   }
+  return count;
+}
+
+function logicalRows(source: string): RowSpan[] {
+  const lines = source.split("\n");
+  const offsets = lineOffsets(lines);
+  const rows: RowSpan[] = [];
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const first = line.indexOf("||");
+    if (first < 0 || line.slice(0, first).trim()) continue;
+
+    let text = line.slice(first);
+    let curlyDepth = countToken(text, "{{{") - countToken(text, "}}}");
+    let endIndex = lineIndex;
+
+    while ((curlyDepth > 0 || !text.trimEnd().endsWith("||")) && endIndex + 1 < lines.length) {
+      endIndex += 1;
+      const next = lines[endIndex];
+      text += `\n${next}`;
+      curlyDepth += countToken(next, "{{{") - countToken(next, "}}}");
+      if (text.length > 120_000) break;
+    }
+
+    if (text.trimEnd().endsWith("||")) rows.push({ text, start: offsets[lineIndex] + first });
+  }
+
+  return rows;
+}
+
+function splitRowCells(row: RowSpan): CellSpan[] | null {
+  const positions: number[] = [];
+  let curlyDepth = 0;
+  let squareDepth = 0;
+
+  for (let index = 0; index < row.text.length - 1; index += 1) {
+    const pair = row.text.slice(index, index + 2);
+    const triple = row.text.slice(index, index + 3);
+    if (triple === "{{{") {
+      curlyDepth += 1;
+      index += 2;
+      continue;
+    }
+    if (triple === "}}}") {
+      curlyDepth = Math.max(0, curlyDepth - 1);
+      index += 2;
+      continue;
+    }
+    if (pair === "[[") {
+      squareDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (pair === "]]" && squareDepth > 0) {
+      squareDepth -= 1;
+      index += 1;
+      continue;
+    }
+    if (pair === "||" && curlyDepth === 0 && squareDepth === 0) {
+      positions.push(index);
+      index += 1;
+    }
+  }
+
   if (positions.length < 2) return null;
   const last = positions[positions.length - 1];
-  if (line.slice(last + 2).trim()) return null;
+  if (row.text.slice(last + 2).trim()) return null;
+
   const cells: CellSpan[] = [];
   for (let index = 0; index < positions.length - 1; index += 1) {
     const start = positions[index] + 2;
     const end = positions[index + 1];
-    cells.push({ text: line.slice(start, end), start: lineStart + start, end: lineStart + end });
+    cells.push({ text: row.text.slice(start, end), start: row.start + start, end: row.start + end });
   }
   return cells;
 }
 
-function contentSpan(cell: CellSpan) {
+function baseContentSpan(cell: CellSpan): EditableSpan {
   const optionMatch = cell.text.match(/^(\s*(?:<[^>\n]*>\s*)+)/);
   const optionPrefix = optionMatch?.[1] || "";
   const afterOptions = cell.text.slice(optionPrefix.length);
   const leading = afterOptions.match(/^\s*/)?.[0] || "";
   const trailing = afterOptions.match(/\s*$/)?.[0] || "";
-  let start = cell.start + optionPrefix.length + leading.length;
-  let end = cell.end - trailing.length;
-  let value = cell.text.slice(optionPrefix.length + leading.length, cell.text.length - trailing.length);
+  const start = cell.start + optionPrefix.length + leading.length;
+  const end = cell.end - trailing.length;
+  const value = cell.text.slice(optionPrefix.length + leading.length, cell.text.length - trailing.length);
+  return { value, start, end };
+}
 
-  for (let depth = 0; depth < 6; depth += 1) {
+function peelPresentationWrappers(input: EditableSpan) {
+  let { value, start, end } = input;
+  for (let depth = 0; depth < 10; depth += 1) {
     const linked = value.match(/^\[\[([^\]|]+)\|([\s\S]+)\]\]$/);
     if (linked) {
       const inner = linked[2];
       const innerIndex = value.indexOf(inner);
-      start += innerIndex; end = start + inner.length; value = inner; continue;
+      start += innerIndex;
+      end = start + inner.length;
+      value = inner;
+      continue;
+    }
+    const wikiStyle = value.match(/^\{\{\{#!wiki[^\n]*\n([\s\S]*?)\n?\}\}\}$/i);
+    if (wikiStyle) {
+      const inner = wikiStyle[1];
+      const innerIndex = value.indexOf(inner);
+      start += innerIndex;
+      end = start + inner.length;
+      value = inner;
+      continue;
     }
     const styled = value.match(/^\{\{\{(?:[+-]\d+|#[^\s{}]+)\s+([\s\S]*?)\}\}\}$/);
     if (styled) {
       const inner = styled[1];
       const innerIndex = value.indexOf(inner);
-      start += innerIndex; end = start + inner.length; value = inner; continue;
+      start += innerIndex;
+      end = start + inner.length;
+      value = inner;
+      continue;
     }
     break;
   }
   return { value, start, end };
 }
 
-function unsafeCellReason(value: string) {
+function unsafeFragmentReason(value: string) {
   const text = value.trim();
   if (!text) return "Empty cell";
-  if (text.includes("\n")) return "Multi-line cell";
   if (/\|\|/.test(text)) return "Nested table";
   if (/\{\{\{|\}\}\}/.test(text)) return "Structured formatting";
   if (/\[include\(/i.test(text)) return "Template include";
@@ -113,48 +245,115 @@ function unsafeCellReason(value: string) {
   if (/\[\[(?:파일|File|분류|Category):/i.test(text)) return "File or metadata cell";
   if (/\[(?:age|dday)\(/i.test(text)) return "Dynamic macro";
   if (/\[(?:목차|각주|clearfix)\]/i.test(text)) return "Document macro";
-  if (/^\s*={2,6}.*={2,6}\s*$/.test(text)) return "Heading syntax";
-  if (/^(?:width|height)=/i.test(text)) return "Media sizing option";
+  if (/^\s*={2,6}.*={2,6}\s*$/m.test(text)) return "Heading syntax";
+  if (text.length > 30_000) return "Text fragment is too large";
   return null;
+}
+
+function formattedInnerSpans(cell: CellSpan): EditableSpan[] {
+  const value = cell.text;
+  const stack: number[] = [];
+  const spans: EditableSpan[] = [];
+
+  for (let index = 0; index < value.length - 2; index += 1) {
+    const triple = value.slice(index, index + 3);
+    if (triple === "{{{") {
+      stack.push(index);
+      index += 2;
+      continue;
+    }
+    if (triple !== "}}}" || !stack.length) continue;
+
+    const open = stack.pop()!;
+    const bodyStart = open + 3;
+    const body = value.slice(bodyStart, index);
+    let content = "";
+    let contentStartInBody = -1;
+    const wikiStyle = body.match(/^#!wiki[^\n]*\n([\s\S]*)$/i);
+    if (wikiStyle) {
+      content = wikiStyle[1];
+      contentStartInBody = body.indexOf(content);
+    } else {
+      const styled = body.match(/^(?:[+-]\d+|#[^\s{}]+)\s+([\s\S]*)$/);
+      if (styled) {
+        content = styled[1];
+        contentStartInBody = body.indexOf(content);
+      }
+    }
+
+    if (contentStartInBody >= 0 && content && !unsafeFragmentReason(content)) {
+      const start = cell.start + bodyStart + contentStartInBody;
+      spans.push({ value: content, start, end: start + content.length });
+    }
+    index += 2;
+  }
+
+  return spans;
+}
+
+function editableSpansInCell(cell: CellSpan) {
+  const base = baseContentSpan(cell);
+  const peeled = peelPresentationWrappers(base);
+  if (!unsafeFragmentReason(peeled.value)) return [peeled];
+
+  const inner = formattedInnerSpans(cell)
+    .filter((span) => !unsafeFragmentReason(span.value))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const deduped: EditableSpan[] = [];
+  for (const span of inner) {
+    if (deduped.some((item) => item.start === span.start && item.end === span.end)) continue;
+    if (deduped.some((item) => item.start <= span.start && item.end >= span.end)) continue;
+    deduped.push(span);
+  }
+  return deduped;
 }
 
 function validateProposedCell(value: string) {
   const normalized = normalize(value).trim();
-  const reason = unsafeCellReason(normalized);
-  if (reason) throw new Error(`Table cell contains unsupported wiki syntax (${reason})`);
-  if (normalized.length > 4000) throw new Error("Table cell is too long");
+  const reason = unsafeFragmentReason(normalized);
+  if (reason) throw new Error(`Table text contains unsupported wiki syntax (${reason})`);
   return normalized;
 }
 
 function parseTableBlock(section: EasyEditSection, block: EasyEditBlock): ParsedTableModel | null {
   const originalWikitext = normalize(block.originalWikitext);
   if (!originalWikitext.includes("||")) return null;
-  const lines = originalWikitext.split("\n");
-  const offsets = lineOffsets(lines);
+
   const fields: ParsedTableField[] = [];
   let lockedCount = 0;
   let rowNumber = 0;
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const cells = completeRowCells(lines[lineIndex], offsets[lineIndex]);
+  for (const row of logicalRows(originalWikitext)) {
+    const cells = splitRowCells(row);
     if (!cells) continue;
     rowNumber += 1;
+
     for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
-      const span = contentSpan(cells[cellIndex]);
-      const reason = unsafeCellReason(span.value);
-      if (reason) { lockedCount += 1; continue; }
-      const plainText = stripInlineMarkup(span.value);
-      if (!plainText) { lockedCount += 1; continue; }
-      fields.push({
-        key: `${block.key}:${rowNumber}:${cellIndex + 1}:${span.start}`,
-        row: rowNumber,
-        column: cellIndex + 1,
-        label: `Row ${rowNumber} · Column ${cellIndex + 1}`,
-        valueWikitext: span.value,
-        plainText,
-        replaceStart: span.start,
-        replaceEnd: span.end,
-      });
+      const spans = editableSpansInCell(cells[cellIndex]);
+      if (!spans.length) {
+        lockedCount += 1;
+        continue;
+      }
+
+      let fragment = 0;
+      for (const span of spans) {
+        const plainText = stripInlineMarkup(span.value);
+        if (!plainText) {
+          lockedCount += 1;
+          continue;
+        }
+        fragment += 1;
+        fields.push({
+          key: `${block.key}:${rowNumber}:${cellIndex + 1}:${span.start}`,
+          row: rowNumber,
+          column: cellIndex + 1,
+          label: `Row ${rowNumber} · Column ${cellIndex + 1}${spans.length > 1 ? ` · Text ${fragment}` : ""}`,
+          valueWikitext: span.value,
+          plainText,
+          replaceStart: span.start,
+          replaceEnd: span.end,
+        });
+      }
     }
   }
 
@@ -193,19 +392,24 @@ export function parseWikiTables(source: string): WikiTableModel[] {
   return models;
 }
 
-export function applyWikiTableChanges(source: string, blockKey: string, changes: Array<{ key: string; proposedWikitext: string }>) {
+export function applyWikiTableChanges(
+  source: string,
+  blockKey: string,
+  changes: Array<{ key: string; proposedWikitext: string }>,
+) {
   const found = findEasyEditBlock(source, blockKey);
   if (!found) throw new Error("Table block no longer exists");
   const parsed = parseTableBlock(found.section, found.block);
   if (!parsed) throw new Error("Editable table was not found");
   if (!changes.length) throw new Error("No table changes were supplied");
+
   const byKey = new Map(parsed.fields.map((field) => [field.key, field]));
   const replacements: Array<{ start: number; end: number; value: string }> = [];
   const changedCells: Array<{ label: string; original: string; proposed: string }> = [];
 
   for (const change of changes) {
     const field = byKey.get(change.key);
-    if (!field) throw new Error("A table cell no longer exists");
+    if (!field) throw new Error("A table text field no longer exists");
     const proposed = validateProposedCell(change.proposedWikitext);
     if (proposed === field.valueWikitext.trim()) continue;
     replacements.push({ start: field.replaceStart, end: field.replaceEnd, value: proposed });
@@ -214,6 +418,7 @@ export function applyWikiTableChanges(source: string, blockKey: string, changes:
 
   if (!changedCells.length) throw new Error("No changes were made");
   replacements.sort((a, b) => b.start - a.start || b.end - a.end);
+
   let proposedTable = parsed.originalWikitext;
   let previousStart = Number.POSITIVE_INFINITY;
   for (const replacement of replacements) {
@@ -221,5 +426,6 @@ export function applyWikiTableChanges(source: string, blockKey: string, changes:
     proposedTable = `${proposedTable.slice(0, replacement.start)}${replacement.value}${proposedTable.slice(replacement.end)}`;
     previousStart = replacement.start;
   }
+
   return { found, parsed, proposedTable, changedCells };
 }
