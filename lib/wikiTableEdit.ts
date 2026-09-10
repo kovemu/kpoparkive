@@ -30,15 +30,9 @@ type ParsedTableModel = Omit<WikiTableModel, "fields"> & {
   fields: ParsedTableField[];
 };
 
-type CellSpan = {
-  text: string;
-  start: number;
-  end: number;
-};
+type CellSpan = { text: string; start: number; end: number };
 
-function normalize(value: string) {
-  return value.replace(/\r\n?/g, "\n");
-}
+function normalize(value: string) { return value.replace(/\r\n?/g, "\n"); }
 
 function stripInlineMarkup(value: string) {
   return value
@@ -47,7 +41,7 @@ function stripInlineMarkup(value: string) {
     .replace(/\[\[([^\]]+)\]\]/g, (_match, target: string) => target)
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, (_match, label: string) => label)
     .replace(/\[https?:\/\/[^\]]+\]/g, "")
-    .replace(/'''|''|~~|\^\^/g, "")
+    .replace(/'''|''|~~|\^\^|__/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -55,10 +49,7 @@ function stripInlineMarkup(value: string) {
 function lineOffsets(lines: string[]) {
   const offsets: number[] = [];
   let cursor = 0;
-  for (const line of lines) {
-    offsets.push(cursor);
-    cursor += line.length + 1;
-  }
+  for (const line of lines) { offsets.push(cursor); cursor += line.length + 1; }
   return offsets;
 }
 
@@ -74,7 +65,6 @@ function completeRowCells(line: string, lineStart: number): CellSpan[] | null {
   if (positions.length < 2) return null;
   const last = positions[positions.length - 1];
   if (line.slice(last + 2).trim()) return null;
-
   const cells: CellSpan[] = [];
   for (let index = 0; index < positions.length - 1; index += 1) {
     const start = positions[index] + 2;
@@ -94,33 +84,21 @@ function contentSpan(cell: CellSpan) {
   let end = cell.end - trailing.length;
   let value = cell.text.slice(optionPrefix.length + leading.length, cell.text.length - trailing.length);
 
-  // Peel presentation-only wrappers while keeping their source around the editable span.
-  // This means a member cell such as [[원이|{{{#fff '''원이'''}}}]] only edits the label;
-  // the link target, color, bold wrapper and table options remain byte-for-byte intact.
   for (let depth = 0; depth < 6; depth += 1) {
     const linked = value.match(/^\[\[([^\]|]+)\|([\s\S]+)\]\]$/);
     if (linked) {
       const inner = linked[2];
       const innerIndex = value.indexOf(inner);
-      start += innerIndex;
-      end = start + inner.length;
-      value = inner;
-      continue;
+      start += innerIndex; end = start + inner.length; value = inner; continue;
     }
-
     const styled = value.match(/^\{\{\{(?:[+-]\d+|#[^\s{}]+)\s+([\s\S]*?)\}\}\}$/);
     if (styled) {
       const inner = styled[1];
       const innerIndex = value.indexOf(inner);
-      start += innerIndex;
-      end = start + inner.length;
-      value = inner;
-      continue;
+      start += innerIndex; end = start + inner.length; value = inner; continue;
     }
-
     break;
   }
-
   return { value, start, end };
 }
 
@@ -136,6 +114,7 @@ function unsafeCellReason(value: string) {
   if (/\[(?:age|dday)\(/i.test(text)) return "Dynamic macro";
   if (/\[(?:목차|각주|clearfix)\]/i.test(text)) return "Document macro";
   if (/^\s*={2,6}.*={2,6}\s*$/.test(text)) return "Heading syntax";
+  if (/^(?:width|height)=/i.test(text)) return "Media sizing option";
   return null;
 }
 
@@ -150,7 +129,6 @@ function validateProposedCell(value: string) {
 function parseTableBlock(section: EasyEditSection, block: EasyEditBlock): ParsedTableModel | null {
   const originalWikitext = normalize(block.originalWikitext);
   if (!originalWikitext.includes("||")) return null;
-
   const lines = originalWikitext.split("\n");
   const offsets = lineOffsets(lines);
   const fields: ParsedTableField[] = [];
@@ -161,21 +139,12 @@ function parseTableBlock(section: EasyEditSection, block: EasyEditBlock): Parsed
     const cells = completeRowCells(lines[lineIndex], offsets[lineIndex]);
     if (!cells) continue;
     rowNumber += 1;
-
     for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
       const span = contentSpan(cells[cellIndex]);
       const reason = unsafeCellReason(span.value);
-      if (reason) {
-        lockedCount += 1;
-        continue;
-      }
-
+      if (reason) { lockedCount += 1; continue; }
       const plainText = stripInlineMarkup(span.value);
-      if (!plainText) {
-        lockedCount += 1;
-        continue;
-      }
-
+      if (!plainText) { lockedCount += 1; continue; }
       fields.push({
         key: `${block.key}:${rowNumber}:${cellIndex + 1}:${span.start}`,
         row: rowNumber,
@@ -206,7 +175,6 @@ function parseTableBlock(section: EasyEditSection, block: EasyEditBlock): Parsed
 export function parseWikiTables(source: string): WikiTableModel[] {
   const models: WikiTableModel[] = [];
   for (const section of parseEasyEditSections(source)) {
-    if (section.sectionIndex === 0) continue;
     for (const block of section.blocks) {
       const parsed = parseTableBlock(section, block);
       if (!parsed) continue;
@@ -225,17 +193,12 @@ export function parseWikiTables(source: string): WikiTableModel[] {
   return models;
 }
 
-export function applyWikiTableChanges(
-  source: string,
-  blockKey: string,
-  changes: Array<{ key: string; proposedWikitext: string }>,
-) {
+export function applyWikiTableChanges(source: string, blockKey: string, changes: Array<{ key: string; proposedWikitext: string }>) {
   const found = findEasyEditBlock(source, blockKey);
   if (!found) throw new Error("Table block no longer exists");
   const parsed = parseTableBlock(found.section, found.block);
   if (!parsed) throw new Error("Editable table was not found");
   if (!changes.length) throw new Error("No table changes were supplied");
-
   const byKey = new Map(parsed.fields.map((field) => [field.key, field]));
   const replacements: Array<{ start: number; end: number; value: string }> = [];
   const changedCells: Array<{ label: string; original: string; proposed: string }> = [];
@@ -251,7 +214,6 @@ export function applyWikiTableChanges(
 
   if (!changedCells.length) throw new Error("No changes were made");
   replacements.sort((a, b) => b.start - a.start || b.end - a.end);
-
   let proposedTable = parsed.originalWikitext;
   let previousStart = Number.POSITIVE_INFINITY;
   for (const replacement of replacements) {
@@ -259,11 +221,5 @@ export function applyWikiTableChanges(
     proposedTable = `${proposedTable.slice(0, replacement.start)}${replacement.value}${proposedTable.slice(replacement.end)}`;
     previousStart = replacement.start;
   }
-
-  return {
-    found,
-    parsed,
-    proposedTable,
-    changedCells,
-  };
+  return { found, parsed, proposedTable, changedCells };
 }
