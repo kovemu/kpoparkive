@@ -1,0 +1,58 @@
+.kpoparkiveTableEditorPanel {
+  width: min(470px, calc(100vw - 36px));
+}
+
+.kpoparkiveTableEditorBody {
+  padding-top: 8px;
+}
+
+.kpoparkiveTableGroup .kpoparkiveInfoboxGroupTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kpoparkiveTableRow {
+  border-bottom: 1px solid #eeeaf3;
+  background: #fff;
+}
+
+.kpoparkiveTableRow:last-child {
+  border-bottom: 0;
+}
+
+.kpoparkiveTableRowTitle {
+  padding: 7px 10px 3px;
+  color: #8a8096;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.kpoparkiveTableField {
+  margin: 0;
+  padding: 7px 10px 9px !important;
+  border-bottom: 0 !important;
+}
+
+.kpoparkiveTableField + .kpoparkiveTableField {
+  padding-top: 3px !important;
+}
+
+.kpoparkiveTableField > label {
+  margin-bottom: 4px;
+  color: #6d6477;
+  font-size: 10px;
+}
+
+.kpoparkiveTableFieldSurface {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+@media (max-width: 760px) {
+  .kpoparkiveTableEditorPanel {
+    width: 100vw;
+  }
+}
