@@ -3,17 +3,19 @@ import {
   parseNamuTableAstLossless as parseNamuTableAst,
 } from "./namumarkTableAstLossless";
 import { applyNamuTemplateCallParamChanges, scanNamuTemplateCalls } from "./namumarkTemplateAst";
+import { applyNamuMediaCallChanges, scanNamuMediaCalls, type NamuMediaCallChange } from "./namumarkMediaScan";
 
 export type NamuTableStructuredChanges = {
   fields?: Array<{ fieldId: string; proposedWikitext: string }>;
   templateParams?: Array<{ callId: string; paramId: string; proposedValue: string }>;
+  mediaCalls?: NamuMediaCallChange[];
 };
 
 type Replacement = {
   start: number;
   end: number;
   value: string;
-  kind: "field" | "template-param";
+  kind: "field" | "template-param" | "media";
   id: string;
 };
 
@@ -39,11 +41,26 @@ function sameTemplateShape(beforeRaw: string, afterRaw: string) {
   });
 }
 
+function sameMediaShape(beforeRaw: string, afterRaw: string) {
+  const before = scanNamuMediaCalls(beforeRaw);
+  const after = scanNamuMediaCalls(afterRaw);
+  if (before.length !== after.length) return false;
+  return before.every((call, index) => {
+    const next = after[index];
+    if (!next || call.kind !== next.kind || call.macroName.toLowerCase() !== next.macroName.toLowerCase()) return false;
+    if (call.params.length !== next.params.length) return false;
+    return call.params.every((param, paramIndex) => {
+      const nextParam = next.params[paramIndex];
+      return Boolean(nextParam) && param.name === nextParam.name && param.positional === nextParam.positional;
+    });
+  });
+}
+
 export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuTableStructuredChanges) {
   const source = String(tableRaw ?? "");
   const replacements: Replacement[] = [];
   const changed: Array<{
-    kind: "field" | "template-param";
+    kind: "field" | "template-param" | "media";
     id: string;
     before: string;
     after: string;
@@ -100,6 +117,28 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
     }
   }
 
+  const mediaCalls = Array.isArray(changes.mediaCalls) ? changes.mediaCalls : [];
+  if (mediaCalls.length) {
+    const result = applyNamuMediaCallChanges(source, mediaCalls);
+    for (const item of result.changed) {
+      replacements.push({
+        start: item.sourceStart,
+        end: item.sourceEnd,
+        value: item.after,
+        kind: "media",
+        id: item.callId,
+      });
+      changed.push({
+        kind: "media",
+        id: item.callId,
+        before: item.before,
+        after: item.after,
+        sourceStart: item.sourceStart,
+        sourceEnd: item.sourceEnd,
+      });
+    }
+  }
+
   replacements.sort((a, b) => b.start - a.start || b.end - a.end);
   let previousStart = Number.POSITIVE_INFINITY;
   let proposed = source;
@@ -120,6 +159,9 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
     }
     if (!sameTemplateShape(source, proposed)) {
       throw new Error("Table edit changed nested template structure. Use advanced source editing instead.");
+    }
+    if (!sameMediaShape(source, proposed)) {
+      throw new Error("Media field edit changed nested media structure. Use the structural media editor instead.");
     }
   }
 

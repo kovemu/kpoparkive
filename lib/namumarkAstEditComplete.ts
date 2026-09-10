@@ -2,15 +2,19 @@ import { findNamuAstNode, type NamuAstBlockNode, type NamuAstInlineNode } from "
 import { applyNamuAstOperations, type NamuAstAppliedChange, type NamuAstEditOperation } from "./namumarkAstEdit";
 import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "./namumarkAstEditing";
 import { applyNamuMediaChanges, type NamuMediaChanges } from "./namumarkMediaAst";
+import { type NamuMediaCallChange } from "./namumarkMediaScan";
+import { applyNamuTableStructuredChanges } from "./namumarkTableStructuredEdit";
 
 export type NamuAstCompleteEditOperation =
   | NamuAstEditOperation
   | ({ op: "media-fields"; nodeId: string } & NamuMediaChanges)
+  | { op: "table-media"; nodeId: string; mediaCalls: NamuMediaCallChange[] }
   | { op: "delete-node"; nodeId: string }
   | { op: "delete-inline-node"; nodeId: string }
   | { op: "insert-block"; anchorNodeId: string; position: "before" | "after"; wikitext: string };
 
 type StructuralPatch = NamuAstAppliedChange & { sequence: number };
+type TableStructureOperation = Extract<NamuAstEditOperation, { op: "table-structure" }>;
 
 const DELETABLE_BLOCKS = new Set(["paragraph", "list", "table", "template", "media", "divider", "styled-block", "raw-block"]);
 const DELETABLE_INLINE = new Set(["footnote", "inline-media", "link", "external-link", "format", "raw-inline"]);
@@ -26,7 +30,7 @@ function conflict(message: string) {
 }
 
 function isBaseOperation(operation: NamuAstCompleteEditOperation): operation is NamuAstEditOperation {
-  return operation.op !== "media-fields" && operation.op !== "delete-node" && operation.op !== "delete-inline-node" && operation.op !== "insert-block";
+  return operation.op !== "media-fields" && operation.op !== "table-media" && operation.op !== "delete-node" && operation.op !== "delete-inline-node" && operation.op !== "insert-block";
 }
 
 function blockContaining(blocks: NamuAstBlockNode[], node: NamuAstInlineNode) {
@@ -50,18 +54,13 @@ function normalizeInsertedBlock(source: string, value: unknown) {
   assertEditingAstLossless(text, parsed);
   const semantic = parsed.blocks.filter((block) => block.type !== "whitespace");
   if (semantic.length !== 1) throw badRequest("Insert must contain exactly one structural wiki block");
-  if (semantic[0].type === "raw-block" && !/^\s*\{\{\{/.test(semantic[0].raw)) {
-    throw badRequest("Unsupported inserted raw block");
-  }
+  if (semantic[0].type === "raw-block" && !/^\s*\{\{\{/.test(semantic[0].raw)) throw badRequest("Unsupported inserted raw block");
   return { text, nodeType: semantic[0].type };
 }
 
 function patchInlineRaw(parent: NamuAstBlockNode, edits: Array<{ start: number; end: number; value: string }>) {
-  const local = edits.map((edit) => ({
-    start: edit.start - parent.sourceStart,
-    end: edit.end - parent.sourceStart,
-    value: edit.value,
-  })).sort((a, b) => a.start - b.start || a.end - b.end);
+  const local = edits.map((edit) => ({ start: edit.start - parent.sourceStart, end: edit.end - parent.sourceStart, value: edit.value }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
 
   for (let index = 0; index < local.length; index += 1) {
     const edit = local[index];
@@ -81,6 +80,8 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
   const passthrough: NamuAstEditOperation[] = [];
   const grouped = new Map<string, { parent: NamuAstBlockNode; edits: Array<{ start: number; end: number; value: string }> }>();
   const structural: StructuralPatch[] = [];
+  const tableStructures = new Map<string, TableStructureOperation>();
+  const tableMedia = new Map<string, NamuMediaCallChange[]>();
 
   const addParentEdit = (parent: NamuAstBlockNode, start: number, end: number, value: string) => {
     if (!REPLACEABLE_PARENT.has(parent.type)) throw badRequest(`Inline editing inside ${parent.type} is not supported by the visual editor yet`);
@@ -91,28 +92,37 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
 
   operations.forEach((operation, sequence) => {
     if (isBaseOperation(operation)) {
-      passthrough.push(operation);
+      if (operation.op === "table-structure") {
+        if (tableStructures.has(operation.nodeId)) throw badRequest("Duplicate table structure operations are not allowed");
+        tableStructures.set(operation.nodeId, operation);
+      } else passthrough.push(operation);
       return;
     }
 
     if (operation.op === "media-fields") {
       const node = findNamuAstNode(document, operation.nodeId);
-      if (!node || (node.type !== "media" && node.type !== "inline-media")) {
-        throw conflict("The selected media node no longer exists. Reload and try again.");
-      }
+      if (!node || (node.type !== "media" && node.type !== "inline-media")) throw conflict("The selected media node no longer exists. Reload and try again.");
       const proposed = applyNamuMediaChanges(node.raw, {
         target: operation.target,
         params: operation.params,
         removeParamIds: operation.removeParamIds,
         appendParams: operation.appendParams,
       }).proposed;
-      if (node.type === "media") {
-        passthrough.push({ op: "replace-raw", nodeId: node.id, wikitext: proposed });
-      } else {
+      if (node.type === "media") passthrough.push({ op: "replace-raw", nodeId: node.id, wikitext: proposed });
+      else {
         const parent = blockContaining(document.blocks, node);
         if (!parent) throw conflict("The media parent block no longer exists. Reload and try again.");
         addParentEdit(parent, node.sourceStart, node.sourceEnd, proposed);
       }
+      return;
+    }
+
+    if (operation.op === "table-media") {
+      const node = document.blocks.find((block) => block.id === operation.nodeId);
+      if (!node || node.type !== "table") throw conflict("The selected media table no longer exists. Reload and try again.");
+      const current = tableMedia.get(node.id) || [];
+      current.push(...(Array.isArray(operation.mediaCalls) ? operation.mediaCalls : []));
+      tableMedia.set(node.id, current);
       return;
     }
 
@@ -128,16 +138,7 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
     if (operation.op === "delete-node") {
       const block = document.blocks.find((item) => item.id === operation.nodeId);
       if (!block || !DELETABLE_BLOCKS.has(block.type)) throw conflict("The selected block can no longer be deleted. Reload and try again.");
-      structural.push({
-        op: "delete-node",
-        nodeId: block.id,
-        nodeType: block.type,
-        sourceStart: block.sourceStart,
-        sourceEnd: block.sourceEnd,
-        before: block.raw,
-        after: "",
-        sequence,
-      });
+      structural.push({ op: "delete-node", nodeId: block.id, nodeType: block.type, sourceStart: block.sourceStart, sourceEnd: block.sourceEnd, before: block.raw, after: "", sequence });
       return;
     }
 
@@ -145,17 +146,33 @@ function preprocessInlineOperations(source: string, operations: NamuAstCompleteE
     if (!anchor) throw conflict("The insertion anchor no longer exists. Reload and try again.");
     const inserted = normalizeInsertedBlock(source, operation.wikitext);
     const point = operation.position === "before" ? anchor.sourceStart : anchor.sourceEnd;
-    structural.push({
-      op: "insert-block",
-      nodeId: anchor.id,
-      nodeType: inserted.nodeType,
-      sourceStart: point,
-      sourceEnd: point,
-      before: "",
-      after: inserted.text,
-      sequence,
-    });
+    structural.push({ op: "insert-block", nodeId: anchor.id, nodeType: inserted.nodeType, sourceStart: point, sourceEnd: point, before: "", after: inserted.text, sequence });
   });
+
+  for (const [nodeId, operation] of tableStructures.entries()) {
+    const mediaCalls = tableMedia.get(nodeId) || [];
+    if (!mediaCalls.length) {
+      passthrough.push(operation);
+      continue;
+    }
+    const node = document.blocks.find((block) => block.id === nodeId);
+    if (!node || node.type !== "table") throw conflict("The selected table no longer exists. Reload and try again.");
+    const proposed = applyNamuTableStructuredChanges(node.raw, {
+      fields: operation.fields,
+      templateParams: operation.templateParams,
+      mediaCalls,
+    }).proposed;
+    passthrough.push({ op: "replace-raw", nodeId, wikitext: proposed });
+    tableMedia.delete(nodeId);
+  }
+
+  for (const [nodeId, mediaCalls] of tableMedia.entries()) {
+    if (!mediaCalls.length) continue;
+    const node = document.blocks.find((block) => block.id === nodeId);
+    if (!node || node.type !== "table") throw conflict("The selected table no longer exists. Reload and try again.");
+    const proposed = applyNamuTableStructuredChanges(node.raw, { mediaCalls }).proposed;
+    passthrough.push({ op: "replace-raw", nodeId, wikitext: proposed });
+  }
 
   for (const { parent, edits } of grouped.values()) {
     const replacement = patchInlineRaw(parent, edits);
@@ -180,31 +197,21 @@ function validateStructuralPatches(structural: StructuralPatch[], baseChanges: N
     const patch = sorted[index];
     if (patch.sourceStart < 0 || patch.sourceEnd < patch.sourceStart) throw badRequest("Invalid structural source range");
     if (index && rangesOverlap(sorted[index - 1], patch)) throw badRequest("Overlapping structural edits are not allowed");
-    if (baseChanges.some((change) => rangesOverlap(change, patch))) {
-      throw badRequest(`A structural ${patch.op} overlaps another visual edit. Revert the block edit before deleting or restructuring it.`);
-    }
+    if (baseChanges.some((change) => rangesOverlap(change, patch))) throw badRequest(`A structural ${patch.op} overlaps another visual edit. Revert the block edit before deleting or restructuring it.`);
   }
 }
 
 function deltaBefore(position: number, changes: NamuAstAppliedChange[]) {
   let delta = 0;
-  for (const change of changes) {
-    if (change.sourceEnd <= position) delta += change.after.length - change.before.length;
-  }
+  for (const change of changes) if (change.sourceEnd <= position) delta += change.after.length - change.before.length;
   return delta;
 }
 
 function applyStructuralPatches(sourceAfterBase: string, structural: StructuralPatch[], baseChanges: NamuAstAppliedChange[]) {
-  const adjusted = structural.map((patch) => ({
-    ...patch,
-    adjustedStart: patch.sourceStart + deltaBefore(patch.sourceStart, baseChanges),
-    adjustedEnd: patch.sourceEnd + deltaBefore(patch.sourceEnd, baseChanges),
-  }));
+  const adjusted = structural.map((patch) => ({ ...patch, adjustedStart: patch.sourceStart + deltaBefore(patch.sourceStart, baseChanges), adjustedEnd: patch.sourceEnd + deltaBefore(patch.sourceEnd, baseChanges) }));
   let proposed = sourceAfterBase;
   for (const patch of [...adjusted].sort((a, b) => b.adjustedStart - a.adjustedStart || b.adjustedEnd - a.adjustedEnd || b.sequence - a.sequence)) {
-    if (patch.before && proposed.slice(patch.adjustedStart, patch.adjustedEnd) !== patch.before) {
-      throw conflict(`Source range for ${patch.nodeType} changed while applying structural edits. Reload and try again.`);
-    }
+    if (patch.before && proposed.slice(patch.adjustedStart, patch.adjustedEnd) !== patch.before) throw conflict(`Source range for ${patch.nodeType} changed while applying structural edits. Reload and try again.`);
     proposed = `${proposed.slice(0, patch.adjustedStart)}${patch.after}${proposed.slice(patch.adjustedEnd)}`;
   }
   return proposed;
@@ -233,10 +240,5 @@ export function applyNamuAstOperationsComplete(source: string, operations: NamuA
 
   const afterAst = parseNamuMarkAstForEditing(proposed);
   assertEditingAstLossless(proposed, afterAst);
-  return {
-    proposed,
-    changes,
-    beforeAst: document,
-    afterAst,
-  };
+  return { proposed, changes, beforeAst: document, afterAst };
 }
