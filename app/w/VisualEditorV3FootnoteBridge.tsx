@@ -4,16 +4,15 @@ import VisualEditorV3FootnoteCore from "./VisualEditorV3FootnoteCore";
 import VisualEditorV3FormattingBridge from "./VisualEditorV3FormattingBridge";
 import VisualEditorV3AtomicTextBridge from "./VisualEditorV3AtomicTextBridge";
 import VisualEditorV3LinkInspectorBridge from "./VisualEditorV3LinkInspectorBridge";
+import VisualEditorV3MediaDeleteBridge from "./VisualEditorV3MediaDeleteBridge";
 import VisualEditorV3TableLayoutBridge from "./VisualEditorV3TableLayoutBridge";
 import VisualEditorV3TableStyleBridge from "./VisualEditorV3TableStyleBridge";
 import VisualEditorV3SourceFallbackBridge from "./VisualEditorV3SourceFallbackBridge";
 
 /**
  * V3 auxiliary editor host.
- *
- * The page mounts this component once. Each child registers its exact AST
- * operations with the shared V3 registry, so FullPageVisualEditorV3 submits
- * one atomic proposal for the entire editing session.
+ * Every child contributes to the shared operation registry; FullPageVisualEditorV3
+ * submits the whole editing session as one proposal.
  */
 export default function VisualEditorV3FootnoteBridge({ title }: { title: string }) {
   return (
@@ -22,6 +21,7 @@ export default function VisualEditorV3FootnoteBridge({ title }: { title: string 
       <VisualEditorV3FormattingBridge />
       <VisualEditorV3AtomicTextBridge title={title} />
       <VisualEditorV3LinkInspectorBridge />
+      <VisualEditorV3MediaDeleteBridge title={title} />
       <VisualEditorV3TableLayoutBridge title={title} />
       <VisualEditorV3TableStyleBridge title={title} />
       <VisualEditorV3SourceFallbackBridge title={title} />

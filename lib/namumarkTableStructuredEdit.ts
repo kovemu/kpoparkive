@@ -77,21 +77,8 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
     for (const item of result.changed) {
       const field = fieldMap.get(item.fieldId);
       if (!field) throw new Error("Table field range disappeared during validation");
-      replacements.push({
-        start: field.sourceStart,
-        end: field.sourceEnd,
-        value: item.after,
-        kind: "field",
-        id: item.fieldId,
-      });
-      changed.push({
-        kind: "field",
-        id: item.fieldId,
-        before: item.before,
-        after: item.after,
-        sourceStart: field.sourceStart,
-        sourceEnd: field.sourceEnd,
-      });
+      replacements.push({ start: field.sourceStart, end: field.sourceEnd, value: item.after, kind: "field", id: item.fieldId });
+      changed.push({ kind: "field", id: item.fieldId, before: item.before, after: item.after, sourceStart: field.sourceStart, sourceEnd: field.sourceEnd });
     }
   }
 
@@ -99,43 +86,18 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
   if (templateParams.length) {
     const result = applyNamuTemplateCallParamChanges(source, templateParams);
     for (const item of result.changed) {
-      replacements.push({
-        start: item.sourceStart,
-        end: item.sourceEnd,
-        value: item.after,
-        kind: "template-param",
-        id: item.paramId,
-      });
-      changed.push({
-        kind: "template-param",
-        id: item.paramId,
-        before: item.before,
-        after: item.after,
-        sourceStart: item.sourceStart,
-        sourceEnd: item.sourceEnd,
-      });
+      replacements.push({ start: item.sourceStart, end: item.sourceEnd, value: item.after, kind: "template-param", id: item.paramId });
+      changed.push({ kind: "template-param", id: item.paramId, before: item.before, after: item.after, sourceStart: item.sourceStart, sourceEnd: item.sourceEnd });
     }
   }
 
   const mediaCalls = Array.isArray(changes.mediaCalls) ? changes.mediaCalls : [];
+  const deletingMedia = mediaCalls.some((change) => change.delete === true);
   if (mediaCalls.length) {
     const result = applyNamuMediaCallChanges(source, mediaCalls);
     for (const item of result.changed) {
-      replacements.push({
-        start: item.sourceStart,
-        end: item.sourceEnd,
-        value: item.after,
-        kind: "media",
-        id: item.callId,
-      });
-      changed.push({
-        kind: "media",
-        id: item.callId,
-        before: item.before,
-        after: item.after,
-        sourceStart: item.sourceStart,
-        sourceEnd: item.sourceEnd,
-      });
+      replacements.push({ start: item.sourceStart, end: item.sourceEnd, value: item.after, kind: "media", id: item.callId });
+      changed.push({ kind: "media", id: item.callId, before: item.before, after: item.after, sourceStart: item.sourceStart, sourceEnd: item.sourceEnd });
     }
   }
 
@@ -160,7 +122,7 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
     if (!sameTemplateShape(source, proposed)) {
       throw new Error("Table edit changed nested template structure. Use advanced source editing instead.");
     }
-    if (!sameMediaShape(source, proposed)) {
+    if (!deletingMedia && !sameMediaShape(source, proposed)) {
       throw new Error("Media field edit changed nested media structure. Use the structural media editor instead.");
     }
   }

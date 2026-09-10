@@ -1,7 +1,7 @@
 import { applyNamuMediaChanges, parseNamuMediaAst, type NamuMediaChanges, type NamuMediaModel } from "./namumarkMediaAst";
 
 export type NamuMediaCall = NamuMediaModel & { id: string };
-export type NamuMediaCallChange = NamuMediaChanges & { callId: string };
+export type NamuMediaCallChange = NamuMediaChanges & { callId: string; delete?: boolean };
 
 function tinyHash(value: string) {
   let hash = 2166136261;
@@ -98,19 +98,34 @@ export function applyNamuMediaCallChanges(sourceValue: string, changes: NamuMedi
   const source = String(sourceValue ?? "");
   const calls = scanNamuMediaCalls(source);
   const callMap = new Map(calls.map((call) => [call.id, call]));
-  const replacements: Array<{ start: number; end: number; value: string; callId: string; before: string }> = [];
-
+  const grouped = new Map<string, NamuMediaCallChange[]>();
   for (const change of Array.isArray(changes) ? changes : []) {
-    const call = callMap.get(change.callId);
-    if (!call) throw new Error(`Media call ${change.callId} no longer exists`);
-    const result = applyNamuMediaChanges(call.raw, {
-      target: change.target,
-      params: change.params,
-      removeParamIds: change.removeParamIds,
-      appendParams: change.appendParams,
-    });
-    if (result.proposed === call.raw) continue;
-    replacements.push({ start: call.sourceStart, end: call.sourceEnd, value: result.proposed, callId: call.id, before: call.raw });
+    if (!change?.callId) continue;
+    grouped.set(change.callId, [...(grouped.get(change.callId) || []), change]);
+  }
+
+  const replacements: Array<{ start: number; end: number; value: string; callId: string; before: string; deleted: boolean }> = [];
+  for (const [callId, items] of grouped.entries()) {
+    const call = callMap.get(callId);
+    if (!call) throw new Error(`Media call ${callId} no longer exists`);
+
+    const deletion = items.some((item) => item.delete === true);
+    if (deletion) {
+      replacements.push({ start: call.sourceStart, end: call.sourceEnd, value: "", callId: call.id, before: call.raw, deleted: true });
+      continue;
+    }
+
+    let proposed = call.raw;
+    for (const change of items) {
+      proposed = applyNamuMediaChanges(proposed, {
+        target: change.target,
+        params: change.params,
+        removeParamIds: change.removeParamIds,
+        appendParams: change.appendParams,
+      }).proposed;
+    }
+    if (proposed === call.raw) continue;
+    replacements.push({ start: call.sourceStart, end: call.sourceEnd, value: proposed, callId: call.id, before: call.raw, deleted: false });
   }
 
   replacements.sort((a, b) => b.start - a.start || b.end - a.end);
@@ -132,6 +147,7 @@ export function applyNamuMediaCallChanges(sourceValue: string, changes: NamuMedi
       sourceEnd: replacement.end,
       before: replacement.before,
       after: replacement.value,
+      deleted: replacement.deleted,
     })),
   };
 }
