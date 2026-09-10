@@ -3,7 +3,7 @@ import {
   parseNamuTableAstLossless as parseNamuTableAst,
 } from "./namumarkTableAstLossless";
 import { applyNamuTemplateCallParamChanges, scanNamuTemplateCalls } from "./namumarkTemplateAst";
-import { applyNamuMediaCallChanges, scanNamuMediaCalls, type NamuMediaCallChange } from "./namumarkMediaScan";
+import { applyNamuMediaCallChanges, type NamuMediaCallChange } from "./namumarkMediaScan";
 
 export type NamuTableStructuredChanges = {
   fields?: Array<{ fieldId: string; proposedWikitext: string }>;
@@ -34,21 +34,6 @@ function sameTemplateShape(beforeRaw: string, afterRaw: string) {
   return before.every((call, index) => {
     const next = after[index];
     if (!next || call.name !== next.name || call.params.length !== next.params.length) return false;
-    return call.params.every((param, paramIndex) => {
-      const nextParam = next.params[paramIndex];
-      return Boolean(nextParam) && param.name === nextParam.name && param.positional === nextParam.positional;
-    });
-  });
-}
-
-function sameMediaShape(beforeRaw: string, afterRaw: string) {
-  const before = scanNamuMediaCalls(beforeRaw);
-  const after = scanNamuMediaCalls(afterRaw);
-  if (before.length !== after.length) return false;
-  return before.every((call, index) => {
-    const next = after[index];
-    if (!next || call.kind !== next.kind || call.macroName.toLowerCase() !== next.macroName.toLowerCase()) return false;
-    if (call.params.length !== next.params.length) return false;
     return call.params.every((param, paramIndex) => {
       const nextParam = next.params[paramIndex];
       return Boolean(nextParam) && param.name === nextParam.name && param.positional === nextParam.positional;
@@ -92,7 +77,6 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
   }
 
   const mediaCalls = Array.isArray(changes.mediaCalls) ? changes.mediaCalls : [];
-  const deletingMedia = mediaCalls.some((change) => change.delete === true);
   if (mediaCalls.length) {
     const result = applyNamuMediaCallChanges(source, mediaCalls);
     for (const item of result.changed) {
@@ -121,9 +105,6 @@ export function applyNamuTableStructuredChanges(tableRaw: string, changes: NamuT
     }
     if (!sameTemplateShape(source, proposed)) {
       throw new Error("Table edit changed nested template structure. Use advanced source editing instead.");
-    }
-    if (!deletingMedia && !sameMediaShape(source, proposed)) {
-      throw new Error("Media field edit changed nested media structure. Use the structural media editor instead.");
     }
   }
 

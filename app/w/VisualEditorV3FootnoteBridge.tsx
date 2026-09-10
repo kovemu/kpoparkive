@@ -3,6 +3,7 @@
 import VisualEditorV3FootnoteCore from "./VisualEditorV3FootnoteCore";
 import VisualEditorV3FormattingBridge from "./VisualEditorV3FormattingBridge";
 import VisualEditorV3AtomicTextBridge from "./VisualEditorV3AtomicTextBridge";
+import VisualEditorV3SimpleInlineHydrator from "./VisualEditorV3SimpleInlineHydrator";
 import VisualEditorV3LinkInspectorBridge from "./VisualEditorV3LinkInspectorBridge";
 import VisualEditorV3MediaDeleteBridge from "./VisualEditorV3MediaDeleteBridge";
 import VisualEditorV3TableLayoutBridge from "./VisualEditorV3TableLayoutBridge";
@@ -24,6 +25,7 @@ export default function VisualEditorV3FootnoteBridge({ title }: { title: string 
       <VisualEditorV3FootnoteCore title={title} />
       <VisualEditorV3FormattingBridge />
       <VisualEditorV3AtomicTextBridge title={title} />
+      <VisualEditorV3SimpleInlineHydrator />
       <VisualEditorV3LinkInspectorBridge />
       <VisualEditorV3MediaDeleteBridge title={title} />
       <VisualEditorV3TableLayoutBridge title={title} />

@@ -9,10 +9,25 @@ type Payload = { ok?: boolean; ast?: { blocks?: Block[] }; error?: string };
 const EDITING_CLASS = "kpoparkiveAstEditing";
 const BUTTON_ID = "kpoparkive-ve3-source-fallback-button";
 const STYLE_ID = "kpoparkive-ve3-source-fallback-style";
-const FALLBACK_TYPES = new Set(["table", "template", "media"]);
+const COMPLEX_FALLBACK = new Set(["table", "template", "media"]);
+const DIRECT_FALLBACK = new Set(["paragraph", "list", "heading"]);
 
 function short(value: string) {
   return value.replace(/\r\n?/g, "\n").replace(/\s+/g, " ").trim().slice(0, 70);
+}
+
+function visuallyMapped(block: Block) {
+  if (block.type === "table") {
+    return Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-table-node-id]"))
+      .some((element) => element.dataset.ve3TableNodeId === block.id);
+  }
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-node-id]"))
+    .some((element) => element.dataset.ve3NodeId === block.id && element.isContentEditable);
+}
+
+function fallbackOperation(block: Block, wikitext: string): V3RegisteredOperation {
+  if (DIRECT_FALLBACK.has(block.type)) return { op: "replace-node", nodeId: block.id, wikitext };
+  return { op: "replace-raw", nodeId: block.id, wikitext };
 }
 
 export default function VisualEditorV3SourceFallbackBridge({ title }: { title: string }) {
@@ -45,27 +60,33 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
   useEffect(() => {
     if (!editing) { setBlocks([]); setDrafts({}); setSelectedId(""); setOpen(false); return; }
     const controller = new AbortController();
-    void (async () => {
-      try {
-        const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
-        const payload = await response.json() as Payload;
-        if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load source fallback AST");
-        const items = (payload.ast?.blocks || []).filter((block) => FALLBACK_TYPES.has(block.type));
-        setBlocks(items);
-        setDrafts(Object.fromEntries(items.map((block) => [block.id, block.raw])));
-        setSelectedId(items[0]?.id || "");
-      } catch (error) {
-        if (!controller.signal.aborted) console.warn("[VisualEditorV3SourceFallbackBridge]", error);
-      }
-    })();
-    return () => controller.abort();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
+          const payload = await response.json() as Payload;
+          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load source fallback AST");
+          const items = (payload.ast?.blocks || []).filter((block) => {
+            if (COMPLEX_FALLBACK.has(block.type)) return true;
+            if (DIRECT_FALLBACK.has(block.type)) return !visuallyMapped(block);
+            return false;
+          });
+          setBlocks(items);
+          setDrafts(Object.fromEntries(items.map((block) => [block.id, block.raw])));
+          setSelectedId(items[0]?.id || "");
+        } catch (error) {
+          if (!controller.signal.aborted) console.warn("[VisualEditorV3SourceFallbackBridge]", error);
+        }
+      })();
+    }, 80);
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [editing, title]);
 
   useEffect(() => {
     if (!editing) return;
     return registerV3OperationProvider("source-fallback", () => blocks
       .filter((block) => (drafts[block.id] ?? block.raw) !== block.raw)
-      .map((block) => ({ op: "replace-raw", nodeId: block.id, wikitext: drafts[block.id] }) satisfies V3RegisteredOperation));
+      .map((block) => fallbackOperation(block, drafts[block.id] ?? block.raw)));
   }, [editing, blocks, drafts]);
 
   useEffect(() => {
@@ -76,7 +97,7 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
       if (!toolbar) return;
       let button = document.getElementById(BUTTON_ID) as HTMLButtonElement | null;
       if (!button) {
-        button = document.createElement("button"); button.id = BUTTON_ID; button.type = "button"; button.title = "Advanced exact-source fallback for complex blocks";
+        button = document.createElement("button"); button.id = BUTTON_ID; button.type = "button"; button.title = "Exact-source fallback for visually unsupported or unmapped AST blocks";
         button.addEventListener("mousedown", (event) => event.preventDefault());
         button.addEventListener("click", () => setOpen((value) => !value));
         const structure = document.getElementById("kpoparkive-ve3-structure-button");
@@ -100,15 +121,15 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
 
   if (!editing || !open) return null;
   return <aside className="kpoparkiveVe3SourcePanel" aria-label="Advanced source fallback">
-    <div className="kpoparkiveVe3SourceHeader"><div><strong>Advanced source</strong><span>Exact AST block fallback · use only when visual controls are insufficient</span></div><button type="button" onClick={() => setOpen(false)}>×</button></div>
+    <div className="kpoparkiveVe3SourceHeader"><div><strong>Advanced source</strong><span>Exact AST block fallback · visual editing remains preferred</span></div><button type="button" onClick={() => setOpen(false)}>×</button></div>
     <div className="kpoparkiveVe3SourceBody">
       {selected ? <>
         <label>Block<select value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>{blocks.map((block, index) => <option key={block.id} value={block.id}>{index + 1}. {block.type} · {short(block.raw)}</option>)}</select></label>
-        <div className="kpoparkiveVe3SourceMeta">This edits only the selected <b>{selected.type}</b> AST source range ({selected.sourceStart}–{selected.sourceEnd}). Do not combine whole-block source changes with visual edits inside the same block; the server rejects overlapping patches instead of guessing.</div>
+        <div className="kpoparkiveVe3SourceMeta">This edits only the selected <b>{selected.type}</b> AST range ({selected.sourceStart}–{selected.sourceEnd}). Paragraph/list/heading blocks appear here only when no visual surface could be mapped safely. Complex table/template/media blocks remain available as an escape hatch. The server rejects overlapping visual/source patches instead of guessing.</div>
         <label>Exact NamuMark<textarea spellCheck={false} value={drafts[selected.id] ?? selected.raw} onChange={(event) => setDrafts((current) => ({ ...current, [selected.id]: event.target.value }))} /></label>
         {(drafts[selected.id] ?? selected.raw) !== selected.raw ? <div className="kpoparkiveVe3SourceDirty">Unsaved source change</div> : null}
         <div className="kpoparkiveVe3SourceActions"><button type="button" onClick={reveal}>Go to block</button><button type="button" onClick={() => setDrafts((current) => ({ ...current, [selected.id]: selected.raw }))}>Reset</button></div>
-      </> : <div className="kpoparkiveVe3SourceMeta">No complex table/template/media blocks were found.</div>}
+      </> : <div className="kpoparkiveVe3SourceMeta">Every supported text block is visually mapped and no complex fallback block is present.</div>}
     </div>
   </aside>;
 }
