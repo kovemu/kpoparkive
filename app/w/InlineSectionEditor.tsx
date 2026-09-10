@@ -30,6 +30,8 @@ type EasySection = {
 type InfoboxField = {
   key: string;
   label: string;
+  group: string;
+  inputKind: "visual" | "text" | "date" | "color";
   valueWikitext: string;
   plainText: string;
   editable: boolean;
@@ -183,9 +185,6 @@ function findBestCandidate(root: HTMLElement, block: EasyBlock, used: Set<HTMLEl
   }
 
   if (bestScore >= 0.52) return best;
-  // Sections such as RESCENE/overview contain media + a greeting table and only one
-  // actual prose paragraph. The rendered footnote text can make fuzzy matching weak;
-  // when there is only one safe prose candidate, replacing it is deterministic.
   if (available.length === 1) return available[0];
   if (best && bestScore >= 0.34 && comparable(block.plainText).length >= 24) return best;
   return null;
@@ -211,6 +210,19 @@ function preventEditorLinkNavigation(node: HTMLElement) {
     const link = (event.target as Element | null)?.closest("a");
     if (link) event.preventDefault();
   });
+}
+
+function infoboxNodeValue(node: HTMLElement) {
+  if (node instanceof HTMLInputElement) return node.value.trim();
+  return editorElementToWikitext(node);
+}
+
+function sixDigitHex(value: string) {
+  const hex = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  const short = hex.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  return "#000000";
 }
 
 export default function InlineSectionEditor({ title }: { title: string }) {
@@ -281,7 +293,7 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       const header = document.createElement("div");
       header.className = "kpoparkiveInfoboxEditorHeader";
       const heading = document.createElement("div");
-      heading.innerHTML = `<strong>Edit infobox</strong><span>Simple fields are editable. Complex template, media and multi-row fields stay protected.</span>`;
+      heading.innerHTML = `<strong>Edit infobox</strong><span>${model.editableCount} source-preserving fields are editable. Dates keep their age/day macros synchronized and template parameters are changed without rewriting the surrounding table.</span>`;
       const closeButton = createButton("×", "kpoparkiveInfoboxClose", "Close infobox editor");
       header.append(heading, closeButton);
 
@@ -303,43 +315,87 @@ export default function InlineSectionEditor({ title }: { title: string }) {
       const body = document.createElement("div");
       body.className = "kpoparkiveInfoboxEditorBody";
       const editorItems: InfoboxEditorItem[] = [];
-
+      const grouped = new Map<string, InfoboxField[]>();
       for (const field of model.fields) {
-        const row = document.createElement("div");
-        row.className = field.editable ? "kpoparkiveInfoboxField" : "kpoparkiveInfoboxField is-locked";
-        const label = document.createElement("label");
-        label.textContent = field.label;
-        row.append(label);
+        const key = field.group || field.label;
+        const group = grouped.get(key) || [];
+        group.push(field);
+        grouped.set(key, group);
+      }
 
-        if (field.editable) {
-          const surface = document.createElement("div");
-          surface.className = "kpoparkiveInfoboxFieldSurface";
-          surface.contentEditable = "true";
-          surface.spellcheck = true;
-          surface.setAttribute("role", "textbox");
-          surface.setAttribute("aria-label", `Edit infobox field ${field.label}`);
-          surface.innerHTML = wikiBlockToEditorHtml(field.valueWikitext);
-          surface.addEventListener("focus", () => { activeFieldNode = surface; });
-          surface.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") event.preventDefault();
-          });
-          preventEditorLinkNavigation(surface);
-          row.append(surface);
-          editorItems.push({ field, node: surface });
-        } else {
-          const locked = document.createElement("div");
-          locked.className = "kpoparkiveInfoboxLockedValue";
-          locked.textContent = field.plainText || field.lockedReason || "Protected field";
-          locked.title = field.lockedReason || "This complex field is preserved exactly.";
-          row.append(locked);
+      for (const [groupName, fields] of grouped) {
+        const group = document.createElement("section");
+        group.className = "kpoparkiveInfoboxGroup";
+        const groupHeading = document.createElement("div");
+        groupHeading.className = "kpoparkiveInfoboxGroupTitle";
+        groupHeading.textContent = groupName;
+        group.append(groupHeading);
+
+        for (const field of fields) {
+          const row = document.createElement("div");
+          row.className = field.editable ? "kpoparkiveInfoboxField" : "kpoparkiveInfoboxField is-locked";
+          const label = document.createElement("label");
+          const prefix = `${groupName} · `;
+          label.textContent = field.label.startsWith(prefix) ? field.label.slice(prefix.length) : field.label;
+          row.append(label);
+
+          if (field.editable && field.inputKind === "visual") {
+            const surface = document.createElement("div");
+            surface.className = "kpoparkiveInfoboxFieldSurface";
+            surface.contentEditable = "true";
+            surface.spellcheck = true;
+            surface.setAttribute("role", "textbox");
+            surface.setAttribute("aria-label", `Edit infobox field ${field.label}`);
+            surface.innerHTML = wikiBlockToEditorHtml(field.valueWikitext);
+            surface.addEventListener("focus", () => { activeFieldNode = surface; });
+            surface.addEventListener("keydown", (event) => {
+              if (event.key === "Enter") event.preventDefault();
+            });
+            preventEditorLinkNavigation(surface);
+            row.append(surface);
+            editorItems.push({ field, node: surface });
+          } else if (field.editable) {
+            const inputWrap = document.createElement("div");
+            inputWrap.className = field.inputKind === "color" ? "kpoparkiveInfoboxInputWrap is-color" : "kpoparkiveInfoboxInputWrap";
+            const input = document.createElement("input");
+            input.className = "kpoparkiveInfoboxInput";
+            input.type = field.inputKind === "date" ? "date" : "text";
+            input.value = field.valueWikitext;
+            input.setAttribute("aria-label", `Edit infobox field ${field.label}`);
+            input.addEventListener("focus", () => { activeFieldNode = null; });
+            inputWrap.append(input);
+
+            if (field.inputKind === "color") {
+              const picker = document.createElement("input");
+              picker.type = "color";
+              picker.className = "kpoparkiveInfoboxColorPicker";
+              picker.value = sixDigitHex(field.valueWikitext);
+              picker.setAttribute("aria-label", `Choose color for ${field.label}`);
+              picker.addEventListener("input", () => { input.value = picker.value; });
+              input.addEventListener("input", () => {
+                if (/^#[0-9a-f]{3}$|^#[0-9a-f]{6}$/i.test(input.value.trim())) picker.value = sixDigitHex(input.value);
+              });
+              inputWrap.append(picker);
+            }
+
+            row.append(inputWrap);
+            editorItems.push({ field, node: input });
+          } else {
+            const locked = document.createElement("div");
+            locked.className = "kpoparkiveInfoboxLockedValue";
+            locked.textContent = field.plainText || field.lockedReason || "Protected field";
+            locked.title = field.lockedReason || "This complex field is preserved exactly.";
+            row.append(locked);
+          }
+          group.append(row);
         }
-        body.append(row);
+        body.append(group);
       }
 
       if (model.lockedCount) {
         const note = document.createElement("p");
         note.className = "kpoparkiveInfoboxProtectedNote";
-        note.textContent = `${model.lockedCount} complex field${model.lockedCount === 1 ? " is" : "s are"} preserved exactly and cannot be changed in this first infobox editor.`;
+        note.textContent = `${model.lockedCount} deeply nested field${model.lockedCount === 1 ? " remains" : "s remain"} protected. Their source is preserved exactly.`;
         body.append(note);
       }
 
@@ -368,7 +424,7 @@ export default function InlineSectionEditor({ title }: { title: string }) {
         const changes = editorItems
           .map(({ field, node }) => ({
             key: field.key,
-            proposedWikitext: editorElementToWikitext(node),
+            proposedWikitext: infoboxNodeValue(node),
           }))
           .filter(({ key, proposedWikitext }) => {
             const field = editorItems.find((item) => item.field.key === key)?.field;
