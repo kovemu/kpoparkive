@@ -2,7 +2,7 @@ import { parse } from "node-html-parser";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
-import FullPageVisualEditor from "../FullPageVisualEditor";
+import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
 import "../wiki.css";
 import "../table-editor.css";
 import "../visual-editor.css";
@@ -206,7 +206,7 @@ export default async function RawWikiPage({ params }: { params: Promise<{ title:
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
       <main className="kpoparkiveRawWikiPage">
         <TheTreeRuntimeBridge />
-        <FullPageVisualEditor title={source.source_title} />
+        <FullPageVisualEditorV2 title={source.source_title} />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
