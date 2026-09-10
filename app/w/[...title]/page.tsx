@@ -5,6 +5,8 @@ import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntim
 import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
 import FullPageVisualEditorV3 from "../FullPageVisualEditorV3";
 import VisualEditorV3FootnoteBridge from "../VisualEditorV3FootnoteBridge";
+import VisualEditorV3MediaBridge from "../VisualEditorV3MediaBridge";
+import VisualEditorV3StructureBridge from "../VisualEditorV3StructureBridge";
 import VisualEditorInteractionGuard from "../VisualEditorInteractionGuard";
 import "../wiki.css";
 import "../table-editor.css";
@@ -229,6 +231,8 @@ export default async function RawWikiPage({
           <>
             <FullPageVisualEditorV3 title={source.source_title} />
             <VisualEditorV3FootnoteBridge title={source.source_title} />
+            <VisualEditorV3MediaBridge title={source.source_title} />
+            <VisualEditorV3StructureBridge title={source.source_title} />
           </>
         ) : (
           <>
