@@ -4,6 +4,7 @@ import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
 import FullPageVisualEditorV3 from "../FullPageVisualEditorV3";
+import VisualEditorV3FootnoteBridge from "../VisualEditorV3FootnoteBridge";
 import VisualEditorInteractionGuard from "../VisualEditorInteractionGuard";
 import "../wiki.css";
 import "../table-editor.css";
@@ -225,7 +226,10 @@ export default async function RawWikiPage({
       <main className="kpoparkiveRawWikiPage" data-visual-editor-version={editorVersion}>
         <TheTreeRuntimeBridge />
         {editorVersion === 3 ? (
-          <FullPageVisualEditorV3 title={source.source_title} />
+          <>
+            <FullPageVisualEditorV3 title={source.source_title} />
+            <VisualEditorV3FootnoteBridge title={source.source_title} />
+          </>
         ) : (
           <>
             <FullPageVisualEditorV2 title={source.source_title} />

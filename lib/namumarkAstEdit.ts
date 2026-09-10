@@ -2,6 +2,7 @@ import {
   findNamuAstNode,
   type NamuAstDocument,
   type NamuAstExternalLink,
+  type NamuAstFootnote,
   type NamuAstHeading,
   type NamuAstLink,
   type NamuAstText,
@@ -15,6 +16,7 @@ export type NamuAstEditOperation =
   | { op: "unlink"; nodeId: string }
   | { op: "set-link"; nodeId: string; target: string; label?: string }
   | { op: "set-heading"; nodeId: string; text: string; level?: number }
+  | { op: "set-footnote"; nodeId: string; body: string }
   | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "table-fields"; nodeId: string; changes: Array<{ fieldId: string; proposedWikitext: string }> }
   | {
@@ -95,6 +97,11 @@ function asHeadingNode(node: ReturnType<typeof findNamuAstNode>): NamuAstHeading
   return node;
 }
 
+function asFootnoteNode(node: ReturnType<typeof findNamuAstNode>): NamuAstFootnote {
+  if (!node || node.type !== "footnote") throw conflict("The selected footnote no longer exists. Reload and try again.");
+  return node;
+}
+
 function visibleLinkSource(node: NamuAstLink | NamuAstExternalLink) {
   if (node.type === "link") return node.explicitLabel ? node.raw.slice(node.labelStart - node.sourceStart, node.labelEnd - node.sourceStart) : node.target;
   return node.explicitLabel ? node.raw.slice(node.labelStart - node.sourceStart, node.labelEnd - node.sourceStart) : node.url;
@@ -127,6 +134,28 @@ function headingReplacement(node: NamuAstHeading, textValue: string, levelValue?
   const eol = node.raw.match(/(?:\r\n|\r|\n)$/)?.[0] || "";
   const marks = "=".repeat(level);
   return `${marks} ${text} ${marks}${eol}`;
+}
+
+function footnoteReplacement(node: NamuAstFootnote, bodyValue: string) {
+  const body = String(bodyValue ?? "").trim();
+  if (!body) throw badRequest("Footnote text cannot be empty. Use the structural delete tool to remove a footnote.");
+  if (body.length > MAX_TEXT) throw badRequest("Footnote text is too long");
+  if (/\r|\n/.test(body)) throw badRequest("Multiline footnotes are protected in visual mode for now");
+
+  const inner = node.raw.startsWith("[*") && node.raw.endsWith("]") ? node.raw.slice(2, -1) : "";
+  const leading = inner.match(/^\s*/)?.[0] || "";
+  const trailing = inner.match(/\s*$/)?.[0] || "";
+  const after = `[*${leading}${body}${trailing}]`;
+
+  const parsed = parseNamuMarkAstForEditing(`${after}\n`);
+  const paragraph = parsed.blocks.find((block) => block.type === "paragraph");
+  const parsedFootnote = paragraph?.type === "paragraph"
+    ? paragraph.children.find((child) => child.type === "footnote")
+    : null;
+  if (!parsedFootnote || parsedFootnote.raw !== after || parsedFootnote.sourceStart !== 0 || parsedFootnote.sourceEnd !== after.length) {
+    throw badRequest("Footnote text would break NamuMark bracket structure");
+  }
+  return after;
 }
 
 function rawReplacementAllowed(type: string) {
@@ -222,6 +251,9 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   } else if (operation.op === "set-heading") {
     const heading = asHeadingNode(node);
     after = headingReplacement(heading, operation.text, operation.level);
+  } else if (operation.op === "set-footnote") {
+    const footnote = asFootnoteNode(node);
+    after = footnoteReplacement(footnote, operation.body);
   } else if (operation.op === "replace-node") {
     if (!editableNodeReplacementAllowed(node.type)) throw badRequest(`Visual node replacement is not allowed for ${node.type} nodes`);
     after = validateEditableNodeReplacement(node.type, node.raw, operation.wikitext);
