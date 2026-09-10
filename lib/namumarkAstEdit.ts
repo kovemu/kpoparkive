@@ -13,6 +13,7 @@ export type NamuAstEditOperation =
   | { op: "unlink"; nodeId: string }
   | { op: "set-link"; nodeId: string; target: string; label?: string }
   | { op: "set-heading"; nodeId: string; text: string; level?: number }
+  | { op: "replace-node"; nodeId: string; wikitext: string }
   | { op: "replace-raw"; nodeId: string; wikitext: string };
 
 export type NamuAstAppliedChange = {
@@ -122,6 +123,30 @@ function rawReplacementAllowed(type: string) {
   return type === "raw-block" || type === "styled-block" || type === "table" || type === "template" || type === "media";
 }
 
+function editableNodeReplacementAllowed(type: string) {
+  return type === "paragraph" || type === "list" || type === "heading";
+}
+
+function preserveNodeEol(before: string, proposed: string) {
+  const eol = before.match(/(?:\r\n|\r|\n)$/)?.[0] || "";
+  if (!eol) return proposed;
+  return proposed.replace(/(?:\r\n|\r|\n)+$/, "") + eol;
+}
+
+function validateEditableNodeReplacement(nodeType: string, before: string, value: unknown) {
+  let after = String(value ?? "");
+  if (after.length > MAX_RAW) throw badRequest("Edited visual block is too large");
+  after = preserveNodeEol(before, after);
+  if (!after.trim()) throw badRequest("Visual blocks cannot be empty yet. Use the delete-block tool instead.");
+
+  const parsed = parseNamuMarkAst(after);
+  const semantic = parsed.blocks.filter((block) => block.type !== "whitespace");
+  if (semantic.length !== 1 || semantic[0].type !== nodeType) {
+    throw badRequest(`The edited ${nodeType} changed document structure. Use a structural insert/delete tool instead.`);
+  }
+  return after;
+}
+
 function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperation): Patch {
   const node = findNamuAstNode(document, operation.nodeId);
   if (!node) throw conflict(`AST node ${operation.nodeId} no longer exists. Reload and try again.`);
@@ -129,8 +154,13 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   let after = node.raw;
   if (operation.op === "replace-text") {
     const textNode = asTextNode(node);
-    after = cleanPlainText(operation.text, "Text");
-    if (textNode.raw === after) after = textNode.raw;
+    const leading = textNode.raw.match(/^\s*/)?.[0] || "";
+    const trailing = textNode.raw.match(/\s*$/)?.[0] || "";
+    const coreEnd = Math.max(leading.length, textNode.raw.length - trailing.length);
+    const originalCore = textNode.raw.slice(leading.length, coreEnd);
+    if (/\r|\n/.test(originalCore)) throw badRequest("Multiline text must be edited through its paragraph node");
+    const replacement = cleanPlainText(operation.text, "Text");
+    after = `${leading}${replacement}${trailing}`;
   } else if (operation.op === "unlink") {
     const link = asLinkNode(node);
     after = visibleLinkSource(link);
@@ -140,6 +170,9 @@ function operationPatch(document: NamuAstDocument, operation: NamuAstEditOperati
   } else if (operation.op === "set-heading") {
     const heading = asHeadingNode(node);
     after = headingReplacement(heading, operation.text, operation.level);
+  } else if (operation.op === "replace-node") {
+    if (!editableNodeReplacementAllowed(node.type)) throw badRequest(`Visual node replacement is not allowed for ${node.type} nodes`);
+    after = validateEditableNodeReplacement(node.type, node.raw, operation.wikitext);
   } else if (operation.op === "replace-raw") {
     if (!rawReplacementAllowed(node.type)) throw badRequest(`Raw source editing is not allowed for ${node.type} nodes`);
     after = String(operation.wikitext ?? "");
