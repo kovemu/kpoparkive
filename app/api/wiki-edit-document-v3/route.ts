@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { applyNamuAstOperations, type NamuAstEditOperation } from "../../../lib/namumarkAstEdit";
-import { assertNamuMarkAstLossless, parseNamuMarkAst } from "../../../lib/namumarkAst";
+import { assertEditingAstLossless, parseNamuMarkAstForEditing } from "../../../lib/namumarkAstEditing";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -91,8 +91,8 @@ async function enforceRateLimit(hash: string) {
 }
 
 function publicAst(source: string) {
-  const ast = parseNamuMarkAst(source);
-  assertNamuMarkAstLossless(source, ast);
+  const ast = parseNamuMarkAstForEditing(source);
+  assertEditingAstLossless(source, ast);
   const { source: _source, raw: _raw, ...payload } = ast;
   return payload;
 }
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
     const result = applyNamuAstOperations(original, Array.isArray(body.operations) ? body.operations : []);
     const proposed = result.proposed;
     if (proposed.length > MAX_DOCUMENT_CHARS) return json({ error: "Edited document is too large" }, 413);
-    assertNamuMarkAstLossless(proposed, result.afterAst);
+    assertEditingAstLossless(proposed, result.afterAst);
 
     const summary = String(body.summary || "").trim().slice(0, 500) || "Visual editor V3 AST edit";
     const displayName = String(body.displayName || "").trim().slice(0, 80) || null;
