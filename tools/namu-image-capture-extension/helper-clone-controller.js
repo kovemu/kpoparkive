@@ -215,7 +215,7 @@ function kpopShouldCaptureTemplate(value) {
   if (/\/설명문서(?:$|\/)/i.test(title)) return false;
 
   const body = title.replace(/^틀:/i, "").trim();
-  if (/^(?:설명문서|문서 가져옴|토론 관련 틀|토론 합의(?:\/설명문서)?|분류 설명|분류 참고|한시적 넘겨주기)$/i.test(body)) return false;
+  if (/^(?:접근\s*제한|설명문서|문서 가져옴|토론 관련 틀|토론 합의(?:\/설명문서)?|분류 설명|분류 참고|한시적 넘겨주기)$/i.test(body)) return false;
   return true;
 }
 
