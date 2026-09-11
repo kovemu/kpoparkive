@@ -8,7 +8,7 @@ process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSE
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v6",
+  version: "modern-namu-compat-v7",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -16,6 +16,7 @@ const compatibilityStats = {
   multilineWikiHeaderLinesJoined: 0,
   multilineIfHeaderLinesJoined: 0,
   fileLinkTargetsNormalized: 0,
+  templateIncludeTitlesNormalized: 0,
   structuralNbspNormalized: 0,
   colorWhitespaceNormalized: 0,
   missingYouTubeIconIncludesExpanded: 0,
@@ -45,6 +46,19 @@ function normalizeFileLinkTargets(source, local) {
     local.fileLinkTargetsNormalized += 1;
     return `[[${prefix}${normalized}`;
   });
+}
+
+function normalizeTemplateIncludeTitles(source, local) {
+  return source.replace(
+    /\[include\(\s*((?:틀|Template)\s*:\s*[^,\)\]\r\n]+)(?=\s*(?:,|\)\]))/gi,
+    (full, rawTitle) => {
+      const normalized = normalizeWikiTitleFragment(rawTitle)
+        .replace(/^(틀|Template)\s*:\s*/i, (_match, namespace) => `${namespace}:`);
+      if (!normalized || normalized === rawTitle) return full;
+      local.templateIncludeTitlesNormalized += 1;
+      return full.replace(rawTitle, normalized);
+    },
+  );
 }
 
 function parseSimpleIncludeParams(raw) {
@@ -252,6 +266,7 @@ function applyCompatibility(raw, title, options = {}) {
     multilineWikiHeaderLinesJoined: 0,
     multilineIfHeaderLinesJoined: 0,
     fileLinkTargetsNormalized: 0,
+    templateIncludeTitlesNormalized: 0,
     structuralNbspNormalized: 0,
     colorWhitespaceNormalized: 0,
     missingYouTubeIconIncludesExpanded: 0,
@@ -259,7 +274,8 @@ function applyCompatibility(raw, title, options = {}) {
 
   const whitespaceNormalizedSource = normalizeStructuralNbsp(source, local);
   const titleNormalizedSource = normalizeFileLinkTargets(whitespaceNormalizedSource, local);
-  let lines = titleNormalizedSource.split("\n");
+  const includeNormalizedSource = normalizeTemplateIncludeTitles(titleNormalizedSource, local);
+  let lines = includeNormalizedSource.split("\n");
   lines = stripModernCommentBlocks(lines, local);
   lines = joinMultilineDirectiveHeaders(lines, local);
   let result = lines.join("\n");
