@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { applyNamuMediaChanges, type NamuMediaChanges } from "../../lib/namumarkMediaAst";
 import { registerV3OperationProvider, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type MediaParam = {
@@ -87,6 +88,11 @@ function rootFor(item: MediaItem) {
   return sectionRoots().get(item.sectionIndex) || article;
 }
 
+function atomicMediaChip(item: MediaItem) {
+  if (item.ownerType !== "document" || !item.nodeId || item.nodeId === item.ownerNodeId) return null;
+  return document.querySelector<HTMLElement>(`[data-ve3-atomic-node-id="${CSS.escape(item.nodeId)}"]`);
+}
+
 function candidateScore(item: MediaItem, element: HTMLElement) {
   const target = normalize(item.target);
   if (!target) return 0;
@@ -107,12 +113,21 @@ function candidateScore(item: MediaItem, element: HTMLElement) {
 
 function decorateMedia(items: MediaItem[]) {
   for (const old of Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-media-key]"))) {
+    if (old.dataset.ve3AtomicNodeId) continue;
     old.removeAttribute("data-ve3-media-key");
     old.classList.remove("kpoparkiveVe3MediaTarget");
   }
   const mapped = new Map<string, HTMLElement>();
   const claimed = new Set<HTMLElement>();
   for (const item of [...items].sort((a, b) => a.sourceStart - b.sourceStart)) {
+    const atomic = atomicMediaChip(item);
+    if (atomic) {
+      const key = mediaKey(item);
+      atomic.dataset.ve3MediaKey = key;
+      atomic.classList.add("kpoparkiveVe3MediaTarget");
+      mapped.set(key, atomic);
+      continue;
+    }
     const root = rootFor(item);
     if (!root) continue;
     const selector = item.kind === "file"
@@ -142,7 +157,7 @@ function draftChanged(item: MediaItem, draft: MediaDraft | undefined) {
   return item.params.some((param) => (draft.params[param.id] ?? param.valueRaw) !== param.valueRaw);
 }
 
-function operationFor(item: MediaItem, draft: MediaDraft) {
+function mediaChanges(item: MediaItem, draft: MediaDraft): NamuMediaChanges {
   const params = item.params
     .filter((param) => param.editable && !draft.removed.includes(param.id))
     .map((param) => ({ paramId: param.id, proposedValue: draft.params[param.id] ?? param.valueRaw }))
@@ -150,12 +165,16 @@ function operationFor(item: MediaItem, draft: MediaDraft) {
   const appendParams = draft.added
     .map((entry) => ({ name: entry.name.trim(), value: entry.value.trim() }))
     .filter((entry) => entry.name);
-  const changes = {
+  return {
     target: draft.target.trim() !== item.target ? draft.target.trim() : undefined,
     params: params.length ? params : undefined,
     removeParamIds: draft.removed.length ? draft.removed : undefined,
     appendParams: appendParams.length ? appendParams : undefined,
   };
+}
+
+function operationFor(item: MediaItem, draft: MediaDraft) {
+  const changes = mediaChanges(item, draft);
   if (item.ownerType === "table") {
     return { ownerNodeId: item.ownerNodeId, call: { callId: item.callId!, ...changes } };
   }
@@ -168,6 +187,12 @@ function collectOperations(items: MediaItem[], drafts: DraftMap) {
   for (const item of items) {
     const draft = drafts[mediaKey(item)];
     if (!draft || !draftChanged(item, draft)) continue;
+    const atomic = atomicMediaChip(item);
+    if (atomic) {
+      const syncError = atomic.dataset.ve3AtomicMediaSyncError;
+      if (syncError) throw new Error(syncError);
+      continue;
+    }
     const result = operationFor(item, draft);
     if ("operation" in result) operations.push(result.operation);
     else {
@@ -239,6 +264,30 @@ export default function VisualEditorV3MediaBridge({ title }: { title: string }) 
     })();
     return () => controller.abort();
   }, [editing, title]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const sync = () => {
+      for (const item of items) {
+        const chip = atomicMediaChip(item);
+        if (!chip || chip.dataset.ve3AtomicDeleted === "1") continue;
+        const originalRaw = chip.dataset.ve3AtomicOriginalRaw || chip.dataset.ve3AtomicRaw || "";
+        const draft = drafts[mediaKey(item)] || initialDraft(item);
+        try {
+          const proposed = draftChanged(item, draft)
+            ? applyNamuMediaChanges(originalRaw, mediaChanges(item, draft)).proposed
+            : originalRaw;
+          chip.dataset.ve3AtomicRaw = proposed;
+          delete chip.dataset.ve3AtomicMediaSyncError;
+        } catch (error) {
+          chip.dataset.ve3AtomicMediaSyncError = error instanceof Error ? error.message : "Could not synchronize inline media";
+        }
+      }
+    };
+    sync();
+    window.addEventListener("kpoparkive-ve3-atomic-media-sync", sync);
+    return () => window.removeEventListener("kpoparkive-ve3-atomic-media-sync", sync);
+  }, [editing, items, drafts]);
 
   useEffect(() => {
     if (!editing) return;

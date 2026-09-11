@@ -26,6 +26,11 @@ function mediaKey(item: MediaItem) {
   return `${item.ownerType}:${item.ownerNodeId}:${item.nodeId || item.callId || item.sourceStart}`;
 }
 
+function atomicMediaChip(item: MediaItem) {
+  if (item.ownerType !== "document" || !item.nodeId || item.nodeId === item.ownerNodeId) return null;
+  return document.querySelector<HTMLElement>(`[data-ve3-atomic-node-id="${CSS.escape(item.nodeId)}"]`);
+}
+
 function operationFor(item: MediaItem): V3RegisteredOperation | null {
   if (item.ownerType === "table") {
     if (!item.callId) return null;
@@ -100,18 +105,45 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
       element.classList.remove("kpoparkiveVe3PendingMediaDelete");
     }
     if (!editing) return;
-    for (const key of deleted) {
-      const element = Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-media-key]"))
-        .find((entry) => entry.dataset.ve3MediaKey === key);
-      element?.classList.add("kpoparkiveVe3PendingMediaDelete");
+
+    for (const item of items) {
+      const key = mediaKey(item);
+      const chip = atomicMediaChip(item);
+      const deleting = deleted.includes(key);
+
+      if (chip) {
+        if (deleting) {
+          if (chip.dataset.ve3AtomicDeleted !== "1") {
+            chip.dataset.ve3AtomicDeleteBackup = chip.dataset.ve3AtomicRaw || chip.dataset.ve3AtomicOriginalRaw || "";
+          }
+          chip.dataset.ve3AtomicDeleted = "1";
+          chip.dataset.ve3AtomicRaw = "";
+          chip.classList.add("kpoparkiveVe3PendingMediaDelete");
+        } else if (chip.dataset.ve3AtomicDeleted === "1") {
+          chip.dataset.ve3AtomicRaw = chip.dataset.ve3AtomicDeleteBackup || chip.dataset.ve3AtomicOriginalRaw || "";
+          delete chip.dataset.ve3AtomicDeleted;
+          delete chip.dataset.ve3AtomicDeleteBackup;
+          chip.classList.remove("kpoparkiveVe3PendingMediaDelete");
+        }
+      }
+
+      if (deleting) {
+        const element = Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-media-key]"))
+          .find((entry) => entry.dataset.ve3MediaKey === key);
+        element?.classList.add("kpoparkiveVe3PendingMediaDelete");
+      }
     }
-  }, [editing, deleted]);
+
+    window.dispatchEvent(new Event("kpoparkive-ve3-atomic-media-sync"));
+  }, [editing, items, deleted]);
 
   useEffect(() => {
     if (!editing) return;
     return registerV3OperationProvider("media-delete", () => deleted.flatMap((key) => {
       const item = items.find((entry) => mediaKey(entry) === key);
-      const operation = item ? operationFor(item) : null;
+      if (!item) return [];
+      if (atomicMediaChip(item)) return [];
+      const operation = operationFor(item);
       return operation ? [operation] : [];
     }));
   }, [editing, deleted, items]);

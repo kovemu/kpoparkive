@@ -130,6 +130,8 @@ function replaceToken(node: Text, atomic: Atomic) {
   const simple = atomic.type === "raw-inline" ? simpleStyle(atomic.raw) : null;
   const span = document.createElement("span");
   span.dataset.ve3AtomicRaw = atomic.raw;
+  span.dataset.ve3AtomicOriginalRaw = atomic.raw;
+  span.dataset.ve3AtomicNodeId = atomic.id;
   if (simple) {
     span.className = "kpoparkiveVe3SimpleInline";
     span.dataset.ve3SimplePrefix = simple.prefix;
