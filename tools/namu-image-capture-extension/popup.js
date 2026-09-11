@@ -246,7 +246,7 @@ rawButton.addEventListener("click", async () => {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-capture-edit-raw-source",
-      options: { rootTitle, openPreview: true, maxTemplateDepth: 2, maxTemplates: 40 },
+      options: { rootTitle, openPreview: true },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not capture raw source.");
 
