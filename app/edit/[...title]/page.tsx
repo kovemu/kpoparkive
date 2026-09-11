@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../../admin/editor/[...title]/editor.module.css";
 
 type EditorSnapshot = {
@@ -42,6 +42,9 @@ export default function PublicSourceEditorPage({
   params: Promise<{ title: string[] }>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewFrameRef = useRef<HTMLIFrameElement>(null);
+  const lastPreviewSourceRef = useRef("");
+  const previewRequestRef = useRef(0);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
   const composingRef = useRef(false);
@@ -55,6 +58,9 @@ export default function PublicSourceEditorPage({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState("현재 공개본");
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +85,7 @@ export default function PublicSourceEditorPage({
         if (cancelled) return;
         setPayload(result);
         setContent(result.document.source);
+        lastPreviewSourceRef.current = result.document.source;
         undoStackRef.current = [];
         redoStackRef.current = [];
         setDirty(false);
@@ -102,6 +109,82 @@ export default function PublicSourceEditorPage({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, submitted]);
+
+  const refreshExactPreview = useCallback(async (source: string, reason: "manual" | "auto" = "manual") => {
+    if (!payload || !source.trim()) return;
+    const requestId = ++previewRequestRef.current;
+    setPreviewBusy(true);
+    setPreviewStatus(reason === "auto" ? "자동 갱신 중…" : "미리보기 렌더링 중…");
+
+    try {
+      const response = await fetch("/api/wiki-source-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: payload.document.title, source }),
+      });
+      const result = await response.json() as {
+        ok?: boolean;
+        html?: string;
+        error?: string;
+        renderMs?: number;
+        hasError?: boolean;
+        errorCode?: string | null;
+      };
+      if (!response.ok || !result.ok || typeof result.html !== "string") {
+        throw new Error(result.error || "미리보기 렌더링에 실패했습니다.");
+      }
+      if (requestId !== previewRequestRef.current) return;
+
+      const frame = previewFrameRef.current;
+      const frameWindow = frame?.contentWindow;
+      const frameDocument = frame?.contentDocument;
+      const article = frameDocument?.querySelector<HTMLElement>(".thetreeWikiBaseline");
+      if (!frame || !frameWindow || !frameDocument || !article) {
+        throw new Error("미리보기 화면이 아직 준비되지 않았습니다. 잠시 후 다시 새로고침해 주세요.");
+      }
+
+      const scrollX = frameWindow.scrollX;
+      const scrollY = frameWindow.scrollY;
+      article.innerHTML = result.html;
+      frameWindow.dispatchEvent(new Event("kpoparkive:thetree-refresh"));
+      frameWindow.requestAnimationFrame(() => frameWindow.scrollTo(scrollX, scrollY));
+
+      lastPreviewSourceRef.current = source;
+      setPreviewStatus(
+        result.hasError
+          ? `렌더 오류 · ${result.errorCode || "The Tree"}`
+          : `미리보기 최신 · ${Math.max(0, Number(result.renderMs || 0)).toLocaleString()}ms`,
+      );
+    } catch (error) {
+      if (requestId !== previewRequestRef.current) return;
+      setPreviewStatus(error instanceof Error ? `실패 · ${error.message}` : "미리보기 렌더링 실패");
+    } finally {
+      if (requestId === previewRequestRef.current) setPreviewBusy(false);
+    }
+  }, [payload]);
+
+  useEffect(() => {
+    if (!autoRefresh || !payload || submitted) return;
+    if (content === lastPreviewSourceRef.current) return;
+    const timer = window.setTimeout(() => {
+      void refreshExactPreview(content, "auto");
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [autoRefresh, content, payload, submitted, refreshExactPreview]);
+
+  useEffect(() => {
+    if (!payload || previewBusy) return;
+    if (content !== lastPreviewSourceRef.current) setPreviewStatus("변경 사항 있음");
+  }, [content, payload, previewBusy]);
+
+  function restorePublicPreview() {
+    const frame = previewFrameRef.current;
+    if (frame) frame.src = currentWikiPath;
+    if (payload) lastPreviewSourceRef.current = payload.document.source;
+    previewRequestRef.current += 1;
+    setPreviewBusy(false);
+    setPreviewStatus("현재 공개본");
+  }
 
   function captureSnapshot(value = content): EditorSnapshot {
     const textarea = textareaRef.current;
@@ -222,10 +305,12 @@ export default function PublicSourceEditorPage({
     if (!payload || submitted) return;
     if (dirty && !window.confirm("Discard your unsaved changes and restore the current public source?")) return;
     setContent(payload.document.source);
+    lastPreviewSourceRef.current = payload.document.source;
     undoStackRef.current = [];
     redoStackRef.current = [];
     setSummary("");
     setDirty(false);
+    restorePublicPreview();
     setStatus("Restored current public source.");
   }
 
@@ -374,11 +459,46 @@ export default function PublicSourceEditorPage({
         </div>
 
         <div className={styles.previewPane}>
-          <div className={styles.paneTitle}>
-            <strong>Current public page</strong>
-            <span>Exact The Tree render · live page before approval</span>
+          <div className={styles.previewHeader}>
+            <div className={styles.previewHeading}>
+              <strong>미리보기</strong>
+              <span className={styles.previewState}>{previewStatus}</span>
+            </div>
+            <div className={styles.previewControls}>
+              <button
+                type="button"
+                className={styles.previewRefresh}
+                disabled={previewBusy}
+                onClick={() => void refreshExactPreview(content, "manual")}
+                title="현재 편집 중인 소스를 The Tree로 다시 렌더링"
+              >
+                <span aria-hidden="true" className={previewBusy ? styles.previewSpin : undefined}>↻</span>
+                새로고침
+              </button>
+              <span className={styles.previewDivider} aria-hidden="true" />
+              <label className={styles.autoRefreshControl}>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoRefresh}
+                  className={autoRefresh ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => setAutoRefresh((value) => !value)}
+                >
+                  <span />
+                </button>
+                <span>자동 갱신</span>
+              </label>
+            </div>
           </div>
-          <iframe className={styles.publicPreviewFrame} title={`${title} current public page`} src={currentWikiPath} />
+          <iframe
+            ref={previewFrameRef}
+            className={styles.publicPreviewFrame}
+            title={`${title} exact The Tree preview`}
+            src={currentWikiPath}
+            onLoad={() => {
+              if (lastPreviewSourceRef.current === payload.document.source) setPreviewStatus("현재 공개본");
+            }}
+          />
         </div>
       </section>
     </main>
