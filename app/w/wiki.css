@@ -13,6 +13,20 @@
   overflow: hidden;
 }
 
+/* Preserve horizontal panning for genuinely wide wiki tables, but hide the
+   native scrollbar track. This also covers verified synthetic DOM→NamuMark
+   templates rendered through the public /w/ shell. */
+.kpoparkiveRawWikiPage .wiki-table-wrap {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.kpoparkiveRawWikiPage .wiki-table-wrap::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 @media (min-width: 761px) {
   /* English headings can make the TOC intrinsically wider than the space left
      beside a right-floated 450px profile table. Keep both in the same desktop
