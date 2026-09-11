@@ -26,6 +26,20 @@ function sourceTitleFromLocation() {
 }
 
 function kpopNamuChallengeVisible() {
+  const isVisible = (element) => {
+    if (!(element instanceof Element)) return false;
+    try {
+      const style = getComputedStyle(element);
+      if (!style) return false;
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) return false;
+      const rect = element.getBoundingClientRect();
+      if (!rect || rect.width < 20 || rect.height < 20) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const selectors = [
     'iframe[src*="challenges.cloudflare.com"]',
     'iframe[src*="turnstile"]',
@@ -35,9 +49,12 @@ function kpopNamuChallengeVisible() {
     '[class*="challenge-platform" i]',
     'form[action*="challenge" i]'
   ];
+
   for (const selector of selectors) {
     try {
-      if (document.querySelector(selector)) return true;
+      for (const element of document.querySelectorAll(selector)) {
+        if (isVisible(element)) return true;
+      }
     } catch {}
   }
 
@@ -45,12 +62,12 @@ function kpopNamuChallengeVisible() {
   if (/just a moment|attention required|잠시만 기다려|보안 확인/i.test(title)) return true;
 
   const text = String(document.body?.innerText || "").replace(/\s+/g, " ").trim();
-  if (text.length > 0 && text.length < 2500) {
+  if (text.length > 0 && text.length < 1200) {
     return /captcha|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i.test(text);
   }
+
   return false;
 }
-
 function namuVerificationBlocked() {
   return kpopNamuChallengeVisible();
 }
