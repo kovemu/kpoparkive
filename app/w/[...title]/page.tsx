@@ -3,8 +3,8 @@ import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
-import FullPageVisualEditorV3 from "../FullPageVisualEditorV3";
-import VisualEditorV3FootnoteBridge from "../VisualEditorV3FootnoteBridge";
+import FullPageVisualEditorV3Canvas from "../FullPageVisualEditorV3Canvas";
+import VisualEditorV3CanvasExtras from "../VisualEditorV3CanvasExtras";
 import VisualEditorV3MediaBridge from "../VisualEditorV3MediaBridge";
 import VisualEditorV3StructureBridge from "../VisualEditorV3StructureBridge";
 import VisualEditorV3TableLayoutBridge from "../VisualEditorV3TableLayoutBridge";
@@ -230,8 +230,8 @@ export default async function RawWikiPage({
         <TheTreeRuntimeBridge />
         {editorVersion === 3 ? (
           <>
-            <FullPageVisualEditorV3 title={source.source_title} />
-            <VisualEditorV3FootnoteBridge title={source.source_title} />
+            <FullPageVisualEditorV3Canvas title={source.source_title} />
+            <VisualEditorV3CanvasExtras title={source.source_title} />
             <VisualEditorV3MediaBridge title={source.source_title} />
             <VisualEditorV3StructureBridge title={source.source_title} />
             <VisualEditorV3TableLayoutBridge title={source.source_title} />
