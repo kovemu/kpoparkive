@@ -18,7 +18,8 @@ type PublicSourcePayload = {
   document: {
     title: string;
     publicRevisionNo: number;
-    sourceMode: "captured" | "published";
+    sourceMode: "translated-draft" | "published";
+    sourceLanguage: "en";
     sourceHash: string;
     source: string;
   };
@@ -62,7 +63,7 @@ export default function PublicSourceEditorPage({
   const [submitted, setSubmitted] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewStatus, setPreviewStatus] = useState("현재 공개본");
+  const [previewStatus, setPreviewStatus] = useState("Current article");
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +117,7 @@ export default function PublicSourceEditorPage({
     if (!payload || !source.trim()) return;
     const requestId = ++previewRequestRef.current;
     setPreviewBusy(true);
-    setPreviewStatus(reason === "auto" ? "자동 갱신 중…" : "미리보기 렌더링 중…");
+    setPreviewStatus(reason === "auto" ? "Auto-refreshing…" : "Rendering preview…");
 
     try {
       const response = await fetch("/api/wiki-source-preview", {
@@ -133,7 +134,7 @@ export default function PublicSourceEditorPage({
         errorCode?: string | null;
       };
       if (!response.ok || !result.ok || typeof result.html !== "string") {
-        throw new Error(result.error || "미리보기 렌더링에 실패했습니다.");
+        throw new Error(result.error || "Preview render failed.");
       }
       if (requestId !== previewRequestRef.current) return;
 
@@ -142,7 +143,7 @@ export default function PublicSourceEditorPage({
       const frameDocument = frame?.contentDocument;
       const article = frameDocument?.querySelector<HTMLElement>(".thetreeWikiBaseline");
       if (!frame || !frameWindow || !frameDocument || !article) {
-        throw new Error("미리보기 화면이 아직 준비되지 않았습니다. 잠시 후 다시 새로고침해 주세요.");
+        throw new Error("The preview is not ready yet. Please refresh again in a moment.");
       }
 
       const scrollX = frameWindow.scrollX;
@@ -154,12 +155,12 @@ export default function PublicSourceEditorPage({
       lastPreviewSourceRef.current = source;
       setPreviewStatus(
         result.hasError
-          ? `렌더 오류 · ${result.errorCode || "The Tree"}`
-          : `미리보기 최신 · ${Math.max(0, Number(result.renderMs || 0)).toLocaleString()}ms`,
+          ? `Render error · ${result.errorCode || "The Tree"}`
+          : `Preview up to date · ${Math.max(0, Number(result.renderMs || 0)).toLocaleString()}ms`,
       );
     } catch (error) {
       if (requestId !== previewRequestRef.current) return;
-      setPreviewStatus(error instanceof Error ? `실패 · ${error.message}` : "미리보기 렌더링 실패");
+      setPreviewStatus(error instanceof Error ? `Failed · ${error.message}` : "Preview render failed");
     } finally {
       if (requestId === previewRequestRef.current) setPreviewBusy(false);
     }
@@ -178,9 +179,9 @@ export default function PublicSourceEditorPage({
     if (!payload || previewBusy) return;
     if (content === lastPreviewSourceRef.current) return;
     setPreviewStatus((current) =>
-      current.startsWith("실패 ·") || current.startsWith("렌더 오류 ·")
+      current.startsWith("Failed ·") || current.startsWith("Render error ·")
         ? current
-        : "변경 사항 있음",
+        : "Unsaved preview changes",
     );
   }, [content, payload, previewBusy]);
 
@@ -190,7 +191,7 @@ export default function PublicSourceEditorPage({
     if (payload) lastPreviewSourceRef.current = payload.document.source;
     previewRequestRef.current += 1;
     setPreviewBusy(false);
-    setPreviewStatus("현재 공개본");
+    setPreviewStatus("Current article");
   }
 
   function captureSnapshot(value = content): EditorSnapshot {
@@ -343,10 +344,11 @@ export default function PublicSourceEditorPage({
 
       <header className={styles.header}>
         <div>
-          <div className={styles.eyebrow}>KPOPARKIVE PUBLIC SOURCE EDITOR</div>
+          <div className={styles.eyebrow}>KPOPARKIVE ENGLISH SOURCE EDITOR</div>
           <h1>{payload.document.title}</h1>
           <div className={styles.metaRow}>
-            <span>{payload.document.sourceMode}</span>
+            <span>{payload.document.sourceMode === "published" ? "published English" : "English draft"}</span>
+            <span>English NamuMark</span>
             <span>{content.length.toLocaleString()} chars</span>
             <span>{content.split("\n").length.toLocaleString()} lines</span>
             <span>Review required</span>
@@ -362,9 +364,9 @@ export default function PublicSourceEditorPage({
       </header>
 
       <div className={styles.notice}>
-        <strong>{submitted ? "Submitted" : "Public source editing"}</strong>
+        <strong>{submitted ? "Submitted" : "English source editing"}</strong>
         <span>
-          You are editing the complete NamuMark source. Your submission does not change the live article immediately; it enters the review queue first.
+          You are editing Kpoparkive&apos;s English NamuMark source, not the original Korean capture. Your submission does not change the live article immediately; it enters the review queue first.
         </span>
       </div>
 
@@ -376,7 +378,7 @@ export default function PublicSourceEditorPage({
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("== ", " ==", "Heading")} disabled={submitted}>H2</button>
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("=== ", " ===", "Subheading")} disabled={submitted}>H3</button>
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[[", "]]", "Target|Label")} disabled={submitted}>Link</button>
-            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[[파일:", "|width=100%]]", "File name")} disabled={submitted}>File</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[[File:", "|width=100%]]", "File name")} disabled={submitted}>File</button>
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[* ", "]", "footnote")} disabled={submitted}>Footnote</button>
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[youtube(", ")]", "VIDEO_ID")} disabled={submitted}>YouTube</button>
             <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("|| ", " ||", "cell 1 || cell 2")} disabled={submitted}>Table</button>
@@ -419,7 +421,7 @@ export default function PublicSourceEditorPage({
 
           <div className={styles.editorFooter}>
             <div>{content.length.toLocaleString()} chars · {content.split("\n").length.toLocaleString()} lines</div>
-            <div>Base revision: {payload.document.publicRevisionNo || "captured source"}</div>
+            <div>Base English revision: r{payload.document.publicRevisionNo}</div>
           </div>
 
           <label className={styles.summaryLabel}>
@@ -468,7 +470,7 @@ export default function PublicSourceEditorPage({
         <div className={styles.previewPane}>
           <div className={styles.previewHeader}>
             <div className={styles.previewHeading}>
-              <strong>미리보기</strong>
+              <strong>Preview</strong>
               <span className={styles.previewState}>{previewStatus}</span>
             </div>
             <div className={styles.previewControls}>
@@ -477,10 +479,10 @@ export default function PublicSourceEditorPage({
                 className={styles.previewRefresh}
                 disabled={previewBusy}
                 onClick={() => void refreshExactPreview(content, "manual")}
-                title="현재 편집 중인 소스를 The Tree로 다시 렌더링"
+                title="Re-render the source currently being edited with The Tree"
               >
                 <span aria-hidden="true" className={previewBusy ? styles.previewSpin : undefined}>↻</span>
-                새로고침
+                Refresh
               </button>
               <span className={styles.previewDivider} aria-hidden="true" />
               <label className={styles.autoRefreshControl}>
@@ -493,7 +495,7 @@ export default function PublicSourceEditorPage({
                 >
                   <span />
                 </button>
-                <span>자동 갱신</span>
+                <span>Auto refresh</span>
               </label>
             </div>
           </div>
@@ -503,7 +505,7 @@ export default function PublicSourceEditorPage({
             title={`${title} exact The Tree preview`}
             src={currentWikiPath}
             onLoad={() => {
-              if (lastPreviewSourceRef.current === payload.document.source) setPreviewStatus("현재 공개본");
+              if (lastPreviewSourceRef.current === payload.document.source) setPreviewStatus("Current article");
             }}
           />
         </div>
