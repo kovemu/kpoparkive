@@ -240,7 +240,166 @@
   font-size: 12px;
 }
 
-.previewPane iframe {
+.previewTitleGroup {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.previewTabs {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid #e2dced;
+  border-radius: 9px;
+  background: #f8f6fb;
+}
+
+.previewTab,
+.previewTabActive {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #625a6c;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.previewTabActive {
+  background: #6f4bd8;
+  color: #fff;
+}
+
+.publicPreviewFrame {
+  width: 100%;
+  flex: 1;
+  min-height: 650px;
+  border: 0;
+  background: #fff;
+}
+
+.draftPreview {
+  flex: 1;
+  min-height: 650px;
+  overflow: auto;
+  padding: 24px 28px 48px;
+  background: #fff;
+  color: #202027;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.draftPreview p {
+  margin: 0 0 12px;
+}
+
+.draftPreview h2,
+.draftPreview h3,
+.draftPreview h4,
+.draftPreview h5,
+.draftPreview h6 {
+  margin: 28px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d9d5df;
+  line-height: 1.3;
+}
+
+.draftPreview h2 { font-size: 24px; }
+.draftPreview h3 { font-size: 20px; }
+.draftPreview h4 { font-size: 17px; }
+
+.draftPreview ul,
+.draftPreview ol {
+  margin: 0 0 14px;
+  padding-left: 26px;
+}
+
+.draftPreview a {
+  color: #315fbd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: default;
+}
+
+.draftPreview :global(.nmDraftSpacer) {
+  height: 8px;
+}
+
+.draftPreview :global(.nmDraftCategories) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.draftPreview :global(.nmDraftCategory),
+.draftPreview :global(.nmDraftFile),
+.draftPreview :global(.nmDraftTemplate),
+.draftPreview :global(.nmDraftAdvancedLabel),
+.draftPreview :global(.nmDraftToc) {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e2dbea;
+  border-radius: 6px;
+  background: #f8f6fb;
+  color: #665e70;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.draftPreview :global(.nmDraftTemplate),
+.draftPreview :global(.nmDraftToc) {
+  display: flex;
+  margin: 8px 0;
+}
+
+.draftPreview :global(.nmDraftAdvanced) {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #b6a4e9;
+  background: #fbfaff;
+}
+
+.draftPreview :global(.nmDraftAdvancedLabel) {
+  margin-bottom: 8px;
+}
+
+.draftPreview :global(.nmDraftTableWrap) {
+  overflow-x: auto;
+  margin: 12px 0 18px;
+}
+
+.draftPreview :global(.nmDraftTable) {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.draftPreview :global(.nmDraftTable td) {
+  border: 1px solid #d8d4df;
+  padding: 7px 9px;
+  vertical-align: top;
+}
+
+.draftPreview :global(.nmDraftYoutube) {
+  margin: 12px 0 18px;
+}
+
+.draftPreview :global(.nmDraftYoutube iframe) {
+  width: min(100%, 640px);
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  border: 0;
+  border-radius: 8px;
+}
+
+.previewPane > iframe {
   width: 100%;
   flex: 1;
   min-height: 650px;
@@ -362,7 +521,7 @@
     grid-template-columns: 1fr;
   }
 
-  .previewPane iframe {
+  .previewPane > iframe {
     min-height: 720px;
   }
 }
