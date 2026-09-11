@@ -1,6 +1,49 @@
 const KPOP_HELPER_CONTROLLER = "http://127.0.0.1:43117";
 const KPOP_RUNNER_URL = chrome.runtime.getURL("runner.html");
 let kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
+let kpopRawVerification = {
+  active: false,
+  sourceTitle: "",
+  tabId: null,
+  since: 0,
+};
+
+async function kpopShowVerification(tab, sourceTitle) {
+  kpopRawVerification = {
+    active: true,
+    sourceTitle: String(sourceTitle || "").normalize("NFKC").trim(),
+    tabId: tab?.id || null,
+    since: Date.now(),
+  };
+
+  try {
+    if (tab?.id) await chrome.tabs.update(tab.id, { active: true });
+  } catch {}
+
+  try {
+    if (tab?.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+  } catch {}
+
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#d97706" });
+    await chrome.action.setBadgeText({ text: "VERIFY" });
+    await chrome.action.setTitle({
+      title: `Kpoparkive paused: complete NamuWiki verification for ${kpopRawVerification.sourceTitle || "current document"}`,
+    });
+  } catch {}
+
+  await chrome.storage.local.set({ kpoparkiveRawVerification });
+}
+
+async function kpopClearVerification() {
+  if (!kpopRawVerification.active) return;
+  kpopRawVerification = { active: false, sourceTitle: "", tabId: null, since: 0 };
+  try {
+    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setTitle({ title: "Kpoparkive Namu Capture" });
+  } catch {}
+  await chrome.storage.local.set({ kpoparkiveRawVerification });
+}
 
 async function kpopControllerJson(path, init = {}) {
   const response = await fetch(`${KPOP_HELPER_CONTROLLER}${path}`, {
@@ -192,24 +235,33 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
           const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
           if (result?.ok && result.raw) {
             extracted = result;
+            await kpopClearVerification();
             break;
           }
-          if (result?.blocked && !verificationShown) {
-            verificationShown = true;
-            try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+          if (result?.blocked) {
+            if (!verificationShown) {
+              verificationShown = true;
+              await kpopShowVerification(tab, normalizedTitle);
+            }
+            // Keep this capture suspended on the same document until the
+            // human verification is completed. No following queue item runs.
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
           }
         } catch {}
       }
 
       if (!verificationShown && Date.now() - started > 8000) {
         verificationShown = true;
-        try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+        await kpopShowVerification(tab, normalizedTitle);
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
     if (!extracted?.raw) {
-      try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+      let tab = null;
+      try { tab = await chrome.tabs.get(editTab.id); } catch {}
+      await kpopShowVerification(tab, normalizedTitle);
       throw new Error(`Could not read raw source for ${normalizedTitle} within 90 seconds.`);
     }
 
@@ -327,6 +379,10 @@ async function kpopRecoverRunner() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "kpoparkive-raw-verification-status") {
+    sendResponse({ ok: true, verification: { ...kpopRawVerification } });
+    return;
+  }
   if (message?.type === "kpoparkive-start-helper-clone") {
     kpopStartHelperClone(message.options || {})
       .then((job) => sendResponse({ ok: true, job }))
