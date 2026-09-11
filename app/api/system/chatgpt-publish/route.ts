@@ -125,7 +125,7 @@ async function publishDocument(document: SourceDocument) {
 
   validateTranslation(source, translated);
 
-  const rendered = await renderExactNamuPreview(document.source_title, translated);
+  const rendered = await renderExactNamuPreview(document.source_title, translated, "en");
   if (rendered.hasError) {
     throw new Error(`The Tree renderer reported ${rendered.errorCode || "an unknown error"}`);
   }
