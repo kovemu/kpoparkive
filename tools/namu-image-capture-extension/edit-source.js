@@ -79,47 +79,47 @@ function kpopEditorCandidates() {
   const expected = kpopExpectedEditorStats();
   const seenRaw = new Set();
 
-  const push = (source, value) => {
+  const push = (source, value, trustedEditor = false, priority = 0) => {
     const raw = kpopNormalizeEditRaw(value);
-    if (!raw.length || seenRaw.has(raw)) return;
+    if (!raw.length || (!trustedEditor && raw.length < 20) || seenRaw.has(raw)) return;
     seenRaw.add(raw);
     const score = kpopRawSignalScore(raw);
     const ratio = expected.chars > 0 ? raw.length / expected.chars : null;
-    values.push({ source, raw, score, ratio });
+    values.push({ source, raw, score, ratio, trustedEditor, priority });
   };
 
   for (const { root, label } of kpopCollectSearchRoots()) {
     try {
       for (const textarea of root.querySelectorAll("textarea")) {
-        push(`${label}:textarea${textarea.name ? `[name=${textarea.name}]` : ""}`, textarea.value || textarea.textContent || "");
+        push(`${label}:textarea${textarea.name ? `[name=${textarea.name}]` : ""}`, textarea.value || textarea.textContent || "", true, 100);
       }
     } catch {}
 
     try {
       for (const editor of root.querySelectorAll(".cm-content")) {
         const lines = [...editor.querySelectorAll(":scope > .cm-line")];
-        push(`${label}:codemirror6`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "");
+        push(`${label}:codemirror6`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "", true, 90);
       }
     } catch {}
 
     try {
       for (const editor of root.querySelectorAll(".CodeMirror-code")) {
         const lines = [...editor.querySelectorAll(".CodeMirror-line")];
-        push(`${label}:codemirror5`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "");
+        push(`${label}:codemirror5`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "", true, 90);
       }
     } catch {}
 
     try {
       for (const editor of root.querySelectorAll(".monaco-editor .view-lines, .view-lines")) {
         const lines = [...editor.querySelectorAll(":scope > .view-line")];
-        push(`${label}:monaco-visible`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "");
+        push(`${label}:monaco-visible`, lines.length ? lines.map((line) => line.textContent || "").join("\n") : editor.innerText || editor.textContent || "", true, 90);
       }
     } catch {}
 
     try {
       for (const editor of root.querySelectorAll('[contenteditable="true"], [role="textbox"]')) {
         if (editor.closest?.("header, nav, aside")) continue;
-        push(`${label}:editable`, editor.innerText || editor.textContent || "");
+        push(`${label}:editable`, editor.innerText || editor.textContent || "", true, 70);
       }
     } catch {}
 
@@ -130,7 +130,11 @@ function kpopEditorCandidates() {
     } catch {}
   }
 
-  return values.sort((a, b) => b.score - a.score || b.raw.length - a.raw.length);
+  return values.sort((a, b) =>
+    b.priority - a.priority ||
+    b.score - a.score ||
+    b.raw.length - a.raw.length
+  );
 }
 
 function kpopEnsureStatusBadge() {
@@ -210,7 +214,7 @@ function kpopExtractEditSource() {
       sourceTitle,
       error: blocked ? "NamuWiki verification/challenge is blocking the edit source." : reason,
       candidateCount: candidates.length,
-      bestCandidate: best ? { source: best.source, charCount: best.raw.length, score: best.score, ratio: best.ratio } : null,
+      bestCandidate: best ? { source: best.source, charCount: best.raw.length, score: best.score, ratio: best.ratio, trustedEditor: Boolean(best.trustedEditor) } : null,
       expectedChars: expected.chars,
       expectedLines: expected.lines,
     };
@@ -228,6 +232,7 @@ function kpopExtractEditSource() {
     extractionMethod: best.source,
     charCount: best.raw.length,
     signalScore: best.score,
+    trustedEditor: Boolean(best.trustedEditor),
     expectedChars: expected.chars,
     expectedLines: expected.lines,
     raw: best.raw,
