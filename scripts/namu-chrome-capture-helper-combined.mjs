@@ -284,7 +284,7 @@ async function saveRawSource(payload) {
       source_format: "namuwiki_raw",
       source_extraction_version: "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
-      translation_status: "queued",
+      translation_status: "pending",
       translation_version: "namumark-ai-en-v1",
       updated_at: capturedAt,
     }),
