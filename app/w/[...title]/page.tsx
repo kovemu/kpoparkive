@@ -224,15 +224,19 @@ export default async function RawWikiPage({
 
   // Local development is the approval surface: show the current rendered draft
   // without promoting it to production. Production never reads an unpublished draft.
-  const exactHtml =
-    (isLocalDraftPreview && hasCurrentDraft ? source.content_namumark_html : null) ||
-    publishedContentHtml ||
-    source.source_namumark_html;
+  const exactHtml = isLocalDraftPreview
+    ? (hasCurrentDraft ? source.content_namumark_html : null) ||
+      publishedContentHtml ||
+      source.source_namumark_html
+    : publishedContentHtml;
+
   if (!exactHtml) {
     return (
       <main className="kpoparkiveRawWikiMissing">
         <h1>{source.source_title}</h1>
-        <p>The raw source exists, but this document has not been rendered yet.</p>
+        <p>{isLocalDraftPreview
+          ? "The raw source exists, but this document has not been rendered yet."
+          : "This document has not been published yet."}</p>
       </main>
     );
   }
