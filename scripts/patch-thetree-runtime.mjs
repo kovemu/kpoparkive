@@ -70,6 +70,6 @@ patch(
 patch(
   "utils/namumark/toHtmlWorker.js",
   "const jsGlobalRemover = fs.readFileSync('./utils/namumark/utils/jsGlobalRemover.js', 'utf8');",
-  "const jsGlobalRemover = fs.readFileSync(path.join(__dirname, 'utils', 'jsGlobalRemover.js'), 'utf8');",
+  "const jsGlobalRemover = fs.readFileSync(require('path').join(__dirname, 'utils', 'jsGlobalRemover.js'), 'utf8');",
   "resolve NamuMark worker support files from the worker directory",
 );
