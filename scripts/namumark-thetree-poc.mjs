@@ -297,10 +297,16 @@ function makeVirtualWiki(rawRows, assetRows) {
 }
 
 function translation(key) {
-  const known = {
-    "namumark.toc_title": "목차",
-    "namumark.heading_edit": "편집",
-  };
+  const language = String(process.env.KPOPARKIVE_RENDER_LANGUAGE || "ko").toLowerCase();
+  const known = language === "en"
+    ? {
+        "namumark.toc_title": "Contents",
+        "namumark.heading_edit": "Edit",
+      }
+    : {
+        "namumark.toc_title": "목차",
+        "namumark.heading_edit": "편집",
+      };
   return known[key] || key;
 }
 
