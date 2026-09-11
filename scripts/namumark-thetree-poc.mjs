@@ -520,7 +520,7 @@ function internalWikiTitleFromHref(value) {
   try {
     const url = new URL(raw, "https://namu.wiki");
     const match = url.pathname.match(/^\/w\/(.+)$/i);
-    if (!match?.[1]) return "";
+    if (!match?.[1] || url.hash) return "";
     let decoded = match[1];
     try { decoded = decodeURIComponent(decoded); } catch {}
     return normalizeTitle(decoded);
@@ -554,10 +554,11 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
 
   const candidates = [];
   const seenHtml = new Set();
-  const pushCandidate = (element, strategy, scoreBoost = 0) => {
+  const pushCandidate = (element, strategy, scoreBoost = 0, options = {}) => {
     if (!element) return;
     const html = element.toString();
-    if (html.length < 80 || html.length > 600000 || seenHtml.has(html)) return;
+    const maxBytes = Number(options.maxBytes || 600000) || 600000;
+    if (html.length < 80 || html.length > maxBytes || seenHtml.has(html)) return;
     const text = normalizeVisibleText(element.innerText || element.text || "");
     if (!text) return;
     seenHtml.add(html);
@@ -565,8 +566,11 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
       html,
       size: html.length,
       textLength: text.length,
+      textPreview: text.slice(0, 180),
       strategy,
       scoreBoost,
+      anchorOffset: Number.isFinite(options.anchorOffset) ? options.anchorOffset : null,
+      selfLinkCount: Number(options.selfLinkCount || 0),
       tableCount: element.querySelectorAll?.("table")?.length || 0,
     });
   };
@@ -586,11 +590,13 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
   // both the link and rendered table content.
   if (!candidates.length) {
     const targetTitle = normalizeTitle(label);
+    const shortLabel = labelVariants[labelVariants.length - 1] || targetTitle;
     for (const anchor of root.querySelectorAll("a[href]")) {
       if (internalWikiTitleFromHref(anchor.getAttribute("href")) !== targetTitle) continue;
 
+      const anchorText = normalizeVisibleText(anchor.innerText || anchor.text || "") || shortLabel;
       let current = anchor;
-      for (let depth = 0; current && depth < 10; depth += 1, current = current.parentNode) {
+      for (let depth = 0; current && depth < 12; depth += 1, current = current.parentNode) {
         const tag = String(current?.tagName || "").toLowerCase();
         if (!["div", "section", "article", "table"].includes(tag)) continue;
 
@@ -602,7 +608,32 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
         // Keep the fallback focused on the include output rather than selecting
         // the whole captured article around a self-link.
         if (text.length > 6000) continue;
-        pushCandidate(current, "self-link-wrapper", 800 - depth * 10);
+
+        const anchorOffsetRaw = text.indexOf(anchorText);
+        const anchorOffset = anchorOffsetRaw >= 0 ? anchorOffsetRaw : text.indexOf(shortLabel);
+        const selfLinkCount = Array.from(current.querySelectorAll?.("a[href]") || [])
+          .filter((item) => internalWikiTitleFromHref(item.getAttribute("href")) === targetTitle)
+          .length;
+
+        // A member/profile navigation template normally begins with its own
+        // self-link ("리브 LIV ..."). A group template may also contain a link
+        // to the member, but that link is buried among sibling members. Strongly
+        // prefer wrappers where the self-link is at the beginning while still
+        // allowing a small amount of decorative text before it.
+        const frontScore =
+          anchorOffset >= 0 && anchorOffset <= 1 ? 220 :
+          anchorOffset >= 0 && anchorOffset <= 12 ? 90 :
+          anchorOffset >= 0 && anchorOffset <= 40 ? 25 : 0;
+        const structureScore = Math.min(4, tableCount) * 12 + Math.min(3, selfLinkCount) * 8;
+        const score = 760 + frontScore + structureScore - depth * 6;
+
+        pushCandidate(current, "self-link-wrapper", score, {
+          // Computed-style captures are verbose. Complex navigation templates
+          // can exceed 600 KB even when their visible text is compact.
+          maxBytes: 3 * 1024 * 1024,
+          anchorOffset,
+          selfLinkCount,
+        });
       }
     }
   }
@@ -638,6 +669,11 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
     html: sanitizeDomFallbackElement(element),
     originalHtmlBytes: Buffer.byteLength(picked.html, "utf8"),
     extractionStrategy: picked.strategy,
+    extractionScore: picked.scoreBoost,
+    anchorOffset: picked.anchorOffset,
+    selfLinkCount: picked.selfLinkCount,
+    tableCount: picked.tableCount,
+    textPreview: picked.textPreview,
   };
 }
 
@@ -991,7 +1027,16 @@ async function main() {
       const fallbackByTitle = new Map();
       for (const templateTitle of missingTemplatesBeforeFallback) {
         const fallback = extractTemplateDomFallback(articleHtml, templateTitle);
-        if (fallback) fallbackByTitle.set(templateTitle, fallback);
+        if (fallback) {
+          fallbackByTitle.set(templateTitle, fallback);
+          console.log(
+            `DOM FALLBACK CAPTURED ${templateTitle} via ${fallback.extractionStrategy}` +
+              ` score=${fallback.extractionScore} tables=${fallback.tableCount}` +
+              ` bytes=${fallback.originalHtmlBytes.toLocaleString()}` +
+              (fallback.anchorOffset != null ? ` anchor-offset=${fallback.anchorOffset}` : "")
+          );
+          if (fallback.textPreview) console.log(`  fallback-preview: ${fallback.textPreview}`);
+        }
       }
       const prepared = applyTemplateDomFallbackMarkers(renderSource, fallbackByTitle);
       renderSource = prepared.renderedSource;
