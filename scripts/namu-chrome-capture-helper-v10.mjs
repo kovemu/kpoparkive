@@ -290,6 +290,13 @@ v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue
 
 v8 = mustReplace(
   v8,
+  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
+  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  const captureMode = String(payload?.captureMode || \"dom\").toLowerCase() === \"raw\" ? \"raw\" : \"dom\";\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
+  "capture mode on new job",
+);
+
+v8 = mustReplace(
+  v8,
   "  const now = new Date().toISOString();\n  kpopCloneState = {",
   "  const now = new Date().toISOString();\n  const policyRefresh = Number(kpopCloneState.policyVersion || 0) !== KPOP_CRAWL_POLICY_VERSION;\n  kpopCloneState = {",
   "policy refresh decision on new job",
@@ -298,7 +305,7 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   "    maxDepth, maxDocs, queue: [{ url: rootUrl, depth: 0, attempts: 0 }], seenUrls: [rootUrl],",
-  "    maxDepth, maxDocs, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: policyRefresh }], seenUrls: [rootUrl],",
+  "    maxDepth, maxDocs, captureMode, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: policyRefresh }], seenUrls: [rootUrl],",
   "root queue policy",
 );
 
@@ -378,11 +385,7 @@ async function kpopClaimCloneTask() {
 `;
 v8 = mustReplace(v8, takeLeaseMarker, serializedClaim + takeLeaseMarker, "serialized claim wrapper");
 
-const oldSkip = String.raw`    const reusable =
-      kpopCloneState.captureMode === "raw"
-        ? Boolean(existing?.source_wikitext && existing?.raw_extracted_at && !item.forceCapture)
-        : Boolean(existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && !item.forceCapture);
-    if (reusable) {
+const oldSkip = String.raw`    if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION) {
       kpopCloneState.processed += 1;`;
 const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_browser_captured_at || "");
     const capturedAfterAdFilter = Number.isFinite(capturedAtMs) && capturedAtMs >= Date.parse("2026-09-08T16:30:00Z");
