@@ -226,6 +226,7 @@ async function saveRawSource(payload) {
   const sourceTitle = String(payload?.sourceTitle || "").normalize("NFKC").trim();
   const pageUrl = validateNamuPageUrl(payload?.pageUrl);
   const raw = String(payload?.raw || "").replace(/\r\n?/g, "\n").replace(/^\uFEFF/, "").trim();
+  const internalLinks = cleanInternalLinks(payload?.internalLinks);
 
   if (!rootTitle || !sourceTitle) throw new Error("raw source capture is missing rootTitle/sourceTitle");
   const signals = [
@@ -244,9 +245,13 @@ async function saveRawSource(payload) {
   const isTemplate = /^틀:/i.test(sourceTitle);
   const isOperationalTemplate = /^틀:\s*접근\s*제한(?:$|\/)/i.test(sourceTitle);
   const shouldTranslate =
-    rootTitle === sourceTitle ||
-    (isTemplate && !isOperationalTemplate) ||
-    process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
+    !isOperationalTemplate &&
+    (
+      payload?.translate === true ||
+      rootTitle === sourceTitle ||
+      isTemplate ||
+      process.env.KPOPARKIVE_TRANSLATE_RELATED === "1"
+    );
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -255,6 +260,7 @@ async function saveRawSource(payload) {
       source_format: "namuwiki_raw",
       source_extraction_version: "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
+      discovered_links: internalLinks,
       translation_status: shouldTranslate ? "pending_chatgpt" : "ready",
       translation_version: shouldTranslate ? "chatgpt-en-v1" : null,
       updated_at: capturedAt,
@@ -275,6 +281,7 @@ async function saveRawSource(payload) {
     bytes,
     capturedAt,
     sourceFormat: "namuwiki_raw",
+    internalLinkCount: internalLinks.length,
     translation: shouldTranslate ? "pending_chatgpt" : "skipped-related",
   };
 }
