@@ -326,7 +326,9 @@ async function rawSourceStatus(sourceTitle) {
   const rows = await db(
     `source_documents?source=eq.namu_mirror` +
     `&source_title=eq.${encodeURIComponent(title)}` +
-    `&select=id,source_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html&limit=1`,
+    `&source_wikitext=not.is.null&raw_extracted_at=not.is.null` +
+    `&select=id,source_title,root_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html` +
+    `&order=raw_extracted_at.desc.nullslast&limit=1`,
   );
   const row = rows?.[0] || null;
   return {
