@@ -543,7 +543,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       const marker = editAnchor?.closest<HTMLElement>(".wiki-edit-section");
       const host = marker?.parentElement as HTMLElement | null;
       const parts = headingParts(block.raw);
-      if (!heading || !host || !parts) return;
+      if (!heading || !host || !parts || !inlineSafe(block.children)) return;
 
       const oldDisplay = host.style.display;
       host.style.display = "none";
@@ -726,6 +726,10 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       return;
     }
     activeSurfaceRef.current = surface;
+    if (value === "bulletList" && surface.matches(".kpoparkiveAstHeadingSurface,.kpoparkiveAstTableSurface")) {
+      setStatus("Lists are only available in paragraph/list content. Use Table layout or Cell style for table structure.");
+      return;
+    }
     applyVisualCommand(value, surface);
     setStatus(`${value} applied to AST-backed visual content`);
   };

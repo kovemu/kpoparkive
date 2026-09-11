@@ -3,7 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { registerV3OperationProvider, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
-type Block = { id: string; type: string; raw: string; sourceStart: number; sourceEnd: number };
+type InlineNode = { type: string; children?: InlineNode[] };
+type Block = {
+  id: string;
+  type: string;
+  raw: string;
+  sourceStart: number;
+  sourceEnd: number;
+  children?: InlineNode[];
+  lines?: Array<{ children?: InlineNode[] }>;
+};
 type Payload = { ok?: boolean; ast?: { blocks?: Block[] }; error?: string };
 
 const EDITING_CLASS = "kpoparkiveAstEditing";
@@ -23,6 +32,13 @@ function visuallyMapped(block: Block) {
   }
   return Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-node-id]"))
     .some((element) => element.dataset.ve3NodeId === block.id && element.isContentEditable);
+}
+
+function hasProtectedInline(block: Block) {
+  const visit = (nodes: InlineNode[] | undefined): boolean =>
+    (nodes || []).some((node) => node.type === "raw-inline" || visit(node.children));
+  if (visit(block.children)) return true;
+  return (block.lines || []).some((line) => visit(line.children));
 }
 
 function fallbackOperation(block: Block, wikitext: string): V3RegisteredOperation {
@@ -68,7 +84,7 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
           if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load source fallback AST");
           const items = (payload.ast?.blocks || []).filter((block) => {
             if (COMPLEX_FALLBACK.has(block.type)) return true;
-            if (DIRECT_FALLBACK.has(block.type)) return !visuallyMapped(block);
+            if (DIRECT_FALLBACK.has(block.type)) return hasProtectedInline(block) || !visuallyMapped(block);
             return false;
           });
           setBlocks(items);
@@ -125,7 +141,7 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
     <div className="kpoparkiveVe3SourceBody">
       {selected ? <>
         <label>Block<select value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>{blocks.map((block, index) => <option key={block.id} value={block.id}>{index + 1}. {block.type} · {short(block.raw)}</option>)}</select></label>
-        <div className="kpoparkiveVe3SourceMeta">This edits only the selected <b>{selected.type}</b> AST range ({selected.sourceStart}–{selected.sourceEnd}). Paragraph/list/heading blocks appear here only when no visual surface could be mapped safely. Complex table/template/media blocks remain available as an escape hatch. The server rejects overlapping visual/source patches instead of guessing.</div>
+        <div className="kpoparkiveVe3SourceMeta">This edits only the selected <b>{selected.type}</b> AST range ({selected.sourceStart}–{selected.sourceEnd}). Paragraph/list/heading blocks appear here when no visual surface could be mapped safely, or when the visual surface contains a protected Advanced inline node. Complex table/template/media blocks remain available as an escape hatch. The server rejects overlapping visual/source patches instead of guessing.</div>
         <label>Exact NamuMark<textarea spellCheck={false} value={drafts[selected.id] ?? selected.raw} onChange={(event) => setDrafts((current) => ({ ...current, [selected.id]: event.target.value }))} /></label>
         {(drafts[selected.id] ?? selected.raw) !== selected.raw ? <div className="kpoparkiveVe3SourceDirty">Unsaved source change</div> : null}
         <div className="kpoparkiveVe3SourceActions"><button type="button" onClick={reveal}>Go to block</button><button type="button" onClick={() => setDrafts((current) => ({ ...current, [selected.id]: selected.raw }))}>Reset</button></div>

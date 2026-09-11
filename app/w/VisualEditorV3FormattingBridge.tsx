@@ -17,13 +17,18 @@ function activeSurface() {
   return null;
 }
 
-function command(value: "orderedList" | "alignLeft" | "alignCenter" | "alignRight" | "alignJustify") {
+function command(value: "orderedList") {
   const surface = activeSurface();
   if (!surface) {
-    window.alert("Click editable text or a table field first.");
+    window.alert("Click editable paragraph or list text first.");
+    return;
+  }
+  if (surface.matches(".kpoparkiveAstHeadingSurface,.kpoparkiveAstTableSurface")) {
+    window.alert("Numbered lists are only available in paragraph/list content.");
     return;
   }
   applyVisualCommand(value, surface);
+  surface.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function selectionInside(surface: HTMLElement | null) {
@@ -76,22 +81,6 @@ export default function VisualEditorV3FormattingBridge() {
       ordered.addEventListener("mousedown", (event) => event.preventDefault());
       ordered.addEventListener("click", () => command("orderedList"));
 
-      const left = document.createElement("button");
-      left.type = "button"; left.textContent = "←"; left.title = "Align left";
-      left.addEventListener("mousedown", (event) => event.preventDefault()); left.addEventListener("click", () => command("alignLeft"));
-
-      const center = document.createElement("button");
-      center.type = "button"; center.textContent = "↔"; center.title = "Align center";
-      center.addEventListener("mousedown", (event) => event.preventDefault()); center.addEventListener("click", () => command("alignCenter"));
-
-      const right = document.createElement("button");
-      right.type = "button"; right.textContent = "→"; right.title = "Align right";
-      right.addEventListener("mousedown", (event) => event.preventDefault()); right.addEventListener("click", () => command("alignRight"));
-
-      const justify = document.createElement("button");
-      justify.type = "button"; justify.textContent = "≡"; justify.title = "Justify";
-      justify.addEventListener("mousedown", (event) => event.preventDefault()); justify.addEventListener("click", () => command("alignJustify"));
-
       const colorLabel = document.createElement("label");
       colorLabel.title = "Text color";
       colorLabel.style.display = "inline-flex";
@@ -113,6 +102,10 @@ export default function VisualEditorV3FormattingBridge() {
       color.addEventListener("change", () => {
         const surface = savedSurface && savedSurface.isConnected ? savedSurface : activeSurface();
         if (!surface) { window.alert("Select text in an editable block first."); return; }
+        if (surface.matches(".kpoparkiveAstTableSurface")) {
+          window.alert("Use Cell style for table colors.");
+          return;
+        }
         if (!restoreRange(surface, savedRange)) {
           window.alert("Text selection was lost. Select the text again, then choose a color.");
           return;
@@ -122,7 +115,7 @@ export default function VisualEditorV3FormattingBridge() {
       });
       colorLabel.appendChild(color);
 
-      group.append(ordered, left, center, right, justify, colorLabel);
+      group.append(ordered, colorLabel);
       const list = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === "List");
       (list || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", group);
     };

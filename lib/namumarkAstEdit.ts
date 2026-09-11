@@ -180,7 +180,11 @@ function validateEditableNodeReplacement(nodeType: string, before: string, value
 
   const parsed = parseNamuMarkAstForEditing(after);
   const semantic = parsed.blocks.filter((block) => block.type !== "whitespace");
-  if (semantic.length !== 1 || semantic[0].type !== nodeType) {
+  const nextType = semantic[0]?.type || "";
+  const textFlowTransition =
+    (nodeType === "paragraph" || nodeType === "list") &&
+    (nextType === "paragraph" || nextType === "list");
+  if (semantic.length !== 1 || (nextType !== nodeType && !textFlowTransition)) {
     throw badRequest(`The edited ${nodeType} changed document structure. Use a structural insert/delete tool instead.`);
   }
   return after;
