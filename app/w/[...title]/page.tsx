@@ -96,16 +96,16 @@ function hydrateResolvedMedia(image: any, resolved: string) {
   else image.removeAttribute("class");
 }
 
-function adminEditorPath(title: string) {
+function publicEditorPath(title: string) {
   const encoded = title
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  return `/admin/editor/${encoded}`;
+  return `/edit/${encoded}`;
 }
 
 function rewriteInternalHref(href: string, sourceTitle: string) {
-  if (/^\/edit\//i.test(href)) return adminEditorPath(sourceTitle);
+  if (/^\/edit\//i.test(href)) return publicEditorPath(sourceTitle);
   if (/^https:\/\/namu\.wiki\/w\//i.test(href)) return href.replace(/^https:\/\/namu\.wiki/i, "");
   return href;
 }
@@ -214,7 +214,7 @@ export default async function RawWikiPage({
   return (
     <>
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
-      <main className="kpoparkiveRawWikiPage" data-editor-mode="admin-source">
+      <main className="kpoparkiveRawWikiPage" data-editor-mode="public-source">
         <TheTreeRuntimeBridge />
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
