@@ -6,6 +6,62 @@ import { DOM_TO_NAMUMARK_VERSION, compareDomFidelity, convertDomToNamuMark } fro
 
 const ROOT_DIR = process.cwd();
 const VERIFY_THRESHOLD = 0.88;
+const STATIC_PROMOTION_THRESHOLD = 0.9;
+
+function countMatches(value, pattern) {
+  return [...String(value || "").matchAll(pattern)].length;
+}
+
+function classifyDomPromotion(sourceHtml, sourceResult) {
+  const html = String(sourceHtml || "");
+  const staticScore = Number(sourceResult?.fidelity?.score || 0) || 0;
+  const domMetrics = sourceResult?.fidelity?.dom || {};
+  const generatedMetrics = sourceResult?.fidelity?.generated || {};
+
+  const hashLinks = countMatches(html, /href=["']#(?:["']|[^"']*["'])/gi);
+  const flexOrGrid = countMatches(html, /display\s*:\s*(?:flex|grid|inline-flex|inline-grid)\b/gi);
+  const hiddenPanels = countMatches(html, /display\s*:\s*none\b/gi);
+  const positionedLayers = countMatches(html, /position\s*:\s*(?:absolute|fixed|sticky)\b/gi);
+
+  const interactiveLayout =
+    hashLinks >= 2 ||
+    hiddenPanels > 0 ||
+    (hashLinks > 0 && flexOrGrid > 0);
+
+  const structuralLoss =
+    Number(domMetrics.tables || 0) !== Number(generatedMetrics.tables || 0) ||
+    Number(domMetrics.rows || 0) !== Number(generatedMetrics.rows || 0) ||
+    Number(domMetrics.cells || 0) !== Number(generatedMetrics.cells || 0) ||
+    Number(domMetrics.links?.length || 0) !== Number(generatedMetrics.links?.length || 0) ||
+    Number(domMetrics.images?.length || 0) !== Number(generatedMetrics.images?.length || 0);
+
+  const eligible =
+    staticScore >= STATIC_PROMOTION_THRESHOLD &&
+    !interactiveLayout &&
+    !structuralLoss;
+
+  const reasons = [];
+  if (staticScore < STATIC_PROMOTION_THRESHOLD) {
+    reasons.push(`static fidelity ${staticScore.toFixed(4)} < ${STATIC_PROMOTION_THRESHOLD}`);
+  }
+  if (interactiveLayout) reasons.push("interactive/tabbed CSS layout detected");
+  if (structuralLoss) reasons.push("DOM structure is lost before rerender verification");
+
+  return {
+    eligible,
+    staticScore,
+    threshold: STATIC_PROMOTION_THRESHOLD,
+    interactiveLayout,
+    structuralLoss,
+    signals: {
+      hashLinks,
+      flexOrGrid,
+      hiddenPanels,
+      positionedLayers,
+    },
+    reason: reasons.join("; ") || "eligible for synthetic RAW verification",
+  };
+}
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -274,11 +330,15 @@ async function main() {
   if (!fallback?.source_html) throw new Error("Captured DOM fallback is missing");
 
   const sourceResult = convertDomToNamuMark(fallback.source_html, { title: templateTitle, language: "ko" });
+  const promotion = classifyDomPromotion(fallback.source_html, sourceResult);
   const englishResult = fallback.en_html
     ? convertDomToNamuMark(fallback.en_html, { title: templateTitle, language: "en" })
     : null;
 
   console.log(`KO synthetic: ${sourceResult.namumark.length.toLocaleString()} chars · static=${sourceResult.fidelity.score}`);
+  console.log(
+    `Promotion gate: ${promotion.eligible ? "ELIGIBLE" : "HTML FALLBACK"} · ${promotion.reason}`
+  );
   if (englishResult) console.log(`EN synthetic: ${englishResult.namumark.length.toLocaleString()} chars · static=${englishResult.fidelity.score}`);
 
   const documentId = await createOrRefreshSynthetic(ownerTitle, templateTitle, sourceResult, fallback);
@@ -303,6 +363,57 @@ async function main() {
   if (sourceResult.namumark.length > 5000) console.log("\n...[truncated]");
 
   if (!verify) return;
+
+  if (!promotion.eligible) {
+    const now = new Date().toISOString();
+    await db(`source_documents?id=eq.${eq(documentId)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        source_fidelity_meta: {
+          stage: "needs-review",
+          converterVersion: DOM_TO_NAMUMARK_VERSION,
+          static: sourceResult.fidelity,
+          visualPromotionEligible: false,
+          promotionGate: promotion,
+          verifiedAt: now,
+        },
+        source_render_manifest: {
+          kind: "dom-synthetic-template",
+          converterVersion: DOM_TO_NAMUMARK_VERSION,
+          fallbackId: fallback.id,
+          ownerTitle,
+          templateTitle,
+          sourceHtmlHash: fallback.source_html_hash || sha256(fallback.source_html),
+          generatedAt: now,
+          promotionMode: "html-fallback-only",
+          promotionGate: promotion,
+          staticFidelity: sourceResult.fidelity,
+        },
+        updated_at: now,
+      }),
+    });
+
+    await patchFallback(fallback.id, {
+      recovery_status: "converted",
+      recovery_meta: {
+        converterVersion: DOM_TO_NAMUMARK_VERSION,
+        sourceStaticFidelity: sourceResult.fidelity,
+        englishStaticFidelity: englishResult?.fidelity || null,
+        verified: false,
+        htmlFallbackRequired: true,
+        visualPromotionEligible: false,
+        promotionGate: promotion,
+      },
+    });
+
+    console.log(
+      `Synthetic RAW promotion blocked before rerender verification: ${promotion.reason}`
+    );
+    console.log("Translated captured HTML fallback remains authoritative.");
+    return;
+  }
+
   console.log("\nRendering synthetic template with local The Tree...");
   runRenderer(templateTitle);
 
