@@ -3,6 +3,7 @@ import {
   namuMarkTranslationVersion,
   translateNamuMarkToEnglish,
 } from "../../../../lib/namuExactTranslate";
+import { renderExactNamuPreview } from "../../../../lib/thetreeExactPreview";
 
 const SUPABASE_URL = (
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -22,6 +23,8 @@ type SourceDocument = {
   content_language: string | null;
   content_revision_no: number;
   content_updated_by: string | null;
+  content_namumark_html: string | null;
+  content_namumark_rendered_at: string | null;
   translation_status: string | null;
   translation_version: string | null;
   translated_at: string | null;
@@ -61,7 +64,7 @@ async function db<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      "&select=id,source_title,source_wikitext,raw_extracted_at,content_wikitext,content_language,content_revision_no,content_updated_by,translation_status,translation_version,translated_at&limit=1",
+      "&select=id,source_title,source_wikitext,raw_extracted_at,content_wikitext,content_language,content_revision_no,content_updated_by,content_namumark_html,content_namumark_rendered_at,translation_status,translation_version,translated_at&limit=1",
   );
   return rows[0] || null;
 }
@@ -157,15 +160,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const alreadyCurrent =
+    const translationCurrent =
       !body.force &&
       document.content_language === "en" &&
       document.content_updated_by === "ai-translation" &&
       document.translation_status === "translated" &&
       document.translation_version === namuMarkTranslationVersion &&
+      Boolean(document.content_wikitext) &&
       !sourceIsNewer(document);
 
-    if (alreadyCurrent) {
+    if (
+      translationCurrent &&
+      document.content_namumark_html &&
+      document.content_namumark_rendered_at
+    ) {
       return NextResponse.json(
         {
           ok: true,
@@ -174,49 +182,109 @@ export async function POST(request: Request) {
           revisionNo: document.content_revision_no,
           translationVersion: document.translation_version,
           translatedAt: document.translated_at,
+          renderedAt: document.content_namumark_rendered_at,
         },
         { headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    await patchDocument(document.id, {
-      translation_status: "translating",
-    });
+    let englishWikitext = document.content_wikitext || "";
+    let revisionNo = document.content_revision_no;
+    let revisionUpdatedAt: string | null = null;
+    let translatedAt = document.translated_at;
+    let model: string | null = null;
+    let chunks: number | null = null;
+    let sourceChars: number | null = null;
+    let translatedChars: number | null = null;
 
-    const translated = await translateNamuMarkToEnglish(
+    if (!translationCurrent) {
+      await patchDocument(document.id, {
+        translation_status: "translating",
+      });
+
+      const translated = await translateNamuMarkToEnglish(
+        document.source_title,
+        document.source_wikitext,
+      );
+
+      const saved = await saveEnglishRevision(
+        document.id,
+        translated.wikitext,
+        `AI English translation from captured NamuMark (${translated.version}, ${translated.model})`,
+      );
+
+      englishWikitext = translated.wikitext;
+      revisionNo = saved.revision_no;
+      revisionUpdatedAt = saved.updated_at;
+      translatedAt = new Date().toISOString();
+      model = translated.model;
+      chunks = translated.chunks;
+      sourceChars = translated.sourceChars;
+      translatedChars = translated.translatedChars;
+
+      await patchDocument(document.id, {
+        translation_status: "translated",
+        translation_version: translated.version,
+        translated_at: translatedAt,
+      });
+    }
+
+    if (!englishWikitext.trim()) {
+      throw new Error("English content_wikitext is unavailable for exact render");
+    }
+
+    const rendered = await renderExactNamuPreview(
       document.source_title,
-      document.source_wikitext,
+      englishWikitext,
     );
+    if (rendered.hasError) {
+      throw new Error(
+        `The Tree exact renderer reported an error${rendered.errorCode ? `: ${rendered.errorCode}` : ""}`,
+      );
+    }
 
-    const saved = await saveEnglishRevision(
-      document.id,
-      translated.wikitext,
-      `AI English translation from captured NamuMark (${translated.version}, ${translated.model})`,
-    );
-
-    const translatedAt = new Date().toISOString();
+    const renderedAt = new Date().toISOString();
     await patchDocument(document.id, {
-      translation_status: "translated",
-      translation_version: translated.version,
-      translated_at: translatedAt,
+      content_namumark_html: rendered.html,
+      content_namumark_meta: {
+        exactRender: {
+          renderMs: rendered.renderMs,
+          links: rendered.links,
+          files: rendered.files,
+          headings: rendered.headings,
+          translationVersion:
+            document.translation_version || namuMarkTranslationVersion,
+          source: "content_wikitext",
+        },
+      },
+      content_namumark_engine: "thetree-exact-server",
+      content_namumark_engine_version: "v1",
+      content_namumark_rendered_at: renderedAt,
+      content_status: "draft",
     });
 
     return NextResponse.json(
       {
         ok: true,
-        status: "translated",
+        status: translationCurrent ? "rendered" : "translated-rendered",
         title: document.source_title,
-        revisionNo: saved.revision_no,
-        revisionUpdatedAt: saved.updated_at,
+        revisionNo,
+        revisionUpdatedAt,
         translatedAt,
-        model: translated.model,
-        translationVersion: translated.version,
-        chunks: translated.chunks,
-        sourceChars: translated.sourceChars,
-        translatedChars: translated.translatedChars,
+        renderedAt,
+        model,
+        translationVersion:
+          document.translation_version || namuMarkTranslationVersion,
+        chunks,
+        sourceChars,
+        translatedChars,
+        renderMs: rendered.renderMs,
+        links: rendered.links,
+        files: rendered.files,
+        headings: rendered.headings,
         contentLanguage: "en",
         contentStatus: "draft",
-        next: "exact-render",
+        next: "publish",
       },
       {
         headers: {
