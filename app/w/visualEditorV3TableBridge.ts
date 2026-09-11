@@ -203,7 +203,7 @@ function makeSurface(host: HTMLElement, model: V3TableModel, field: V3TableField
     const anchor = (event.target as Element | null)?.closest?.("a");
     if (anchor) event.preventDefault();
   });
-  surface.addEventListener("keydown", (event) => {
+  surface.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
     event.preventDefault();
     document.execCommand("insertHTML", false, "<br>");
