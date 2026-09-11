@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchVisualEditorV3Payload } from "./visualEditorV3PayloadClient";
 import { registerV3OperationProvider, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type MediaItem = {
@@ -69,7 +70,7 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
+        const response = await fetchVisualEditorV3Payload(title, controller.signal);
         const payload = await response.json() as Payload;
         if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load media AST");
         const media = payload.media || [];
