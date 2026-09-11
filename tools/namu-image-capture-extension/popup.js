@@ -328,9 +328,6 @@ compareButton.addEventListener("click", async () => {
 });
 
 resetButton.addEventListener("click", async () => {
-  const confirmed = confirm("Reset the current crawler job and clear its queue/progress?\n\nAlready captured Supabase documents and media will be kept.");
-  if (!confirmed) return;
-
   resetButton.disabled = true;
   cloneButton.disabled = true;
   rawCrawlButton.disabled = true;
