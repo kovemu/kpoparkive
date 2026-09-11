@@ -79,6 +79,45 @@ function capturedCommonAncestor(
   return null;
 }
 
+function inlinePixel(styleValue: string) {
+  const match = String(styleValue || "").trim().match(/^([\d.]+)px$/i);
+  return match ? Number(match[1] || 0) || 0 : 0;
+}
+
+function normalizeCapturedInteractiveFrameAlignment(
+  trigger: HTMLElement,
+  root: HTMLElement,
+) {
+  let current: HTMLElement | null = trigger.parentElement;
+  let depth = 0;
+
+  while (current && current !== root && depth < 8) {
+    const left = inlinePixel(current.style.marginLeft);
+    const right = inlinePixel(current.style.marginRight);
+    const width = inlinePixel(current.style.width);
+    const maxWidth = inlinePixel(current.style.maxWidth);
+
+    const symmetricCapturedMargins =
+      left > 0 &&
+      right > 0 &&
+      Math.abs(left - right) <= 2 &&
+      (width > 0 || maxWidth > 0);
+
+    if (symmetricCapturedMargins) {
+      const responsiveMax = maxWidth > 0 ? maxWidth : width;
+      current.style.width = "100%";
+      if (responsiveMax > 0) current.style.maxWidth = `${responsiveMax}px`;
+      current.style.marginLeft = "auto";
+      current.style.marginRight = "auto";
+      current.dataset.kpoparkiveAlignmentNormalized = "center";
+      return;
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+}
+
 function releaseCapturedToggleFlow(
   trigger: HTMLElement,
   target: HTMLElement,
@@ -227,6 +266,7 @@ function hydrateTheTreeRuntime() {
       }
 
       for (const trigger of Array.from(root.querySelectorAll<HTMLElement>("[data-onclick]"))) {
+        normalizeCapturedInteractiveFrameAlignment(trigger, root);
         const raw = trigger.dataset.onclick || "";
         const actions = raw
           .split(";")
