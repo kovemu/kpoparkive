@@ -1147,6 +1147,7 @@ async function main() {
     domFallbackLanguage: process.env.KPOPARKIVE_RENDER_CONTENT ? "en" : "ko",
     fallbackTranslationQueue,
     fallbackExtractorVersion: 2,
+    assetReconcilerVersion: 2,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
