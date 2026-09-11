@@ -7,6 +7,7 @@ const KPOP_RUNNER_BACKOFF_MS = [1200, 2500, 5000, 10000, 20000, 30000];
 const runnerStatusNode = document.getElementById("status");
 let runnerKnownAssetUrls = new Set();
 let runnerRootTitle = "";
+let runnerCaptureMode = "dom";
 let runnerStopped = false;
 
 function runnerSetStatus(text) {
@@ -149,6 +150,40 @@ async function runnerCaptureAssets(prep) {
 async function runnerProcessTask(task) {
   let tabId = null;
   try {
+    if (runnerCaptureMode === "raw") {
+      const sourceTitle = kpopTitleFromDocumentUrl(task.url);
+      if (!sourceTitle) throw new Error("Could not resolve raw document title from task URL.");
+
+      runnerSetStatus(`RAW · ${sourceTitle}\nDepth ${task.depth || 0}\nWaiting for edit source / verification if required…`);
+      const raw = await kpopCaptureRawBundle({
+        rootTitle: runnerRootTitle,
+        sourceTitle,
+        maxTemplateDepth: 2,
+        maxTemplates: 40,
+      });
+
+      await runnerJson("/clone/complete", {
+        method: "POST",
+        body: JSON.stringify({
+          leaseId: task.leaseId,
+          sourceTitle: raw.sourceTitle,
+          internalLinks: raw.internalLinks || [],
+          media: {
+            resolved: 0,
+            skippedKnown: 0,
+            failed: 0,
+            rawTemplates: raw.templatesCaptured || 0,
+          },
+        }),
+      });
+
+      return {
+        ok: true,
+        sourceTitle: raw.sourceTitle,
+        rawTemplates: raw.templatesCaptured || 0,
+      };
+    }
+
     const tab = await chrome.tabs.create({ url: task.url, active: false });
     tabId = tab.id;
     if (!tabId) throw new Error("Could not open capture tab.");
@@ -239,10 +274,17 @@ async function runnerMain() {
     }
 
     runnerRootTitle = job.rootTitle;
-    await runnerLoadKnownAssets(runnerRootTitle);
-    runnerSetStatus(`Running ${runnerRootTitle}\nKnown media cached: ${runnerKnownAssetUrls.size}`);
+    runnerCaptureMode = job.captureMode === "raw" ? "raw" : "dom";
 
-    await Promise.all(Array.from({ length: KPOP_RUNNER_DOC_CONCURRENCY }, (_, index) => runnerWorker(index)));
+    if (runnerCaptureMode === "dom") {
+      await runnerLoadKnownAssets(runnerRootTitle);
+      runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nKnown media cached: ${runnerKnownAssetUrls.size}`);
+    } else {
+      runnerSetStatus(`Running RAW crawl · ${runnerRootTitle}\nOne document at a time · verification pauses the whole queue`);
+    }
+
+    const concurrency = runnerCaptureMode === "raw" ? 1 : KPOP_RUNNER_DOC_CONCURRENCY;
+    await Promise.all(Array.from({ length: concurrency }, (_, index) => runnerWorker(index)));
     const finalStatus = await runnerJson("/clone/status");
     runnerBadge(finalStatus.job || {});
     runnerSetStatus(`Done\n${finalStatus.job?.processed || 0} processed\n${finalStatus.job?.captured || 0} captured\n${finalStatus.job?.skipped || 0} reused\n${finalStatus.job?.failed || 0} failed`);
