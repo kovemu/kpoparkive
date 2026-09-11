@@ -56,14 +56,13 @@ function hydrateVideoBackedImage(image: HTMLImageElement) {
   return true;
 }
 
-export default function TheTreeRuntimeBridge() {
-  useEffect(() => {
-    const roots = Array.from(
-      document.querySelectorAll<HTMLElement>(".thetreeWikiBaseline, .namumarkPocDocument.wiki-content"),
-    );
-    if (!roots.length) return;
+function hydrateTheTreeRuntime() {
+  const roots = Array.from(
+    document.querySelectorAll<HTMLElement>(".thetreeWikiBaseline, .namumarkPocDocument.wiki-content"),
+  );
+  if (!roots.length) return () => {};
 
-    const cleanups: Array<() => void> = [];
+  const cleanups: Array<() => void> = [];
 
     // The pinned frontend renders its external-link marker with an Ionicons
     // private-use glyph. Kpoparkive does not load that old icon font, so the
@@ -170,8 +169,24 @@ export default function TheTreeRuntimeBridge() {
       }
     }
 
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
+}
+
+export default function TheTreeRuntimeBridge() {
+  useEffect(() => {
+    let cleanupHydration = hydrateTheTreeRuntime();
+
+    const refresh = () => {
+      cleanupHydration();
+      cleanupHydration = hydrateTheTreeRuntime();
+    };
+
+    window.addEventListener("kpoparkive:thetree-refresh", refresh);
     return () => {
-      for (const cleanup of cleanups) cleanup();
+      window.removeEventListener("kpoparkive:thetree-refresh", refresh);
+      cleanupHydration();
     };
   }, []);
 
