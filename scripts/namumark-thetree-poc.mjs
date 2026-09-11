@@ -662,11 +662,15 @@ async function main() {
 
   let renderSource = String(target.source_wikitext);
   let templateFallbackReplacements = [];
+  let fallbackTranslationQueue = [];
+
   if (!process.env.KPOPARKIVE_RENDER_CONTENT && missingTemplatesBeforeFallback.length) {
     const browserRows = await db(
-      "source_documents?id=eq." + encodeURIComponent(target.id) + "&select=source_browser_article_html&limit=1"
+      "source_documents?id=eq." + encodeURIComponent(target.id) +
+      "&select=source_browser_article_html,source_browser_captured_at&limit=1"
     );
     const articleHtml = String(browserRows?.[0]?.source_browser_article_html || "");
+    const browserCapturedAt = browserRows?.[0]?.source_browser_captured_at || null;
     if (articleHtml) {
       const fallbackByTitle = new Map();
       for (const templateTitle of missingTemplatesBeforeFallback) {
@@ -674,6 +678,25 @@ async function main() {
         if (fallback) fallbackByTitle.set(templateTitle, fallback);
       }
       const prepared = applyTemplateDomFallbackMarkers(renderSource, fallbackByTitle);
+      renderSource = prepared.renderedSource;
+      templateFallbackReplacements = prepared.replacements;
+      for (const replacement of templateFallbackReplacements) {
+        const synced = await syncSourceTemplateFallback(target, replacement, browserCapturedAt);
+        if (synced) fallbackTranslationQueue.push({
+          templateTitle: replacement.title,
+          translationStatus: synced.translation_status || "pending_chatgpt",
+          changed: Boolean(synced.changed),
+        });
+      }
+    }
+  } else if (process.env.KPOPARKIVE_RENDER_CONTENT && missingTemplatesBeforeFallback.length) {
+    const translatedFallbacks = await translatedTemplateFallbackMap(
+      target,
+      renderSource,
+      missingTemplatesBeforeFallback
+    );
+    if (translatedFallbacks.size) {
+      const prepared = applyTemplateDomFallbackMarkers(renderSource, translatedFallbacks);
       renderSource = prepared.renderedSource;
       templateFallbackReplacements = prepared.replacements;
     }
@@ -795,6 +818,8 @@ async function main() {
     missingTemplateCount: missingTemplates.length,
     domFallbackTemplates: injectedFallbacks.injected,
     domFallbackTemplateCount: injectedFallbacks.injected.length,
+    domFallbackLanguage: process.env.KPOPARKIVE_RENDER_CONTENT ? "en" : "ko",
+    fallbackTranslationQueue,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
@@ -826,6 +851,7 @@ async function main() {
   console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} dom-fallback-templates=${meta.domFallbackTemplateCount} categories=${meta.categories} headings=${meta.headings}`);
   if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
   if (injectedFallbacks.injected.length) console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
+  if (fallbackTranslationQueue.length) console.log(`fallback-translation-queue: ${fallbackTranslationQueue.map((item) => `${item.templateTitle}:${item.translationStatus}${item.changed ? ":changed" : ""}`).join(" | ")}`);
   if (enginePatches.length) console.log(`engine-patches: ${enginePatches.join(" | ")}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
