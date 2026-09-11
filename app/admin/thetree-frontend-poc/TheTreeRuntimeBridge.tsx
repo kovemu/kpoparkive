@@ -56,6 +56,52 @@ function hydrateVideoBackedImage(image: HTMLImageElement) {
   return true;
 }
 
+function prepareCapturedToggleTarget(target: HTMLElement) {
+  if (target.dataset.kpoparkiveToggleDisplayPrepared === "1") return;
+  target.dataset.kpoparkiveToggleDisplayPrepared = "1";
+
+  if (target.style.display === "none") {
+    target.dataset.kpoparkiveToggleHiddenPanel = "1";
+    target.dataset.kpoparkiveToggleVisibleDisplay = "block";
+  }
+}
+
+function applyCapturedClassOperation(
+  target: HTMLElement,
+  operation: string,
+  className: string,
+) {
+  prepareCapturedToggleTarget(target);
+
+  let active = target.classList.contains(className);
+  if (operation === "toggle-class") {
+    active = !active;
+    target.classList.toggle(className, active);
+  } else if (operation === "add-class") {
+    active = true;
+    target.classList.add(className);
+  } else if (operation === "remove-class") {
+    active = false;
+    target.classList.remove(className);
+  } else {
+    return;
+  }
+
+  // Captured DOM fallbacks preserve computed styles inline. That means a
+  // class toggle alone cannot override an inline display:none that originally
+  // depended on NamuWiki's stylesheet. Re-create that state transition here.
+  if (target.dataset.kpoparkiveToggleHiddenPanel === "1") {
+    target.style.display = active
+      ? (target.dataset.kpoparkiveToggleVisibleDisplay || "block")
+      : "none";
+    if (active) {
+      target.style.height = "auto";
+      target.style.maxHeight = "none";
+      target.style.visibility = "visible";
+    }
+  }
+}
+
 function hydrateTheTreeRuntime() {
   const roots = Array.from(
     document.querySelectorAll<HTMLElement>(".thetreeWikiBaseline, .namumarkPocDocument.wiki-content"),
@@ -140,6 +186,13 @@ function hydrateTheTreeRuntime() {
           .map((part) => part.split(",").map((value) => value.trim()))
           .filter((parts) => parts.length >= 3);
 
+        for (const [, targetClass] of actions) {
+          if (!targetClass) continue;
+          for (const target of Array.from(root.getElementsByClassName(targetClass))) {
+            if (target instanceof HTMLElement) prepareCapturedToggleTarget(target);
+          }
+        }
+
         const handler = (event: Event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -148,9 +201,8 @@ function hydrateTheTreeRuntime() {
             if (!targetClass || !className) continue;
             const targets = Array.from(root.getElementsByClassName(targetClass));
             for (const target of targets) {
-              if (operation === "toggle-class") target.classList.toggle(className);
-              else if (operation === "add-class") target.classList.add(className);
-              else if (operation === "remove-class") target.classList.remove(className);
+              if (!(target instanceof HTMLElement)) continue;
+              applyCapturedClassOperation(target, operation, className);
             }
           }
         };
