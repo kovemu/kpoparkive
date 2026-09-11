@@ -282,7 +282,7 @@ async function resumeRepairableFailedDraft(id) {
   if (!id) return false;
   const rows = await db(
     `source_documents?id=eq.${encodeURIComponent(id)}` +
-      "&select=id,source_title,translation_status,content_language,content_revision_no,content_wikitext,source_namumark_meta&limit=1",
+      "&select=id,source_title,source_hash,translation_source_hash,translation_status,content_language,content_revision_no,content_wikitext,source_namumark_meta&limit=1",
   );
   const row = rows?.[0] || null;
   if (!row || row.translation_status !== "failed") return false;
@@ -293,13 +293,17 @@ async function resumeRepairableFailedDraft(id) {
     Number(meta?.missingTemplateCount || 0) === 0 &&
     Number(meta?.missingFileCount || 0) === 0 &&
     (!Array.isArray(meta?.missingYouTubeEmbeds) || meta.missingYouTubeEmbeds.length === 0);
+  const sourceHash = String(row.source_hash || "");
+  const translationSourceHash = String(row.translation_source_hash || "");
+  const translationStillMatchesSource =
+    Boolean(sourceHash) && sourceHash === translationSourceHash;
   const hasEnglishDraft =
     row.content_language === "en" &&
     Number(row.content_revision_no || 0) > 0 &&
     typeof row.content_wikitext === "string" &&
     row.content_wikitext.length > 0;
 
-  if (!sourceClean || !hasEnglishDraft) return false;
+  if (!sourceClean || !hasEnglishDraft || !translationStillMatchesSource) return false;
 
   await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
