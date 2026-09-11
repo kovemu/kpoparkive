@@ -338,15 +338,14 @@ async function main() {
     const revision = await saveEnglish(documentId, templateTitle, englishResult);
     console.log(`English revision saved after verification: r${revision?.revision_no || "?"}`);
 
-    console.log(`\nRendering English synthetic template: ${templateTitle}`);
+    console.log(`\nRendering English synthetic template draft: ${templateTitle}`);
     runContentRenderer(templateTitle);
-    const templatePublished = await publishRenderedContent(templateTitle);
-    console.log(`Synthetic template published: ${templateTitle} r${templatePublished.revisionNo} html=${templatePublished.htmlLength.toLocaleString()}`);
+    console.log(`Synthetic template draft ready: ${templateTitle}`);
 
-    console.log(`\nRe-rendering owner with synthetic template: ${ownerTitle}`);
+    console.log(`\nRe-rendering owner draft with synthetic template: ${ownerTitle}`);
     runContentRenderer(ownerTitle);
-    const ownerPublished = await publishRenderedContent(ownerTitle);
-    console.log(`Owner republished: ${ownerTitle} r${ownerPublished.revisionNo} html=${ownerPublished.htmlLength.toLocaleString()}`);
+    console.log(`Owner draft refreshed: ${ownerTitle}`);
+    console.log("Production publish remains manual after local review.");
   }
 }
 
