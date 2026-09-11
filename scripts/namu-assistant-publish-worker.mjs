@@ -206,7 +206,9 @@ async function fetchSourceRenderPending() {
     if (!title || /^틀:/i.test(title)) return false;
     const rawAt = Date.parse(row?.raw_extracted_at || "");
     const renderedAt = Date.parse(row?.source_namumark_rendered_at || "");
-    const staleByTime = !Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt);
+    const staleByTime =
+      row?.translation_status === "pending_chatgpt" &&
+      (!Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt));
     const meta = row?.source_namumark_meta || {};
     const missingTemplates = Number(meta?.missingTemplateCount || 0) > 0;
     const missingFiles = Number(meta?.missingFileCount || 0) > 0;
@@ -315,6 +317,12 @@ async function resumeRepairableFailedDraft(id) {
     row.content_wikitext.length > 0;
 
   if (!sourceClean || !hasEnglishDraft || !translationStillMatchesSource) return false;
+
+  const pendingFallbacks = await db(
+    `template_dom_fallbacks?source_document_id=eq.${encodeURIComponent(id)}` +
+      "&translation_status=eq.pending_chatgpt&select=id,template_title&limit=1",
+  );
+  if (Array.isArray(pendingFallbacks) && pendingFallbacks.length) return false;
 
   await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
