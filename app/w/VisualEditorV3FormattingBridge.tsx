@@ -121,12 +121,21 @@ export default function VisualEditorV3FormattingBridge() {
     };
 
     document.addEventListener("selectionchange", remember);
-    ensure();
-    const observer = new MutationObserver(ensure);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+    let timers: number[] = [];
+    const scheduleEnsure = () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers = [];
+      ensure();
+      if (!document.body.classList.contains(EDITING_CLASS)) return;
+      timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    };
+    scheduleEnsure();
+    const observer = new MutationObserver(scheduleEnsure);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
     return () => {
       document.removeEventListener("selectionchange", remember);
       observer.disconnect();
+      timers.forEach((timer) => window.clearTimeout(timer));
       remove();
     };
   }, []);
