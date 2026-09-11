@@ -77,7 +77,7 @@ export default function PublicSourceEditorPage({
     if (!title) return;
     let cancelled = false;
     setBusy(true);
-    setStatus("Loading public NamuMark source…");
+    setStatus("Loading English NamuMark source…");
     fetch(`/api/wiki-source-edit?title=${encodeURIComponent(title)}`, { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json();
@@ -93,7 +93,7 @@ export default function PublicSourceEditorPage({
         redoStackRef.current = [];
         setDirty(false);
         setSubmitted(false);
-        setStatus("Ready. Edit the full NamuMark source and submit it for review.");
+        setStatus("Ready. Edit the full English NamuMark source and submit it for review.");
       })
       .catch((error) => {
         if (!cancelled) setStatus(error instanceof Error ? error.message : "Failed to load source");
@@ -319,7 +319,7 @@ export default function PublicSourceEditorPage({
     setSummary("");
     setDirty(false);
     restorePublicPreview();
-    setStatus("Restored current public source.");
+    setStatus("Restored the current English source.");
   }
 
   const currentWikiPath = useMemo(() => wikiPath(title), [title]);
