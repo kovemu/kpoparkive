@@ -852,10 +852,46 @@ function rewriteFallbackMediaToStorage(root, assetRows) {
   return { rewritten, remoteRemaining };
 }
 
+function stylePixelValue(element, property) {
+  const style = String(element?.getAttribute?.("style") || "");
+  const match = style.match(new RegExp(`(?:^|;)${property}:([\\d.]+)px(?:;|$)`, "i"));
+  return match ? Number(match[1] || 0) || 0 : 0;
+}
+
+function normalizeCapturedOuterAlignment(root) {
+  const topLevel = (root?.childNodes || []).filter((node) => node?.tagName);
+  for (const element of topLevel) {
+    const left = stylePixelValue(element, "margin-left");
+    const right = stylePixelValue(element, "margin-right");
+    const width = stylePixelValue(element, "width");
+    const maxWidth = stylePixelValue(element, "max-width");
+
+    const symmetricCapturedMargins =
+      left > 0 &&
+      right > 0 &&
+      Math.abs(left - right) <= 2 &&
+      (width > 0 || maxWidth > 0);
+
+    if (!symmetricCapturedMargins) continue;
+
+    const responsiveMax = maxWidth > 0 ? maxWidth : width;
+    setInlineStyleProperties(element, {
+      width: "100%",
+      "max-width": responsiveMax > 0 ? `${responsiveMax}px` : null,
+      "margin-left": "auto",
+      "margin-right": "auto",
+    });
+
+    element.setAttribute("data-kpoparkive-alignment-normalized", "center");
+  }
+}
+
 function normalizePortableFallbackHtml(htmlValue, assetRows = []) {
   let root;
   try { root = parseHtml(String(htmlValue || ""), { comment: false }); }
   catch { return { html: String(htmlValue || ""), media: { rewritten: 0, remoteRemaining: 0 } }; }
+
+  normalizeCapturedOuterAlignment(root);
 
   const displayByTag = {
     table: "table",
