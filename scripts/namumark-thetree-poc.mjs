@@ -620,6 +620,48 @@ async function translatedTemplateFallbackMap(target, renderSource, missingTempla
   }
   return output;
 }
+function prepareYouTubeMacros(rawValue) {
+  const source = String(rawValue || "");
+  const embeds = [];
+  const renderedSource = source.replace(/\[youtube\(\s*([^,\)\]]+)\s*((?:,[^\)\]]*)?)\)\]/gi, (full, rawId, rawParams) => {
+    const videoId = String(rawId || "").trim();
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return full;
+    const params = String(rawParams || "").replace(/^\s*,\s*/, "");
+    const marker = "KPOPARKIVE_YOUTUBE_" + crypto.createHash("sha1").update(full + ":" + embeds.length).digest("hex").slice(0, 16);
+    embeds.push({ marker, videoId, params, source: full });
+    return marker;
+  });
+  return { renderedSource, embeds };
+}
+
+function youtubeIframeHtml(item) {
+  const params = new URLSearchParams();
+  for (const piece of String(item?.params || "").split(",")) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    const equals = trimmed.indexOf("=");
+    if (equals < 0) continue;
+    const key = trimmed.slice(0, equals).trim().toLowerCase();
+    const value = trimmed.slice(equals + 1).trim();
+    if (!value) continue;
+    if (key === "start" || key === "시작") params.set("start", value);
+    else if (key === "end" || key === "종료") params.set("end", value);
+  }
+  const query = params.toString();
+  const src = `https://www.youtube.com/embed/${item.videoId}${query ? `?${query}` : ""}`;
+  return `<iframe class="wiki-media" allowfullscreen width="640" height="360" frameborder="0" src="${src}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+}
+
+function injectYouTubeMacros(htmlValue, embeds) {
+  let html = String(htmlValue || "");
+  const injected = [];
+  for (const item of embeds || []) {
+    if (!html.includes(item.marker)) continue;
+    html = html.split(item.marker).join(youtubeIframeHtml(item));
+    injected.push(item.videoId);
+  }
+  return { html, injected };
+}
 function uniqueNormalizedStrings(values) {
   const output = [];
   const seen = new Set();
@@ -701,6 +743,9 @@ async function main() {
       templateFallbackReplacements = prepared.replacements;
     }
   }
+
+  const preparedYouTube = prepareYouTubeMacros(renderSource);
+  renderSource = preparedYouTube.renderedSource;
 
   // Assets are a global filename registry. A file captured while browsing any
   // NamuWiki document must be reusable by every other document that references
@@ -785,6 +830,9 @@ async function main() {
   let html = String(result?.html || "");
   if (html.length < 100) throw new Error(`The Tree returned only ${html.length} chars of HTML`);
 
+  const injectedYouTube = injectYouTubeMacros(html, preparedYouTube.embeds);
+  html = injectedYouTube.html;
+
   const injectedFallbacks = injectTemplateDomFallbacks(html, templateFallbackReplacements);
   html = injectedFallbacks.html;
 
@@ -809,6 +857,8 @@ async function main() {
     hasError: Boolean(result?.hasError),
     errorCode: result?.errorCode || null,
     links: Array.isArray(result?.links) ? result.links.length : 0,
+    youtubeMacros: preparedYouTube.embeds.map((item) => item.videoId),
+    youtubeEmbedsInjected: injectedYouTube.injected,
     files: requiredFiles.length,
     requiredFiles,
     missingFiles,
@@ -849,6 +899,7 @@ async function main() {
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
   console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} dom-fallback-templates=${meta.domFallbackTemplateCount} categories=${meta.categories} headings=${meta.headings}`);
+  console.log(`youtube-macros=${meta.youtubeMacros.length} youtube-injected=${meta.youtubeEmbedsInjected.length}`);
   if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
   if (injectedFallbacks.injected.length) console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
   if (fallbackTranslationQueue.length) console.log(`fallback-translation-queue: ${fallbackTranslationQueue.map((item) => `${item.templateTitle}:${item.translationStatus}${item.changed ? ":changed" : ""}`).join(" | ")}`);
