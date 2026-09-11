@@ -19,7 +19,9 @@ type DocRow = {
   source_namumark_engine: string | null;
   source_namumark_rendered_at: string | null;
   content_status: string;
+  content_revision_no: number | null;
   content_namumark_html: string | null;
+  content_namumark_meta: Record<string, any> | null;
   content_namumark_rendered_at: string | null;
   published_namumark_html: string | null;
 };
@@ -174,13 +176,13 @@ export default async function RawWikiPage({
 
   let docs = await db<DocRow[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at,published_namumark_html&limit=1`,
+      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=1`,
   );
 
   if (!docs[0]) {
     const candidates = await db<DocRow[]>(
       `source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(sourceTitle)}` +
-        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at&limit=5`,
+        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at&limit=5`,
     );
     const folded = normalizeWikiKey(sourceTitle).toLocaleLowerCase();
     const match = candidates.find(
@@ -207,10 +209,25 @@ export default async function RawWikiPage({
       .join("/")}`);
   }
 
+  const renderedDraftRevision = Number(source.content_namumark_meta?.editableContent?.revisionNo || 0) || 0;
+  const contentRevision = Number(source.content_revision_no || 0) || 0;
+  const hasCurrentDraft =
+    typeof source.content_namumark_html === "string" &&
+    source.content_namumark_html.length > 0 &&
+    contentRevision > 0 &&
+    renderedDraftRevision === contentRevision;
+  const isLocalDraftPreview = process.env.NODE_ENV !== "production";
+
   const publishedContentHtml =
     source.published_namumark_html ||
     (source.content_status === "published" ? source.content_namumark_html : null);
-  const exactHtml = publishedContentHtml || source.source_namumark_html;
+
+  // Local development is the approval surface: show the current rendered draft
+  // without promoting it to production. Production never reads an unpublished draft.
+  const exactHtml =
+    (isLocalDraftPreview && hasCurrentDraft ? source.content_namumark_html : null) ||
+    publishedContentHtml ||
+    source.source_namumark_html;
   if (!exactHtml) {
     return (
       <main className="kpoparkiveRawWikiMissing">
