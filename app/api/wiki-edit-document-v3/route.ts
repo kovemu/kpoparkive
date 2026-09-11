@@ -21,6 +21,8 @@ type SourceDocument = {
   content_wikitext: string | null;
   content_status: string;
   content_revision_no: number;
+  source_format: string | null;
+  source_fidelity_meta: Record<string, unknown> | null;
 };
 
 function headers(extra?: Record<string, string>) {
@@ -61,12 +63,15 @@ function normalizeTitle(value: string | null | undefined) {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      `&select=id,source_title,source_wikitext,content_wikitext,content_status,content_revision_no&limit=1`,
+      `&select=id,source_title,source_wikitext,content_wikitext,content_status,content_revision_no,source_format,source_fidelity_meta&limit=1`,
   );
   return rows[0] || null;
 }
 
 function publicWikitext(document: SourceDocument) {
+  const synthetic = document.source_format === "namumark-synthetic-dom";
+  const verified = String(document.source_fidelity_meta?.stage || "") === "verified";
+  if (synthetic && !verified) return "";
   if (document.content_status === "published" && document.content_wikitext) return document.content_wikitext;
   return document.source_wikitext || "";
 }
