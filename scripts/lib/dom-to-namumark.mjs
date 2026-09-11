@@ -339,6 +339,50 @@ function textTokenSimilarity(a, b) {
   return setSimilarity([...tokenize(a)], [...tokenize(b)]);
 }
 
+
+function ratioSimilarity(left, right) {
+  const a = Math.max(0, Number(left) || 0);
+  const b = Math.max(0, Number(right) || 0);
+  if (a === 0 && b === 0) return 1;
+  if (a === 0 || b === 0) return 0;
+  return Math.min(a, b) / Math.max(a, b);
+}
+
+export function compareDomFidelity(originalHtml, renderedHtml) {
+  const originalRoot = parseHtml(String(originalHtml || ""), { comment: false });
+  const renderedRoot = parseHtml(String(renderedHtml || ""), { comment: false });
+  const original = collectDomMetrics(originalRoot);
+  const rendered = collectDomMetrics(renderedRoot);
+
+  const detail = {
+    textTokenSimilarity: textTokenSimilarity(original.text, rendered.text),
+    linkSimilarity: setSimilarity(original.links, rendered.links),
+    imageSimilarity: setSimilarity(original.images, rendered.images),
+    youtubeSimilarity: setSimilarity(original.youtube, rendered.youtube),
+    tableSimilarity: ratioSimilarity(original.tables, rendered.tables),
+    rowSimilarity: ratioSimilarity(original.rows, rendered.rows),
+    cellSimilarity: ratioSimilarity(original.cells, rendered.cells),
+    foldingSimilarity: ratioSimilarity(original.foldings, rendered.foldings),
+    original,
+    rendered,
+  };
+
+  const score =
+    detail.textTokenSimilarity * 0.35 +
+    detail.linkSimilarity * 0.15 +
+    detail.imageSimilarity * 0.05 +
+    detail.youtubeSimilarity * 0.05 +
+    detail.tableSimilarity * 0.10 +
+    detail.rowSimilarity * 0.10 +
+    detail.cellSimilarity * 0.10 +
+    detail.foldingSimilarity * 0.10;
+
+  return {
+    ...detail,
+    score: Math.round(score * 10000) / 10000,
+  };
+}
+
 export function convertDomToNamuMark(htmlValue, options = {}) {
   const root = parseHtml(String(htmlValue || ""), { comment: false });
   const namumark = cleanupNamu(nodeToNamu(root, { title: options.title || "", language: options.language || "ko" }));
