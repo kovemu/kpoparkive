@@ -4,7 +4,8 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { MessageChannel } from "node:worker_threads";
-import { parse as parseHtml } from "node-html-parser";
+
+const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
 const ROOT_DIR = process.cwd();
 const THETREE_REPO = "https://github.com/wjdgustn/thetree.git";
