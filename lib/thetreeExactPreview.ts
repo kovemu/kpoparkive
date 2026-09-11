@@ -430,12 +430,18 @@ function makeVirtualWiki(rawRows: SourceRow[], assetRows: AssetRow[], targetTitl
   return { docs, histories, byFullTitle };
 }
 
-function translation(key: string) {
-  const known: Record<string, string> = {
-    "namumark.toc_title": "목차",
-    "namumark.heading_edit": "편집",
+function translation(key: string, language: "ko" | "en") {
+  const known: Record<"ko" | "en", Record<string, string>> = {
+    ko: {
+      "namumark.toc_title": "목차",
+      "namumark.heading_edit": "편집",
+    },
+    en: {
+      "namumark.toc_title": "Contents",
+      "namumark.heading_edit": "Edit",
+    },
   };
-  return known[key] || key;
+  return known[language][key] || key;
 }
 
 let sourceCache: { expiresAt: number; rows: SourceRow[] } | null = null;
@@ -463,7 +469,7 @@ async function getAssetRows(rootTitle: string) {
   return rows;
 }
 
-export async function renderExactNamuPreview(title: string, source: string) {
+export async function renderExactNamuPreview(title: string, source: string, language: "ko" | "en" = "ko") {
   const normalizedTitle = normalizeTitle(title);
   if (!normalizedTitle) throw new Error("title is required");
   if (!source.trim()) throw new Error("source is empty");
@@ -478,8 +484,9 @@ export async function renderExactNamuPreview(title: string, source: string) {
   const targetRev = virtualWiki.histories.find((item) => item.document === targetDoc?.uuid);
   if (!targetDoc || !targetRev) throw new Error(`Virtual The Tree document was not built for ${title}`);
 
+  const renderConfig = { ...config, lang: language };
   const require = createRequire(import.meta.url);
-  (globalThis as typeof globalThis & { config?: typeof config }).config = config;
+  (globalThis as typeof globalThis & { config?: typeof config }).config = renderConfig;
   const parser = require("thetree/utils/namumark/parser") as (source: string) => unknown;
   type PiscinaPool = {
     run: (task: unknown, options?: { transferList?: Transferable[] }) => Promise<unknown>;
@@ -507,7 +514,7 @@ export async function renderExactNamuPreview(title: string, source: string) {
   const parsed = parser(targetRev.content);
   const pool = new Piscina({
     filename: workerPath,
-    workerData: { config, macroPluginPaths: [] },
+    workerData: { config: renderConfig, macroPluginPaths: [] },
     minThreads: 1,
     maxThreads: 1,
   });
@@ -532,7 +539,7 @@ export async function renderExactNamuPreview(title: string, source: string) {
         return reply(msg.action === "countDocuments" ? 0 : []);
       }
       if (msg.type === "aclCheck") return reply({ result: true });
-      if (msg.type === "t") return reply(translation(msg.key || ""));
+      if (msg.type === "t") return reply(translation(msg.key || "", language));
       return reply(null);
     } catch {
       return reply(null);
@@ -545,7 +552,7 @@ export async function renderExactNamuPreview(title: string, source: string) {
     dbDocument: targetDoc,
     rev: targetRev,
     aclData: {},
-    config,
+    config: renderConfig,
     port: channel.port1,
     isInternal: false,
   };
