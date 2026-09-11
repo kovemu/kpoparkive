@@ -92,6 +92,15 @@ function formatJob(job) {
   if (job.paused && job.pauseReason) lines.push(`Pause reason: ${job.pauseReason}`);
   if (job.lastMedia) {
     lines.push(`Last media: ${job.lastMedia.resolved || 0} new · ${job.lastMedia.skippedKnown || 0} reused · ${job.lastMedia.failed || 0} failed`);
+    if (job.lastMedia.capturePolicy === "root-raw-only") {
+      lines.push(
+        `Render gaps: ${job.lastMedia.missingFiles || 0} files · ${job.lastMedia.missingTemplates || 0} templates`
+      );
+      const missingFiles = Array.isArray(job.lastMedia.missingFileNames) ? job.lastMedia.missingFileNames : [];
+      const missingTemplates = Array.isArray(job.lastMedia.missingTemplateNames) ? job.lastMedia.missingTemplateNames : [];
+      if (missingFiles.length) lines.push(`Missing files: ${missingFiles.join(" · ")}`);
+      if (missingTemplates.length) lines.push(`Missing templates: ${missingTemplates.join(" · ")}`);
+    }
   }
   if (job.running) lines.push("", "You can close this popup and use Chrome normally.");
   if (Array.isArray(job.errors) && job.errors.length) {
