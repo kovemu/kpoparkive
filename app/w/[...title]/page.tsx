@@ -165,7 +165,7 @@ function sourceTitleFromSegments(segments: string[]) {
 function visualEditorVersion(searchParams: SearchParams) {
   const raw = searchParams.ve;
   const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === "3" ? 3 : 2;
+  return value === "2" ? 2 : 3;
 }
 
 export default async function RawWikiPage({
