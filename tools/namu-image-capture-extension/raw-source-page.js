@@ -15,9 +15,34 @@ function kpopRawPageTitle() {
   return "";
 }
 
+function kpopNamuChallengeVisible() {
+  const selectors = [
+    'iframe[src*="challenges.cloudflare.com"]',
+    'iframe[src*="turnstile"]',
+    '.cf-turnstile',
+    '[data-sitekey][class*="turnstile" i]',
+    '[id*="cf-chl" i]',
+    '[class*="challenge-platform" i]',
+    'form[action*="challenge" i]'
+  ];
+  for (const selector of selectors) {
+    try {
+      if (document.querySelector(selector)) return true;
+    } catch {}
+  }
+
+  const title = String(document.title || "").trim();
+  if (/just a moment|attention required|잠시만 기다려|보안 확인/i.test(title)) return true;
+
+  const text = String(document.body?.innerText || "").replace(/\s+/g, " ").trim();
+  if (text.length > 0 && text.length < 2500) {
+    return /captcha|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i.test(text);
+  }
+  return false;
+}
+
 function kpopRawPageBlocked() {
-  const text = document.body?.innerText || "";
-  return /captcha|cloudflare|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i.test(text);
+  return kpopNamuChallengeVisible();
 }
 
 function kpopRawPageSignalScore(value) {
