@@ -305,7 +305,7 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   "    maxDepth, maxDocs, queue: [{ url: rootUrl, depth: 0, attempts: 0 }], seenUrls: [rootUrl],",
-  "    maxDepth, maxDocs, captureMode, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: policyRefresh }], seenUrls: [rootUrl],",
+  "    maxDepth, maxDocs, captureMode, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: captureMode === \"raw\" ? true : policyRefresh }], seenUrls: [rootUrl],",
   "root queue policy",
 );
 
