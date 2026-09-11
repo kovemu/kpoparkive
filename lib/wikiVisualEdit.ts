@@ -214,7 +214,13 @@ export function editorElementToWikitext(root: HTMLElement) {
       for (const child of Array.from(node.children)) {
         if (!(child instanceof HTMLElement) || child.tagName !== "LI") continue;
         const body = Array.from(child.childNodes).map(inlineNodeToWiki).join("").trim();
-        const prefix = child.dataset.wikiListPrefix || (node.tagName === "OL" ? "1." : "*");
+        const storedPrefix = child.dataset.wikiListPrefix || "";
+        const indent = storedPrefix.match(/^\s*/)?.[0] || "";
+        const storedIsOrdered = /^\s*1\.$/.test(storedPrefix);
+        const storedIsBullet = /^\s*\*$/.test(storedPrefix);
+        const prefix = node.tagName === "OL"
+          ? (storedIsOrdered ? storedPrefix : `${indent}1.`)
+          : (storedIsBullet ? storedPrefix : `${indent}*`);
         if (body) lines.push(`${prefix} ${body}`);
       }
       continue;
