@@ -108,6 +108,16 @@ async function runnerCaptureOneAssetWithRetry(prep, asset) {
   throw lastError || new Error("asset capture failed after retries");
 }
 
+async function runnerWaitForSourceRender(sourceTitle, timeoutMs = 180000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const status = await kpopRawStatus(sourceTitle);
+    if (status?.sourceRendered) return status;
+    await runnerWait(1200);
+  }
+  throw new Error(`Source render did not complete within ${Math.round(timeoutMs / 1000)}s for ${sourceTitle}`);
+}
+
 async function runnerCaptureAssets(prep) {
   const assets = (prep.assets || []).filter((asset) => !runnerAssetAlreadyKnown(asset));
   const result = {
@@ -160,6 +170,27 @@ async function runnerProcessTask(task) {
         sourceTitle,
       });
 
+      runnerSetStatus(
+        `RAW · ${sourceTitle}\nTemplates complete: ${raw.templatesCaptured || 0}\nResolving ${raw.requiredFiles?.length || 0} file dependencies…`
+      );
+
+      const assetJob = await rawAssetV2ResolveNow({
+        rootTitle: runnerRootTitle,
+        sourceTitle,
+        requiredFiles: raw.requiredFiles || [],
+      });
+
+      if (Number(assetJob?.remaining || 0) > 0 || Number(assetJob?.failed || 0) > 0) {
+        throw new Error(
+          `Raw assets incomplete for ${sourceTitle}: remaining=${assetJob?.remaining || 0}, failed=${assetJob?.failed || 0}`
+        );
+      }
+
+      runnerSetStatus(
+        `RAW · ${sourceTitle}\nTemplates complete: ${raw.templatesCaptured || 0}\nAssets complete: ${assetJob?.resolved || 0}\nWaiting for The Tree render…`
+      );
+      await runnerWaitForSourceRender(sourceTitle);
+
       await runnerJson("/clone/complete", {
         method: "POST",
         body: JSON.stringify({
@@ -167,9 +198,12 @@ async function runnerProcessTask(task) {
           sourceTitle: raw.sourceTitle,
           internalLinks: raw.internalLinks || [],
           media: {
-            resolved: 0,
-            skippedKnown: 0,
-            failed: 0,
+            resolved: Number(assetJob?.resolved || 0),
+            skippedKnown: Math.max(
+              0,
+              Number(assetJob?.required || 0) - Number(assetJob?.planned || 0),
+            ),
+            failed: Number(assetJob?.failed || 0),
             rawTemplates: raw.templatesCaptured || 0,
           },
         }),
@@ -179,6 +213,8 @@ async function runnerProcessTask(task) {
         ok: true,
         sourceTitle: raw.sourceTitle,
         rawTemplates: raw.templatesCaptured || 0,
+        assetsResolved: Number(assetJob?.resolved || 0),
+        rendered: true,
       };
     }
 
