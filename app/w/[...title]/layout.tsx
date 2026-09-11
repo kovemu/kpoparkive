@@ -1,6 +1,25 @@
 import type { ReactNode } from "react";
+import WikiShell from "../../../components/wiki/WikiShell";
+import "../shell.css";
 
-export default function WikiTitleLayout({ children }: { children: ReactNode }) {
+function sourceTitleFromSegments(segments: string[]) {
+  return segments
+    .map((segment) => decodeURIComponent(segment))
+    .join("/")
+    .normalize("NFKC")
+    .trim();
+}
+
+export default async function WikiTitleLayout({
+  children,
+  params,
+}: {
+  children: ReactNode;
+  params: Promise<{ title: string[] }>;
+}) {
+  const { title: segments } = await params;
+  const title = sourceTitleFromSegments(segments);
+
   return (
     <>
       <style>{`
@@ -39,7 +58,7 @@ export default function WikiTitleLayout({ children }: { children: ReactNode }) {
           transform: rotate(-45deg) !important;
         }
       `}</style>
-      {children}
+      <WikiShell title={title}>{children}</WikiShell>
     </>
   );
 }
