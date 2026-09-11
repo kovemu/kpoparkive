@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchVisualEditorV3Payload } from "./visualEditorV3PayloadClient";
 import { registerV3OperationProvider, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type InlineNode = { type: string; children?: InlineNode[] };
@@ -79,7 +80,7 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
+          const response = await fetchVisualEditorV3Payload(title, controller.signal);
           const payload = await response.json() as Payload;
           if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load source fallback AST");
           const items = (payload.ast?.blocks || []).filter((block) => {
