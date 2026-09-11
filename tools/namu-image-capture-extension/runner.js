@@ -174,7 +174,13 @@ async function runnerProcessTask(task) {
         `RAW · ${sourceTitle}\nRoot source saved\nIncludes referenced: ${raw.templatesDiscovered || 0}\nFiles referenced: ${raw.requiredFiles?.length || 0}\nUsing cached DOM/assets · waiting for The Tree render…`
       );
 
-      await runnerWaitForSourceRender(sourceTitle);
+      const rendered = await runnerWaitForSourceRender(sourceTitle);
+      const missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
+      const missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+
+      runnerSetStatus(
+        `RAW · ${sourceTitle}\nThe Tree render complete\nMissing files: ${missingFiles.length}\nMissing templates: ${missingTemplates.length}`
+      );
 
       await runnerJson("/clone/complete", {
         method: "POST",
@@ -188,6 +194,10 @@ async function runnerProcessTask(task) {
             failed: 0,
             rawTemplates: 0,
             includesReferenced: Number(raw.templatesDiscovered || 0),
+            missingFiles: missingFiles.length,
+            missingTemplates: missingTemplates.length,
+            missingFileNames: missingFiles.slice(0, 20),
+            missingTemplateNames: missingTemplates.slice(0, 20),
             capturePolicy: "root-raw-only",
           },
         }),
@@ -199,6 +209,8 @@ async function runnerProcessTask(task) {
         rawTemplates: 0,
         includesReferenced: Number(raw.templatesDiscovered || 0),
         assetsResolved: 0,
+        missingFiles,
+        missingTemplates,
         rendered: true,
         capturePolicy: "root-raw-only",
       };
