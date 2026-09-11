@@ -38,17 +38,18 @@
       <div>
         <label for="depth">Crawl depth</label>
         <select id="depth">
-          <option value="0">0 · root only</option>
-          <option value="1" selected>1 · direct links</option>
+          <option value="0" selected>0 · root only</option>
+          <option value="1">1 · direct links</option>
           <option value="2">2 · links of links</option>
           <option value="3">3 · broad crawl</option>
         </select>
       </div>
       <div>
         <label for="maxDocs">Max documents</label>
-        <input id="maxDocs" type="number" min="1" max="200" value="25" />
+        <input id="maxDocs" type="number" min="1" max="200" value="1" />
       </div>
     </div>
+    <p style="margin-top:8px">Depth controls linked documents only. Templates and required files for each page are always completed.</p>
     <button id="rawCrawl">Raw Crawl</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
