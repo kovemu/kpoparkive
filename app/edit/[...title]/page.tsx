@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "../../admin/editor/[...title]/editor.module.css";
-import { renderPublicNamuMarkPreview } from "./draftPreview";
 
 type EditorSnapshot = {
   content: string;
@@ -56,8 +55,6 @@ export default function PublicSourceEditorPage({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [previewSource, setPreviewSource] = useState("");
-  const [previewMode, setPreviewMode] = useState<"draft" | "public">("draft");
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +79,6 @@ export default function PublicSourceEditorPage({
         if (cancelled) return;
         setPayload(result);
         setContent(result.document.source);
-        setPreviewSource(result.document.source);
         undoStackRef.current = [];
         redoStackRef.current = [];
         setDirty(false);
@@ -106,11 +102,6 @@ export default function PublicSourceEditorPage({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, submitted]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setPreviewSource(content), 300);
-    return () => window.clearTimeout(timer);
-  }, [content]);
 
   function captureSnapshot(value = content): EditorSnapshot {
     const textarea = textareaRef.current;
@@ -231,7 +222,6 @@ export default function PublicSourceEditorPage({
     if (!payload || submitted) return;
     if (dirty && !window.confirm("Discard your unsaved changes and restore the current public source?")) return;
     setContent(payload.document.source);
-    setPreviewSource(payload.document.source);
     undoStackRef.current = [];
     redoStackRef.current = [];
     setSummary("");
@@ -240,8 +230,6 @@ export default function PublicSourceEditorPage({
   }
 
   const currentWikiPath = useMemo(() => wikiPath(title), [title]);
-  const draftPreviewHtml = useMemo(() => renderPublicNamuMarkPreview(previewSource), [previewSource]);
-  const previewPending = previewSource !== content;
 
   if (!payload) {
     return (
@@ -387,39 +375,10 @@ export default function PublicSourceEditorPage({
 
         <div className={styles.previewPane}>
           <div className={styles.paneTitle}>
-            <div className={styles.previewTitleGroup}>
-              <strong>{previewMode === "draft" ? "Draft preview" : "Current public page"}</strong>
-              <span>
-                {previewMode === "draft"
-                  ? (previewPending ? "Updating…" : "Reflects the source on the left")
-                  : "Live page before approval"}
-              </span>
-            </div>
-            <div className={styles.previewTabs}>
-              <button
-                type="button"
-                className={previewMode === "draft" ? styles.previewTabActive : styles.previewTab}
-                onClick={() => setPreviewMode("draft")}
-              >Draft</button>
-              <button
-                type="button"
-                className={previewMode === "public" ? styles.previewTabActive : styles.previewTab}
-                onClick={() => setPreviewMode("public")}
-              >Current public</button>
-            </div>
+            <strong>Current public page</strong>
+            <span>Exact The Tree render · live page before approval</span>
           </div>
-          {previewMode === "draft" ? (
-            <div
-              className={styles.draftPreview}
-              onClick={(event) => {
-                const target = event.target as Element | null;
-                if (target?.closest("a")) event.preventDefault();
-              }}
-              dangerouslySetInnerHTML={{ __html: draftPreviewHtml }}
-            />
-          ) : (
-            <iframe className={styles.publicPreviewFrame} title={`${title} current public page`} src={currentWikiPath} />
-          )}
+          <iframe className={styles.publicPreviewFrame} title={`${title} current public page`} src={currentWikiPath} />
         </div>
       </section>
     </main>
