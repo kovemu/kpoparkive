@@ -338,9 +338,12 @@ async function main() {
   const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
 
+  // Assets are a global filename registry. A file captured while browsing any
+  // NamuWiki document must be reusable by every other document that references
+  // the same [[파일:...]] title. Do not scope assets to target.root_title.
   const assetRows = await dbAll(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(target.root_title || title)}&asset_type=eq.image` +
-      "&select=id,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
+    "source_asset_queue?asset_type=eq.image&status=eq.resolved" +
+      "&select=id,root_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
   );
 
   const virtualWiki = makeVirtualWiki(rawRows || [], assetRows || []);
