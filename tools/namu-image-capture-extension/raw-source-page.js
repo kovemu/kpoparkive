@@ -61,9 +61,22 @@ function kpopRawPageCandidates() {
     );
   }
 
-  for (const selector of ["pre", "pre code", ".wiki-raw", "[data-raw]", "[class*='raw' i] pre"]) {
+  for (const selector of [
+    "pre",
+    "pre code",
+    "code",
+    ".wiki-raw",
+    "[data-raw]",
+    "[class*='raw' i] pre",
+    ".cm-content",
+    ".CodeMirror-code",
+    ".monaco-editor .view-lines"
+  ]) {
     for (const node of document.querySelectorAll(selector)) {
-      push(selector, node.innerText || node.textContent || "", true, 105);
+      const text = node.matches?.(".cm-content, .CodeMirror-code, .monaco-editor .view-lines")
+        ? [...node.querySelectorAll(".cm-line, .CodeMirror-line, .view-line")].map((line) => line.textContent || "").join("\n") || node.innerText || node.textContent || ""
+        : node.innerText || node.textContent || "";
+      push(selector, text, true, 105);
     }
   }
 
@@ -71,6 +84,11 @@ function kpopRawPageCandidates() {
     for (const node of document.querySelectorAll(selector)) {
       push(selector, node.innerText || node.textContent || "", false, 30);
     }
+  }
+
+  const bodyText = document.body?.innerText || document.body?.textContent || "";
+  if (kpopRawPageSignalScore(bodyText) >= 4) {
+    push("body-strong-namumark", bodyText, false, 5);
   }
 
   return values.sort((a, b) =>
