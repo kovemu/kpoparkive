@@ -405,7 +405,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
         } catch {}
       }
 
-      if (!verificationShown && Date.now() - started > 8000) {
+      if (!verificationShown && Date.now() - started > 2000) {
         verificationShown = true;
         try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
       }
