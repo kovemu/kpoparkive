@@ -126,6 +126,15 @@ async function fetchPending() {
   );
 }
 
+async function pendingDomFallbacks(sourceDocumentId) {
+  if (!sourceDocumentId) return [];
+  return db(
+    `template_dom_fallbacks?source_document_id=eq.${encodeURIComponent(sourceDocumentId)}` +
+      "&translation_status=eq.pending_chatgpt" +
+      "&select=id,template_title,updated_at&order=updated_at.asc&limit=50",
+  );
+}
+
 async function fetchRendered(id) {
   const rows = await db(
     `source_documents?id=eq.${encodeURIComponent(id)}` +
@@ -158,6 +167,8 @@ async function publish(row, expectedRevision) {
     throw new Error(`Rendered revision mismatch: html=r${renderedRevision}, content=r${row.content_revision_no}`);
   }
   if (meta?.hasError) throw new Error(`The Tree reported render error ${meta?.errorCode || "unknown"}`);
+  if (Number(meta?.missingTemplateCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingTemplateCount} missing template(s)`);
+  if (Number(meta?.missingFileCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingFileCount} missing file(s)`);
 
   const now = new Date().toISOString();
   await db(`source_documents?id=eq.${encodeURIComponent(row.id)}`, {
@@ -231,6 +242,15 @@ async function tick() {
       if (!title || !id || !revision) continue;
 
       try {
+        const pendingFallbacks = await pendingDomFallbacks(id);
+        if (pendingFallbacks?.length) {
+          console.log(
+            `ASSISTANT PUBLISH DEFERRED ${title}: waiting for DOM fallback translation ` +
+            pendingFallbacks.map((row) => row.template_title).join(" | "),
+          );
+          continue;
+        }
+
         await runRenderer(title);
         const rendered = await fetchRendered(id);
         await publish(rendered, revision);
