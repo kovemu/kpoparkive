@@ -329,7 +329,7 @@ async function rawSourceStatus(sourceTitle) {
     `source_documents?source=eq.namu_mirror` +
     `&source_title=eq.${encodeURIComponent(title)}` +
     `&source_wikitext=not.is.null&raw_extracted_at=not.is.null` +
-    `&select=id,source_title,root_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html` +
+    `&select=id,source_title,root_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html,source_namumark_meta` +
     `&order=raw_extracted_at.desc.nullslast&limit=1`,
   );
   const row = rows?.[0] || null;
@@ -340,6 +340,9 @@ async function rawSourceStatus(sourceTitle) {
     sourceRenderedAt: row?.source_namumark_rendered_at || null,
     sourceRendered: Boolean(row?.source_namumark_html && row?.source_namumark_rendered_at),
     translationStatus: row?.translation_status || null,
+    renderMeta: row?.source_namumark_meta || null,
+    missingFiles: Array.isArray(row?.source_namumark_meta?.missingFiles) ? row.source_namumark_meta.missingFiles : [],
+    missingTemplates: Array.isArray(row?.source_namumark_meta?.missingTemplates) ? row.source_namumark_meta.missingTemplates : [],
     raw: row?.source_wikitext || null,
   };
 }
