@@ -175,8 +175,8 @@ maxDocsInput.addEventListener("change", () => chrome.storage.local.set({ kpopark
 rawCrawlButton.addEventListener("click", async () => {
   const activeRoot = await syncRootFromActiveTab();
   const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
-  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
-  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 25) || 25));
+  const maxDepth = 0;
+  const maxDocs = 1;
 
   await chrome.storage.local.set({
     kpoparkiveRootTitle: rootTitle,
@@ -186,7 +186,7 @@ rawCrawlButton.addEventListener("click", async () => {
 
   rawCrawlButton.disabled = true;
   setStatus(
-    `Starting RAW crawl...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\n\nEach document captures only its own RAW source. Templates and assets are reused from the DOM/cache registry.`
+    `Capturing root RAW only...\nDocument: ${rootTitle}\n\nExactly one /raw/ page is read. No linked documents, templates, or file pages are opened.`
   );
 
   try {
