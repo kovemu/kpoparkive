@@ -31,12 +31,12 @@
 <body>
   <main>
     <h1>Kpoparkive Namu Import</h1>
-    <p>Raw NamuMark is the canonical source. Live fidelity comparison checks the current NamuWiki page directly against the The Tree render.</p>
+    <p>Raw NamuMark is the canonical source. The current NamuWiki page becomes the root automatically.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
     <div class="row">
       <div>
-        <label for="depth">Linked depth</label>
+        <label for="depth">Crawl depth</label>
         <select id="depth">
           <option value="0">0 · root only</option>
           <option value="1" selected>1 · direct links</option>
@@ -50,10 +50,10 @@
       </div>
     </div>
     <button id="rawCrawl">Raw Crawl</button>
-    <button id="raw" class="raw">Capture Raw + Templates</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
       <summary>Advanced / Debug</summary>
+      <button id="raw" class="raw">Capture Current Page Only</button>
       <button id="clone">Legacy DOM Import</button>
       <button id="assets" class="assets">Resolve Missing Raw Assets</button>
       <button id="compare" class="compare">Compare Live NamuWiki vs The Tree</button>
