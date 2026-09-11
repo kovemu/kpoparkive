@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 
 const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
-export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v1";
+export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v2";
 
 function normalizeText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/[\t\r\n ]+/g, " ").trim();
