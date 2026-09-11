@@ -24,7 +24,13 @@ type SourceDocument = {
   content_revision_no: number;
   content_updated_by: string | null;
   content_namumark_html: string | null;
+  content_namumark_meta: Record<string, unknown> | null;
+  content_namumark_engine: string | null;
+  content_namumark_engine_version: string | null;
   content_namumark_rendered_at: string | null;
+  published_revision_no: number | null;
+  published_namumark_html: string | null;
+  published_at: string | null;
   translation_status: string | null;
   translation_version: string | null;
   translated_at: string | null;
@@ -64,7 +70,7 @@ async function db<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      "&select=id,source_title,source_wikitext,raw_extracted_at,content_wikitext,content_language,content_revision_no,content_updated_by,content_namumark_html,content_namumark_rendered_at,translation_status,translation_version,translated_at&limit=1",
+      "&select=id,source_title,source_wikitext,raw_extracted_at,content_wikitext,content_language,content_revision_no,content_updated_by,content_namumark_html,content_namumark_meta,content_namumark_engine,content_namumark_engine_version,content_namumark_rendered_at,published_revision_no,published_namumark_html,published_at,translation_status,translation_version,translated_at&limit=1",
   );
   return rows[0] || null;
 }
@@ -174,15 +180,52 @@ export async function POST(request: Request) {
       document.content_namumark_html &&
       document.content_namumark_rendered_at
     ) {
+      if (
+        document.published_namumark_html &&
+        document.published_revision_no === document.content_revision_no
+      ) {
+        return NextResponse.json(
+          {
+            ok: true,
+            status: "unchanged",
+            title: document.source_title,
+            revisionNo: document.content_revision_no,
+            translationVersion: document.translation_version,
+            translatedAt: document.translated_at,
+            renderedAt: document.content_namumark_rendered_at,
+            publishedAt: document.published_at,
+          },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      }
+
+      const publishedAt = new Date().toISOString();
+      await patchDocument(document.id, {
+        content_status: "published",
+        published_content_wikitext: document.content_wikitext,
+        published_content_language: "en",
+        published_revision_no: document.content_revision_no,
+        published_namumark_html: document.content_namumark_html,
+        published_namumark_meta: document.content_namumark_meta,
+        published_namumark_engine:
+          document.content_namumark_engine || "thetree-exact-server",
+        published_namumark_engine_version:
+          document.content_namumark_engine_version || "v1",
+        published_at: publishedAt,
+      });
+
       return NextResponse.json(
         {
           ok: true,
-          status: "unchanged",
+          status: "published-existing-render",
           title: document.source_title,
           revisionNo: document.content_revision_no,
           translationVersion: document.translation_version,
           translatedAt: document.translated_at,
           renderedAt: document.content_namumark_rendered_at,
+          publishedAt,
+          contentLanguage: "en",
+          contentStatus: "published",
         },
         { headers: { "Cache-Control": "no-store" } },
       );
@@ -244,34 +287,46 @@ export async function POST(request: Request) {
     }
 
     const renderedAt = new Date().toISOString();
+    const publishedAt = renderedAt;
+    const renderMeta = {
+      exactRender: {
+        renderMs: rendered.renderMs,
+        links: rendered.links,
+        files: rendered.files,
+        headings: rendered.headings,
+        translationVersion:
+          document.translation_version || namuMarkTranslationVersion,
+        source: "content_wikitext",
+      },
+    };
+
     await patchDocument(document.id, {
       content_namumark_html: rendered.html,
-      content_namumark_meta: {
-        exactRender: {
-          renderMs: rendered.renderMs,
-          links: rendered.links,
-          files: rendered.files,
-          headings: rendered.headings,
-          translationVersion:
-            document.translation_version || namuMarkTranslationVersion,
-          source: "content_wikitext",
-        },
-      },
+      content_namumark_meta: renderMeta,
       content_namumark_engine: "thetree-exact-server",
       content_namumark_engine_version: "v1",
       content_namumark_rendered_at: renderedAt,
-      content_status: "draft",
+      content_status: "published",
+      published_content_wikitext: englishWikitext,
+      published_content_language: "en",
+      published_revision_no: revisionNo,
+      published_namumark_html: rendered.html,
+      published_namumark_meta: renderMeta,
+      published_namumark_engine: "thetree-exact-server",
+      published_namumark_engine_version: "v1",
+      published_at: publishedAt,
     });
 
     return NextResponse.json(
       {
         ok: true,
-        status: translationCurrent ? "rendered" : "translated-rendered",
+        status: translationCurrent ? "rendered-published" : "translated-rendered-published",
         title: document.source_title,
         revisionNo,
         revisionUpdatedAt,
         translatedAt,
         renderedAt,
+        publishedAt,
         model,
         translationVersion:
           document.translation_version || namuMarkTranslationVersion,
@@ -283,8 +338,8 @@ export async function POST(request: Request) {
         files: rendered.files,
         headings: rendered.headings,
         contentLanguage: "en",
-        contentStatus: "draft",
-        next: "publish",
+        contentStatus: "published",
+        next: "capture-pipeline",
       },
       {
         headers: {
