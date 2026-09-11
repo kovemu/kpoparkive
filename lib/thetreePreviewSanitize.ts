@@ -9,6 +9,35 @@ function rewriteHref(href: string, title: string) {
   return href;
 }
 
+function normalizeTooltipText(value: string) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function localizeLinkTooltips(root: any) {
+  for (const anchor of root.querySelectorAll("a[href]")) {
+    const visible = normalizeTooltipText(anchor.text || anchor.innerText || "");
+    const aria = normalizeTooltipText(anchor.getAttribute("aria-label") || "");
+    const tooltip =
+      visible && !/[가-힣]/.test(visible)
+        ? visible
+        : aria && !/[가-힣]/.test(aria)
+          ? aria
+          : "";
+
+    if (tooltip) {
+      anchor.setAttribute("title", tooltip);
+      anchor.setAttribute("aria-label", tooltip);
+    } else if (/[가-힣]/.test(anchor.getAttribute("title") || "")) {
+      anchor.removeAttribute("title");
+    }
+  }
+}
+
 /**
  * Final safety pass for HTML emitted by the pinned The Tree renderer.
  * It intentionally does not redesign or re-render markup: only executable
@@ -29,6 +58,8 @@ export function sanitizeExactPreviewHtml(html: string, title: string) {
     if (/^javascript:/i.test(href)) node.removeAttribute("href");
     else if (href) node.setAttribute("href", rewriteHref(href, title));
   }
+
+  localizeLinkTooltips(root);
 
   return root.querySelector("#kpop-preview-root")?.innerHTML || "";
 }
