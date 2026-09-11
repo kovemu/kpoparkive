@@ -289,10 +289,20 @@ function extractAssets() {
   };
 }
 
+function kpopNamuVerificationBlocked() {
+  return /captcha|cloudflare|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i
+    .test(document.body?.innerText || "");
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "kpoparkive-detect-namu-verification") {
+    sendResponse({ ok: true, blocked: kpopNamuVerificationBlocked() });
+    return;
+  }
+
   if (message?.type !== "kpoparkive-extract-namu-images") return;
   try {
-    sendResponse({ ok: true, ...extractAssets() });
+    sendResponse({ ok: true, blocked: kpopNamuVerificationBlocked(), ...extractAssets() });
   } catch (error) {
     sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
