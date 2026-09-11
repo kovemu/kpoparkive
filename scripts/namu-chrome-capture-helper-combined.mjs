@@ -119,9 +119,16 @@ const stats = {
   documentErrors: 0,
   proxiedAssets: 0,
   proxyErrors: 0,
+  translationQueued: 0,
+  translationCompleted: 0,
+  translationFailed: 0,
+  translationActive: false,
+  translationLastTitle: "",
+  translationLastError: "",
 };
 
 let aiTranslationSerial = Promise.resolve();
+const aiTranslationQueuedTitles = new Set();
 
 function runAiTranslation(sourceTitle) {
   return new Promise((resolve, reject) => {
@@ -140,18 +147,41 @@ function runAiTranslation(sourceTitle) {
 
 function queueAiTranslation(sourceTitle) {
   if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_AI_API_KEY) {
-    console.warn(`AI TRANSLATION NOT QUEUED ${sourceTitle}: GEMINI_API_KEY is missing`);
+    const message = "GEMINI_API_KEY or GOOGLE_AI_API_KEY is missing";
+    stats.translationLastTitle = sourceTitle;
+    stats.translationLastError = message;
+    console.warn(`AI TRANSLATION NOT QUEUED ${sourceTitle}: ${message}`);
     return false;
   }
+
+  if (aiTranslationQueuedTitles.has(sourceTitle)) {
+    console.log(`AI TRANSLATION ALREADY QUEUED ${sourceTitle}`);
+    return true;
+  }
+
+  aiTranslationQueuedTitles.add(sourceTitle);
+  stats.translationQueued += 1;
 
   aiTranslationSerial = aiTranslationSerial
     .catch(() => {})
     .then(async () => {
+      stats.translationActive = true;
+      stats.translationLastTitle = sourceTitle;
+      stats.translationLastError = "";
       console.log(`AI TRANSLATION QUEUE START ${sourceTitle}`);
-      await runAiTranslation(sourceTitle);
-    })
-    .catch((error) => {
-      console.error(`AI TRANSLATION QUEUE FAILED ${sourceTitle}: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        await runAiTranslation(sourceTitle);
+        stats.translationCompleted += 1;
+        console.log(`AI TRANSLATION QUEUE COMPLETE ${sourceTitle}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        stats.translationFailed += 1;
+        stats.translationLastError = message;
+        console.error(`AI TRANSLATION QUEUE FAILED ${sourceTitle}: ${message}`);
+      } finally {
+        stats.translationActive = false;
+        aiTranslationQueuedTitles.delete(sourceTitle);
+      }
     });
   return true;
 }
@@ -294,6 +324,17 @@ async function saveRawSource(payload) {
   const bytes = Buffer.byteLength(raw, "utf8");
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
   const translationQueued = shouldAutoTranslate ? queueAiTranslation(sourceTitle) : false;
+  if (shouldAutoTranslate && !translationQueued) {
+    await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        translation_status: "failed",
+        updated_at: new Date().toISOString(),
+      }),
+    });
+  }
+
   return {
     ok: true,
     sourceTitle,
