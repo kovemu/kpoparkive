@@ -48,6 +48,7 @@ function withContentColumns(rawUrl) {
   fields.add("content_wikitext");
   fields.add("content_revision_no");
   fields.add("content_language");
+  fields.add("content_status");
   url.searchParams.set("select", [...fields].join(","));
   return url.toString();
 }
@@ -78,14 +79,17 @@ globalThis.fetch = async (input, init = undefined) => {
       const hasEditableContent = typeof row?.content_wikitext === "string" && row.content_wikitext.length > 0;
       if (isTarget) {
         targetRevisionNo = Number(row?.content_revision_no || 0) || 0;
-        if (!hasEditableContent) {
-          return { ...row, source_wikitext: null };
-        }
+        return {
+          ...row,
+          source_wikitext: hasEditableContent ? row.content_wikitext : null,
+        };
       }
 
       return {
         ...row,
-        source_wikitext: hasEditableContent ? row.content_wikitext : row.source_wikitext,
+        source_wikitext: row?.content_status === "published" && hasEditableContent
+          ? row.content_wikitext
+          : row.source_wikitext,
       };
     });
 
@@ -138,5 +142,6 @@ globalThis.fetch = async (input, init = undefined) => {
 };
 
 process.env.KPOPARKIVE_RENDER_CONTENT = "1";
+process.env.KPOPARKIVE_RENDER_LANGUAGE = "en";
 console.log(`Kpoparkive editable-content render: ${targetTitle}`);
 await import("./namumark-thetree-compat-poc.mjs");
