@@ -112,10 +112,17 @@ async function runnerWaitForSourceRender(sourceTitle, timeoutMs = 180000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const status = await kpopRawStatus(sourceTitle);
-    if (status?.sourceRendered) return status;
+    const rawAt = Date.parse(status?.rawExtractedAt || "");
+    const renderedAt = Date.parse(status?.sourceRenderedAt || "");
+    const freshRender = Boolean(
+      status?.sourceRendered &&
+      Number.isFinite(renderedAt) &&
+      (!Number.isFinite(rawAt) || renderedAt >= rawAt)
+    );
+    if (freshRender) return status;
     await runnerWait(1200);
   }
-  throw new Error(`Source render did not complete within ${Math.round(timeoutMs / 1000)}s for ${sourceTitle}`);
+  throw new Error(`Fresh source render did not complete within ${Math.round(timeoutMs / 1000)}s for ${sourceTitle}`);
 }
 
 async function runnerCaptureAssets(prep) {
