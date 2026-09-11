@@ -164,6 +164,8 @@ function kpopSetStatus(text, kind = "wait") {
   badge.style.background = kind === "ok" ? "#0b7a3b" : kind === "bad" ? "#a12626" : kind === "warn" ? "#9a5b00" : "#3b2d63";
 }
 
+let kpopReportedVerificationTitle = "";
+
 function kpopExtractEditSource() {
   const sourceTitle = kpopSourceTitleFromPage();
   const expected = kpopExpectedEditorStats();
@@ -178,6 +180,17 @@ function kpopExtractEditSource() {
 
   if (blocked) {
     kpopSetStatus(`Kpoparkive RAW: ${sourceTitle}\nNamuWiki verification detected.\nComplete the verification, then leave this tab open.`, "warn");
+    if (kpopReportedVerificationTitle !== sourceTitle) {
+      kpopReportedVerificationTitle = sourceTitle;
+      try {
+        chrome.runtime.sendMessage({
+          type: "kpoparkive-verification-detected",
+          sourceTitle,
+        }).catch(() => {});
+      } catch {}
+    }
+  } else if (kpopReportedVerificationTitle) {
+    kpopReportedVerificationTitle = "";
   }
 
   const isTemplate = /^틀:/i.test(sourceTitle);
