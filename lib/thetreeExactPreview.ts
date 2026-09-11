@@ -2,6 +2,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { MessageChannel } from "node:worker_threads";
+import { stripNamuOperationalSource } from "./namuOperationalNotices";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -346,7 +347,7 @@ function expandMissingYouTubeIconIncludes(source: string) {
 }
 
 function applyCompatibility(raw: string, expandYouTubeIcon: boolean) {
-  const source = String(raw || "").replace(/\r\n?/g, "\n");
+  const source = stripNamuOperationalSource(String(raw || "")).replace(/\r\n?/g, "\n");
   const whitespaceNormalized = normalizeStructuralNbsp(source);
   const targetNormalized = normalizeFileLinkTargets(whitespaceNormalized);
   let lines = stripModernCommentBlocks(targetNormalized.split("\n"));
