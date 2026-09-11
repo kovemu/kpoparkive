@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "../../admin/editor/[...title]/editor.module.css";
+import { renderPublicNamuMarkPreview } from "./draftPreview";
+
+type EditorSnapshot = {
+  content: string;
+  selectionStart: number;
+  selectionEnd: number;
+  scrollTop: number;
+  scrollLeft: number;
+};
 
 type PublicSourcePayload = {
   ok: true;
@@ -34,6 +43,9 @@ export default function PublicSourceEditorPage({
   params: Promise<{ title: string[] }>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const undoStackRef = useRef<EditorSnapshot[]>([]);
+  const redoStackRef = useRef<EditorSnapshot[]>([]);
+  const composingRef = useRef(false);
   const [title, setTitle] = useState("");
   const [payload, setPayload] = useState<PublicSourcePayload | null>(null);
   const [content, setContent] = useState("");
@@ -44,6 +56,8 @@ export default function PublicSourceEditorPage({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [previewSource, setPreviewSource] = useState("");
+  const [previewMode, setPreviewMode] = useState<"draft" | "public">("draft");
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +82,9 @@ export default function PublicSourceEditorPage({
         if (cancelled) return;
         setPayload(result);
         setContent(result.document.source);
+        setPreviewSource(result.document.source);
+        undoStackRef.current = [];
+        redoStackRef.current = [];
         setDirty(false);
         setSubmitted(false);
         setStatus("Ready. Edit the full NamuMark source and submit it for review.");
@@ -90,19 +107,88 @@ export default function PublicSourceEditorPage({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, submitted]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPreviewSource(content), 300);
+    return () => window.clearTimeout(timer);
+  }, [content]);
+
+  function captureSnapshot(value = content): EditorSnapshot {
+    const textarea = textareaRef.current;
+    return {
+      content: value,
+      selectionStart: Math.min(textarea?.selectionStart || 0, value.length),
+      selectionEnd: Math.min(textarea?.selectionEnd || 0, value.length),
+      scrollTop: textarea?.scrollTop || 0,
+      scrollLeft: textarea?.scrollLeft || 0,
+    };
+  }
+
+  function pushUndo(snapshot = captureSnapshot()) {
+    undoStackRef.current.push(snapshot);
+    if (undoStackRef.current.length > 250) undoStackRef.current.shift();
+    redoStackRef.current = [];
+  }
+
+  function restoreSnapshot(snapshot: EditorSnapshot, message: string) {
+    const viewportX = window.scrollX;
+    const viewportY = window.scrollY;
+    setContent(snapshot.content);
+    setDirty(snapshot.content !== payload?.document.source);
+    setStatus(message);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(
+        Math.min(snapshot.selectionStart, snapshot.content.length),
+        Math.min(snapshot.selectionEnd, snapshot.content.length),
+      );
+      textarea.scrollTop = snapshot.scrollTop;
+      textarea.scrollLeft = snapshot.scrollLeft;
+      window.scrollTo(viewportX, viewportY);
+    });
+  }
+
+  function undo() {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current.push(captureSnapshot());
+    restoreSnapshot(previous, "Undo");
+  }
+
+  function redo() {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push(captureSnapshot());
+    restoreSnapshot(next, "Redo");
+  }
+
   function insertSyntax(before: string, after = "", placeholder = "text") {
     const textarea = textareaRef.current;
     if (!textarea || submitted) return;
+
+    const viewportX = window.scrollX;
+    const viewportY = window.scrollY;
+    const scrollTop = textarea.scrollTop;
+    const scrollLeft = textarea.scrollLeft;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const selected = content.slice(start, end) || placeholder;
     const next = `${content.slice(0, start)}${before}${selected}${after}${content.slice(end)}`;
+
+    pushUndo(captureSnapshot(content));
     setContent(next);
     setDirty(next !== payload?.document.source);
+
     requestAnimationFrame(() => {
-      textarea.focus();
+      const current = textareaRef.current;
+      if (!current) return;
+      current.focus({ preventScroll: true });
       const cursorStart = start + before.length;
-      textarea.setSelectionRange(cursorStart, cursorStart + selected.length);
+      current.setSelectionRange(cursorStart, cursorStart + selected.length);
+      current.scrollTop = scrollTop;
+      current.scrollLeft = scrollLeft;
+      window.scrollTo(viewportX, viewportY);
     });
   }
 
@@ -145,12 +231,17 @@ export default function PublicSourceEditorPage({
     if (!payload || submitted) return;
     if (dirty && !window.confirm("Discard your unsaved changes and restore the current public source?")) return;
     setContent(payload.document.source);
+    setPreviewSource(payload.document.source);
+    undoStackRef.current = [];
+    redoStackRef.current = [];
     setSummary("");
     setDirty(false);
     setStatus("Restored current public source.");
   }
 
   const currentWikiPath = useMemo(() => wikiPath(title), [title]);
+  const draftPreviewHtml = useMemo(() => renderPublicNamuMarkPreview(previewSource), [previewSource]);
+  const previewPending = previewSource !== content;
 
   if (!payload) {
     return (
@@ -200,15 +291,15 @@ export default function PublicSourceEditorPage({
       <section className={styles.workspace}>
         <div className={styles.editorPane}>
           <div className={styles.toolbar}>
-            <button type="button" onClick={() => insertSyntax("'''", "'''", "bold")} disabled={submitted}>B</button>
-            <button type="button" onClick={() => insertSyntax("''", "''", "italic")} disabled={submitted}>I</button>
-            <button type="button" onClick={() => insertSyntax("== ", " ==", "Heading")} disabled={submitted}>H2</button>
-            <button type="button" onClick={() => insertSyntax("=== ", " ===", "Subheading")} disabled={submitted}>H3</button>
-            <button type="button" onClick={() => insertSyntax("[[", "]]", "Target|Label")} disabled={submitted}>Link</button>
-            <button type="button" onClick={() => insertSyntax("[[파일:", "|width=100%]]", "File name")} disabled={submitted}>File</button>
-            <button type="button" onClick={() => insertSyntax("[* ", "]", "footnote")} disabled={submitted}>Footnote</button>
-            <button type="button" onClick={() => insertSyntax("[youtube(", ")]", "VIDEO_ID")} disabled={submitted}>YouTube</button>
-            <button type="button" onClick={() => insertSyntax("|| ", " ||", "cell 1 || cell 2")} disabled={submitted}>Table</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("'''", "'''", "bold")} disabled={submitted}>B</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("''", "''", "italic")} disabled={submitted}>I</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("== ", " ==", "Heading")} disabled={submitted}>H2</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("=== ", " ===", "Subheading")} disabled={submitted}>H3</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[[", "]]", "Target|Label")} disabled={submitted}>Link</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[[파일:", "|width=100%]]", "File name")} disabled={submitted}>File</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[* ", "]", "footnote")} disabled={submitted}>Footnote</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("[youtube(", ")]", "VIDEO_ID")} disabled={submitted}>YouTube</button>
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSyntax("|| ", " ||", "cell 1 || cell 2")} disabled={submitted}>Table</button>
           </div>
 
           <textarea
@@ -217,8 +308,30 @@ export default function PublicSourceEditorPage({
             spellCheck={false}
             value={content}
             readOnly={submitted}
+            onCompositionStart={() => {
+              if (composingRef.current) return;
+              pushUndo(captureSnapshot(content));
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onKeyDown={(event) => {
+              const modifier = event.ctrlKey || event.metaKey;
+              if (modifier && event.key.toLowerCase() === "z") {
+                event.preventDefault();
+                if (event.shiftKey) redo();
+                else undo();
+                return;
+              }
+              if (modifier && event.key.toLowerCase() === "y") {
+                event.preventDefault();
+                redo();
+              }
+            }}
             onChange={(event) => {
               const next = event.target.value;
+              if (!composingRef.current) pushUndo(captureSnapshot(content));
               setContent(next);
               setDirty(next !== payload.document.source);
             }}
@@ -274,10 +387,39 @@ export default function PublicSourceEditorPage({
 
         <div className={styles.previewPane}>
           <div className={styles.paneTitle}>
-            <strong>Current public page</strong>
-            <span>The live page does not change until approval</span>
+            <div className={styles.previewTitleGroup}>
+              <strong>{previewMode === "draft" ? "Draft preview" : "Current public page"}</strong>
+              <span>
+                {previewMode === "draft"
+                  ? (previewPending ? "Updating…" : "Reflects the source on the left")
+                  : "Live page before approval"}
+              </span>
+            </div>
+            <div className={styles.previewTabs}>
+              <button
+                type="button"
+                className={previewMode === "draft" ? styles.previewTabActive : styles.previewTab}
+                onClick={() => setPreviewMode("draft")}
+              >Draft</button>
+              <button
+                type="button"
+                className={previewMode === "public" ? styles.previewTabActive : styles.previewTab}
+                onClick={() => setPreviewMode("public")}
+              >Current public</button>
+            </div>
           </div>
-          <iframe title={`${title} current public page`} src={currentWikiPath} />
+          {previewMode === "draft" ? (
+            <div
+              className={styles.draftPreview}
+              onClick={(event) => {
+                const target = event.target as Element | null;
+                if (target?.closest("a")) event.preventDefault();
+              }}
+              dangerouslySetInnerHTML={{ __html: draftPreviewHtml }}
+            />
+          ) : (
+            <iframe className={styles.publicPreviewFrame} title={`${title} current public page`} src={currentWikiPath} />
+          )}
         </div>
       </section>
     </main>
