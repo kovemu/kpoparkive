@@ -192,11 +192,12 @@ export default function VisualEditorV3TableStyleBridge({ title }: { title: strin
         const layout = document.getElementById("kpoparkive-ve3-table-layout-button");
         (layout || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", button);
       }
-      button.textContent = `Cell style${dirtyCount ? ` (${dirtyCount})` : ""}`;
+      const nextLabel = `Cell style${dirtyCount ? ` (${dirtyCount})` : ""}`;
+      if (button.textContent !== nextLabel) button.textContent = nextLabel;
       button.disabled = !items.length;
     };
-    ensure(); const observer = new MutationObserver(ensure); observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); remove(); };
+    ensure(); const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); remove(); };
   }, [editing, items, dirtyCount]);
 
   const update = (patch: Partial<Draft>) => {

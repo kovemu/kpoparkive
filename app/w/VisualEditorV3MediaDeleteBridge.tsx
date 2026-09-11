@@ -179,13 +179,13 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
         const mediaButton = document.getElementById("kpoparkive-ve3-media-button");
         (mediaButton || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", button);
       }
-      button.textContent = selected && deleted.includes(mediaKey(selected)) ? "Undo media delete" : `Remove media${deleted.length ? ` (${deleted.length})` : ""}`;
+      const nextLabel = selected && deleted.includes(mediaKey(selected)) ? "Undo media delete" : `Remove media${deleted.length ? ` (${deleted.length})` : ""}`;
+      if (button.textContent !== nextLabel) button.textContent = nextLabel;
       button.disabled = !items.length;
     };
     ensure();
-    const observer = new MutationObserver(ensure);
-    observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); remove(); };
+    const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); remove(); };
   }, [editing, items.length, selected, selectedKey, deleted]);
 
   return null;

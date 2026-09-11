@@ -119,13 +119,13 @@ export default function VisualEditorV3SourceFallbackBridge({ title }: { title: s
         const structure = document.getElementById("kpoparkive-ve3-structure-button");
         (structure || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", button);
       }
-      button.textContent = `Source${dirty ? ` (${dirty})` : ""}`;
+      const nextLabel = `Source${dirty ? ` (${dirty})` : ""}`;
+      if (button.textContent !== nextLabel) button.textContent = nextLabel;
       button.disabled = !blocks.length;
     };
     ensure();
-    const observer = new MutationObserver(ensure);
-    observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); remove(); };
+    const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); remove(); };
   }, [editing, blocks.length, dirty]);
 
   const reveal = () => {

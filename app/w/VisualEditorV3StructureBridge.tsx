@@ -200,7 +200,8 @@ export default function VisualEditorV3StructureBridge({ title }: { title: string
         const templates = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent?.trim() === "Templates");
         (templates || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", insert);
       }
-      insert.textContent = `Insert${pendingInserts.length ? ` (${pendingInserts.length})` : ""}`;
+      const insertLabel = `Insert${pendingInserts.length ? ` (${pendingInserts.length})` : ""}`;
+      if (insert.textContent !== insertLabel) insert.textContent = insertLabel;
 
       let removeButton = document.getElementById(DELETE_BUTTON_ID) as HTMLButtonElement | null;
       if (!removeButton) {
@@ -214,11 +215,12 @@ export default function VisualEditorV3StructureBridge({ title }: { title: string
         });
         insert.insertAdjacentElement("afterend", removeButton);
       }
-      removeButton.textContent = pendingDeletes.length ? `Delete (${pendingDeletes.length})` : "Delete block";
+      const deleteLabel = pendingDeletes.length ? `Delete (${pendingDeletes.length})` : "Delete block";
+      if (removeButton.textContent !== deleteLabel) removeButton.textContent = deleteLabel;
     };
     ensure();
-    const observer = new MutationObserver(ensure); observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); remove(); };
+    const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); remove(); };
   }, [editing, blocks, pendingInserts.length, pendingDeletes.length]);
 
   const addInsert = () => {

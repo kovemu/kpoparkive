@@ -356,12 +356,12 @@ export default function VisualEditorV3MediaBridge({ title }: { title: string }) 
         (templates || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", button);
       }
       button.disabled = !items.length;
-      button.textContent = `Media (${items.length}${dirtyCount ? ` · ${dirtyCount}*` : ""})`;
+      const nextLabel = `Media (${items.length}${dirtyCount ? ` · ${dirtyCount}*` : ""})`;
+      if (button.textContent !== nextLabel) button.textContent = nextLabel;
     };
     ensure();
-    const observer = new MutationObserver(ensure);
-    observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); remove(); };
+    const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensure, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); remove(); };
   }, [editing, items.length, dirtyCount]);
 
   const updateDraft = (key: string, updater: (draft: MediaDraft) => MediaDraft) => {

@@ -241,11 +241,12 @@ export default function VisualEditorV3FootnoteBridge({ title }: { title: string 
         (templates || toolbar.querySelector("strong"))?.insertAdjacentElement("afterend", button);
       }
       button.disabled = !footnotes.length;
-      button.textContent = `Footnotes (${footnotes.length}${dirtyCount ? ` · ${dirtyCount}*` : ""})`;
+      const nextLabel = `Footnotes (${footnotes.length}${dirtyCount ? ` · ${dirtyCount}*` : ""})`;
+      if (button.textContent !== nextLabel) button.textContent = nextLabel;
     };
     ensureButtons();
-    const observer = new MutationObserver(ensureButtons); observer.observe(document.body, { subtree: true, childList: true });
-    return () => { observer.disconnect(); removeButtons(); };
+    const timers = [16, 80, 200, 500].map((delay) => window.setTimeout(ensureButtons, delay));
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); removeButtons(); };
   }, [editing, footnotes.length, dirtyCount]);
 
   const updateBody = (footnote: V3Footnote, body: string) => {

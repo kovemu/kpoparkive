@@ -78,9 +78,9 @@ export default function VisualEditorV3TableLayoutBridgeV2({ title }: { title: st
       const toolbar = document.querySelector<HTMLElement>(".kpoparkiveAstToolbar"); if (!toolbar) return;
       let button = document.getElementById(BUTTON) as HTMLButtonElement | null;
       if (!button) { button=document.createElement("button"); button.id=BUTTON; button.type="button"; button.title="Edit table rows and columns"; button.addEventListener("mousedown",e=>e.preventDefault()); button.addEventListener("click",()=>{const active=activeTableId(); if(active&&items.some(item=>item.nodeId===active))setSelectedId(active); setOpen(v=>!v);}); const structure=document.getElementById("kpoparkive-ve3-structure-button"); (structure||toolbar.querySelector("strong"))?.insertAdjacentElement("afterend",button); }
-      button.textContent=`Table layout${dirty?` (${dirty})`:""}`; button.disabled=!items.length;
+      const nextLabel=`Table layout${dirty?` (${dirty})`:""}`; if(button.textContent!==nextLabel)button.textContent=nextLabel; button.disabled=!items.length;
     };
-    ensure(); const observer=new MutationObserver(ensure); observer.observe(document.body,{subtree:true,childList:true}); return()=>{observer.disconnect();remove();};
+    ensure(); const timers=[16,80,200,500].map((delay)=>window.setTimeout(ensure,delay)); return()=>{timers.forEach((timer)=>window.clearTimeout(timer));remove();};
   },[editing,items,dirty]);
 
   const act = (action:NamuTableLayoutAction) => {
