@@ -198,7 +198,17 @@ async function buildPlan(payload) {
   if (!doc) throw new Error(`No raw source_document found for ${sourceTitle}`);
 
   const rootTitle = String(payload?.rootTitle || doc.root_title || sourceTitle).normalize("NFKC").trim() || sourceTitle;
-  const required = requiredFilesForDocument(doc);
+  const requiredMap = new Map();
+  for (const item of requiredFilesForDocument(doc)) {
+    requiredMap.set(item.key, item);
+  }
+  for (const rawRef of Array.isArray(payload?.requiredFiles) ? payload.requiredFiles : []) {
+    const fileName = displayFileName(rawRef);
+    const key = canonicalFileKey(fileName);
+    if (!fileName || !key) continue;
+    requiredMap.set(key, { key, fileName, sourceRef: `파일:${fileName}` });
+  }
+  const required = [...requiredMap.values()];
   if (!required.length) {
     return { ok: true, rootTitle, sourceTitle: doc.source_title, requiredCount: 0, resolvedCount: 0, missingCount: 0, requiredFiles: [], resolvedFiles: [], missingFiles: [], warning: "No requiredFiles metadata is available yet. Run the The Tree render once first." };
   }
