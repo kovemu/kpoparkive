@@ -186,7 +186,7 @@ rawCrawlButton.addEventListener("click", async () => {
 
   rawCrawlButton.disabled = true;
   setStatus(
-    `Starting RAW crawl...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\n\nVerification pauses the entire queue and brings the challenge tab forward.`
+    `Starting RAW crawl...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\n\nEach document captures only its own RAW source. Templates and assets are reused from the DOM/cache registry.`
   );
 
   try {
@@ -238,9 +238,9 @@ rawButton.addEventListener("click", async () => {
   const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
   rawButton.disabled = true;
   setStatus(
-    "Capturing canonical NamuMark through normal Chrome edit pages...\n" +
-    "The root source is saved first, then included templates are followed recursively.\n" +
-    "If NamuWiki verification appears, complete it in the opened tab and leave the tab open."
+    "Capturing canonical NamuMark from the visible /raw/ page...\n" +
+    "Only this document RAW is captured. Included templates and assets are not opened recursively.\n" +
+    "The Tree will reuse cached template/DOM/asset data already collected by the normal-page crawler."
   );
 
   try {
@@ -256,7 +256,7 @@ rawButton.addEventListener("click", async () => {
       `Document: ${response.sourceTitle || "—"}`,
       `Characters: ${response.charCount || 0}`,
       `Method: ${response.extractionMethod || "normal Chrome edit"}`,
-      `Templates captured: ${response.templatesCaptured || 0}`,
+      `Templates referenced: ${response.templatesDiscovered || 0}`,
       `Template failures: ${failures.length}`,
     ];
     if (failures.length) {
