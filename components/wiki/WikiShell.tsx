@@ -7,12 +7,14 @@ function encodeWikiTitle(title: string) {
 
 export default function WikiShell({
   title,
+  sourceTitle,
   children,
 }: {
   title: string;
+  sourceTitle?: string;
   children: ReactNode;
 }) {
-  const encodedTitle = encodeWikiTitle(title);
+  const encodedTitle = encodeWikiTitle(sourceTitle || title);
 
   return (
     <div className="wikiSiteShell">
