@@ -1,4 +1,6 @@
-import { parse as parseHtml } from "node-html-parser";
+import { createRequire } from "node:module";
+
+const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
 export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v1";
 
