@@ -216,12 +216,12 @@ cloneButton.addEventListener("click", async () => {
   });
 
   cloneButton.disabled = true;
-  setStatus(`Starting background import...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}`);
+  setStatus(`Starting broad /w/ DOM harvest...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\nExisting captures will be refreshed.`);
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-start-helper-clone",
-      options: { rootTitle, maxDepth, maxDocs, captureMode: "dom" },
+      options: { rootTitle, maxDepth, maxDocs, captureMode: "dom", refreshExisting: true },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start import.");
     setStatus(formatJob(response.job), "ok");
