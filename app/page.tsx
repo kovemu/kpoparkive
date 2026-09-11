@@ -1,139 +1,72 @@
-import WikiBlocks from "../components/wiki/WikiBlocks";
-import { getStoragePublicUrl, getWikiDocument, getWikiMedia } from "../lib/wiki";
+import SiteHeader from "../components/wiki/SiteHeader";
+import HomeActivity from "../components/wiki/HomeActivity";
 
-function SectionTitle({ id, number, level, children }: { id: string; number: string; level: number; children: React.ReactNode }) {
-  const Tag = level >= 4 ? "h4" : level === 3 ? "h3" : "h2";
-  return (
-    <Tag id={id} className={`sectionTitle sectionLevel${level}`}>
-      <span className="sectionChevron">⌄</span>
-      <span className="sectionNumber">{number}.</span> {children}
-      <a className="editLink" href="#top" aria-label={`Edit ${children}`}>[edit]</a>
-    </Tag>
-  );
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co")
+  .trim()
+  .replace(/\/$/, "");
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+type Activity = {
+  id: string;
+  source_title: string;
+  summary: string | null;
+  display_name: string | null;
+  status: string;
+  created_at: string;
+};
+
+async function getRecentActivity(): Promise<Activity[]> {
+  if (!SERVICE_ROLE_KEY) return [];
+
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/source_edit_proposals?select=id,source_title,summary,display_name,status,created_at&order=created_at.desc&limit=30`,
+      {
+        headers: {
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        },
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) return [];
+    return response.json() as Promise<Activity[]>;
+  } catch {
+    return [];
+  }
 }
 
-function numberSections(sections: { heading_level: number }[]) {
-  let major = 0;
-  let minor = 0;
-  let patch = 0;
-
-  return sections.map((section) => {
-    if (section.heading_level <= 2) {
-      major += 1;
-      minor = 0;
-      patch = 0;
-      return `${major}`;
-    }
-    if (section.heading_level === 3) {
-      minor += 1;
-      patch = 0;
-      return `${major}.${minor}`;
-    }
-    patch += 1;
-    return `${major}.${minor}.${patch}`;
-  });
-}
+export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const document = await getWikiDocument("rescene");
-
-  if (!document) {
-    return <main className="articleShell"><h1>RESCENE</h1><p>Document not found.</p></main>;
-  }
-
-  const media = await getWikiMedia(document.id);
-  const infoboxImage = [...media].reverse().find((item) => item.role === "infobox");
-  const numbers = numberSections(document.sections);
-  const updated = new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  }).format(new Date(document.updated_at));
+  const activity = await getRecentActivity();
 
   return (
     <>
-      <header className="siteHeader">
-        <a className="brand" href="#top">Kpoparkive</a>
-        <div className="searchWrap">
-          <input aria-label="Search Kpoparkive" placeholder="Search an idol, group, album..." />
-          <button type="button">Search</button>
-        </div>
-      </header>
-
-      <main id="top" className="articleShell" style={{ "--accent": document.accent_color ?? "#ff62c7" } as React.CSSProperties}>
-        <div className="articleHeader">
-          <div>
-            <div className="breadcrumbs">Kpoparkive › Girl groups › {document.title}</div>
-            <h1>{document.title}</h1>
-            <p className="updated">Last updated: {updated}</p>
-          </div>
-          <div className="articleActions">
-            <button type="button">☆</button>
-            <button type="button">Edit</button>
-            <button type="button">History</button>
-          </div>
+      <SiteHeader />
+      <main className="homePage">
+        <div className="homeIntro">
+          <h1>Kpoparkive</h1>
+          <p>A community-edited K-pop wiki.</p>
         </div>
 
-        <div className="introGrid">
-          <nav className="toc tocTop" aria-label="Contents">
-            <div className="tocHeader">Contents <span>⌄</span></div>
-            <ol>
-              {document.sections.map((section, index) => {
-                const level = Math.max(1, section.heading_level - 1);
-                return (
-                  <li key={section.id} className={`tocLevel${level}`}>
-                    <a href={`#${section.section_key}`}><span>{numbers[index]}.</span> {section.heading}</a>
-                  </li>
-                );
-              })}
-            </ol>
-          </nav>
-
-          <aside className="infobox" aria-label="RESCENE profile">
-            <div className="infoboxHero">
-              <div className="wordmark">Rescene</div>
-              <div>
-                <strong>RESCENE</strong>
-                <span>리센느</span>
-              </div>
-            </div>
-            {infoboxImage ? (
-              <figure className="infoboxPhotoWrap">
-                <img
-                  className="infoboxPhoto"
-                  src={getStoragePublicUrl(infoboxImage.storage_path)}
-                  alt={infoboxImage.alt_text ?? "RESCENE group photo"}
-                />
-                {infoboxImage.caption && <figcaption>{infoboxImage.caption}</figcaption>}
-              </figure>
-            ) : (
-              <div className="photoPlaceholder">RESCENE</div>
-            )}
-            <dl className="facts">
-              <div><dt>Debut</dt><dd>🇰🇷 March 26, 2024<br />🇯🇵 August 16, 2024<br />🇺🇸 February 17, 2025</dd></div>
-              <div><dt>Debut release</dt><dd><span className="pill pink">Re:Scene</span></dd></div>
-              <div><dt>Genre</dt><dd>K-pop, Dance, Pop, R&amp;B / Soul, Ballad</dd></div>
-              <div><dt>Leader</dt><dd><a href="/wiki/woni">Woni</a></dd></div>
-              <div><dt>Agency</dt><dd>The Muze Entertainment</dd></div>
-              <div><dt>Fandom</dt><dd><strong>REMINE</strong></dd></div>
-            </dl>
-          </aside>
-        </div>
-
-        {document.sections.map((section, index) => (
-          <section key={section.id}>
-            <SectionTitle id={section.section_key} number={numbers[index]} level={section.heading_level}>
-              {section.heading}
-            </SectionTitle>
-            <WikiBlocks blocks={section.content} />
+        <div className="homeGrid">
+          <section className="homeCard" aria-labelledby="recent-edits-title">
+            <header className="homeCardHeader">
+              <h2 id="recent-edits-title">Recent edits</h2>
+              <span className="liveBadge">LIVE</span>
+            </header>
+            <HomeActivity initialItems={activity} />
           </section>
-        ))}
-      </main>
 
-      <div className="floatingNav" aria-label="Page navigation">
-        <a href="#top">↑</a>
-        <a href="#see-also">↓</a>
-      </div>
+          <section className="homeCard" aria-labelledby="discussion-title">
+            <header className="homeCardHeader">
+              <h2 id="discussion-title">Discussions</h2>
+            </header>
+            <div className="discussionSoon">Coming soon.</div>
+          </section>
+        </div>
+      </main>
     </>
   );
 }
