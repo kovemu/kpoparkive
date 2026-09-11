@@ -276,6 +276,7 @@ async function saveRawSource(payload) {
 
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
   const capturedAt = new Date().toISOString();
+  const shouldAutoTranslate = rootTitle === sourceTitle || process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -284,7 +285,7 @@ async function saveRawSource(payload) {
       source_format: "namuwiki_raw",
       source_extraction_version: "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
-      translation_status: "pending",
+      translation_status: shouldAutoTranslate ? "pending" : "ready",
       translation_version: "namumark-ai-en-v1",
       updated_at: capturedAt,
     }),
@@ -292,7 +293,7 @@ async function saveRawSource(payload) {
 
   const bytes = Buffer.byteLength(raw, "utf8");
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
-  const translationQueued = queueAiTranslation(sourceTitle);
+  const translationQueued = shouldAutoTranslate ? queueAiTranslation(sourceTitle) : false;
   return {
     ok: true,
     sourceTitle,
@@ -301,7 +302,11 @@ async function saveRawSource(payload) {
     bytes,
     capturedAt,
     sourceFormat: "namuwiki_raw",
-    translation: translationQueued ? "queued" : "not-configured",
+    translation: translationQueued
+      ? "queued"
+      : shouldAutoTranslate
+        ? "not-configured"
+        : "skipped-related",
   };
 }
 
