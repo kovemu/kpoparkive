@@ -859,6 +859,7 @@ async function main() {
     links: Array.isArray(result?.links) ? result.links.length : 0,
     youtubeMacros: preparedYouTube.embeds.map((item) => item.videoId),
     youtubeEmbedsInjected: injectedYouTube.injected,
+    missingYouTubeEmbeds: preparedYouTube.embeds.filter((item) => !injectedYouTube.injected.includes(item.videoId)).map((item) => item.videoId),
     files: requiredFiles.length,
     requiredFiles,
     missingFiles,
@@ -899,7 +900,8 @@ async function main() {
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
   console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} dom-fallback-templates=${meta.domFallbackTemplateCount} categories=${meta.categories} headings=${meta.headings}`);
-  console.log(`youtube-macros=${meta.youtubeMacros.length} youtube-injected=${meta.youtubeEmbedsInjected.length}`);
+  console.log(`youtube-macros=${meta.youtubeMacros.length} youtube-injected=${meta.youtubeEmbedsInjected.length} youtube-missing=${meta.missingYouTubeEmbeds.length}`);
+  if (meta.missingYouTubeEmbeds.length) console.log(`youtube-missing: ${meta.missingYouTubeEmbeds.join(" | ")}`);
   if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
   if (injectedFallbacks.injected.length) console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
   if (fallbackTranslationQueue.length) console.log(`fallback-translation-queue: ${fallbackTranslationQueue.map((item) => `${item.templateTitle}:${item.translationStatus}${item.changed ? ":changed" : ""}`).join(" | ")}`);
