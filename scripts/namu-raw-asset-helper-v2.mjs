@@ -387,6 +387,25 @@ async function uploadVideo(bytes, meta, contentType) {
   };
 }
 
+async function invalidateSourceRender(payload) {
+  const sourceTitle = String(payload?.sourceTitle || payload?.rootTitle || "").normalize("NFKC").trim();
+  if (!sourceTitle) throw new Error("sourceTitle/rootTitle is required");
+
+  await db(
+    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        source_namumark_rendered_at: null,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+
+  return { ok: true, sourceTitle };
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -416,6 +435,11 @@ const server = http.createServer(async (req, res) => {
       const meta = decodeMeta(req.headers["x-kpoparkive-meta"] || "");
       const bytes = await readBody(req, MAX_MEDIA_BYTES);
       json(res, 200, await uploadVideo(bytes, meta, contentType));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/invalidate-render") {
+      json(res, 200, await invalidateSourceRender(await readJson(req)));
       return;
     }
 
