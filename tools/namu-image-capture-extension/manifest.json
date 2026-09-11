@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.13.6",
-  "description": "Hybrid NamuWiki capture with persistent single-tab RAW verification waiting and reusable DOM/assets.",
+  "version": "0.13.7",
+  "description": "Hybrid NamuWiki capture with persistent RAW verification and DOM image/video asset capture.",
   "permissions": [
     "activeTab",
     "storage",
