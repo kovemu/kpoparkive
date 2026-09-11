@@ -16,7 +16,8 @@
     "namu:engine-thetree-content": "node --no-node-snapshot scripts/namumark-thetree-content.mjs",
     "postinstall": "node scripts/patch-thetree-runtime.mjs",
     "namu:dom-fallbacks": "node scripts/namu-dom-fallback-queue.mjs",
-    "namu:recover-template": "node scripts/namu-dom-template-recover.mjs"
+    "namu:recover-template": "node scripts/namu-dom-template-recover.mjs",
+    "namu:publish": "node scripts/namu-publish-draft.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
