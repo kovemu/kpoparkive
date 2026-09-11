@@ -215,6 +215,120 @@ function assetName(ref) {
   return normalizeTitle(ref).replace(/^(?:파일|File):/i, "");
 }
 
+function canonicalAssetKey(ref) {
+  return assetName(ref).replace(/[?#].*$/, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function extractRawFileRefs(rawValue) {
+  const refs = [];
+  const seen = new Set();
+  const re = /\[\[(?:파일|File):([^\]|]+)(?=[\]|])/gi;
+  let match;
+  while ((match = re.exec(String(rawValue || "")))) {
+    const name = assetName(match[1]);
+    const key = canonicalAssetKey(name);
+    if (!name || !key || seen.has(key)) continue;
+    seen.add(key);
+    refs.push(name);
+  }
+  return refs;
+}
+
+function stagedAssetPublicUrl(row) {
+  const storagePath = String(row?.storage_path || "").replace(/^\/+/, "");
+  if (!storagePath) return "";
+  return `${SUPABASE_URL}/storage/v1/object/public/wiki-media/${storagePath}`;
+}
+
+async function reconcileExactStagedAssets(target, renderSource, existingRows) {
+  if (!target?.id) return existingRows || [];
+
+  const output = [...(existingRows || [])];
+  const resolvedKeys = new Set(
+    output
+      .filter((row) => row?.status === "resolved" && assetUrl(row))
+      .map((row) => canonicalAssetKey(row?.source_ref || row?.label || ""))
+      .filter(Boolean)
+  );
+  const needed = extractRawFileRefs(renderSource)
+    .map((name) => ({ name, key: canonicalAssetKey(name) }))
+    .filter((item) => item.key && !resolvedKeys.has(item.key));
+  if (!needed.length) return output;
+
+  const stagedRows = await dbAll(
+    "namu_capture_staging?storage_path=not.is.null" +
+      "&select=id,root_title,source_title,file_name,canonical_key,storage_path,content_type,byte_length,width,height,captured_at,metadata" +
+      "&order=captured_at.desc",
+  );
+  const stagedByKey = new Map();
+  for (const row of stagedRows || []) {
+    const key = canonicalAssetKey(row?.canonical_key || row?.file_name || "");
+    if (!key || stagedByKey.has(key)) continue;
+    if (/^__anonymous__/i.test(String(row?.file_name || ""))) continue;
+    stagedByKey.set(key, row);
+  }
+
+  for (const item of needed) {
+    const staged = stagedByKey.get(item.key);
+    if (!staged) continue;
+    const resolvedUrl = stagedAssetPublicUrl(staged);
+    if (!resolvedUrl) continue;
+
+    const metadata = {
+      ...(staged.metadata && typeof staged.metadata === "object" ? staged.metadata : {}),
+      content_type: staged.content_type || null,
+      bytes: Number(staged.byte_length || 0) || 0,
+      width: Number(staged.width || 0) || 0,
+      height: Number(staged.height || 0) || 0,
+      resolved_from: "captured-dom-staging-exact",
+      browser_capture_at: staged.captured_at || null,
+      browser_match_method: "staging-canonical-key-exact",
+    };
+
+    const pseudo = {
+      id: `staging:${staged.id}`,
+      root_title: target.root_title || target.source_title,
+      source_title: target.source_title,
+      source_ref: `파일:${item.name}`,
+      label: item.name,
+      status: "resolved",
+      resolved_url: resolvedUrl,
+      storage_path: staged.storage_path,
+      confidence: 0.999,
+      metadata,
+    };
+    output.push(pseudo);
+    resolvedKeys.add(item.key);
+
+    // Persist the exact reconciliation so later documents/public hydration can
+    // reuse the same storage-backed media without another browser capture.
+    await db("source_asset_queue?on_conflict=source_document_id,asset_type,source_ref", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        source_document_id: target.id,
+        root_title: target.root_title || target.source_title,
+        source_title: target.source_title,
+        asset_type: "image",
+        source_ref: `파일:${item.name}`,
+        label: item.name,
+        provider: "browser-dom-staging",
+        role: "inline",
+        status: "resolved",
+        resolved_url: resolvedUrl,
+        storage_path: staged.storage_path,
+        confidence: 0.999,
+        metadata,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+
+    console.log(`STAGED ASSET RECONCILED ${item.name} <- ${staged.storage_path}`);
+  }
+
+  return output;
+}
+
 function assetUrl(row) {
   if (row?.status !== "resolved") return null;
   if (typeof row.resolved_url === "string" && row.resolved_url) return row.resolved_url;
@@ -910,10 +1024,11 @@ async function main() {
   // Assets are a global filename registry. A file captured while browsing any
   // NamuWiki document must be reusable by every other document that references
   // the same [[파일:...]] title. Do not scope assets to target.root_title.
-  const assetRows = await dbAll(
+  const loadedAssetRows = await dbAll(
     "source_asset_queue?asset_type=eq.image&status=eq.resolved" +
-      "&select=id,root_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
+      "&select=id,root_title,source_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
   );
+  const assetRows = await reconcileExactStagedAssets(target, renderSource, loadedAssetRows || []);
 
   const virtualWiki = makeVirtualWiki(rawRows || [], assetRows || []);
   const targetDoc = virtualWiki.byFullTitle.get(fullTitle(parseDocumentName(title)));
@@ -1031,6 +1146,7 @@ async function main() {
     domFallbackTemplateCount: injectedFallbacks.injected.length,
     domFallbackLanguage: process.env.KPOPARKIVE_RENDER_CONTENT ? "en" : "ko",
     fallbackTranslationQueue,
+    fallbackExtractorVersion: 2,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
