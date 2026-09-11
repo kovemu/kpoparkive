@@ -372,7 +372,7 @@ function kpopWithTimeout(promise, timeoutMs, label = "operation") {
   ]);
 }
 
-async function kpopExtractRawDirectlyFromTab(tabId, normalizedTitle) {
+async function kpopExtractVisibleRawFromTab(tabId, normalizedTitle) {
   if (!chrome.scripting?.executeScript) {
     return { ok: false, error: "chrome.scripting is unavailable" };
   }
@@ -380,7 +380,7 @@ async function kpopExtractRawDirectlyFromTab(tabId, normalizedTitle) {
   try {
     const results = await kpopWithTimeout(
       chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         world: "ISOLATED",
         func: () => {
           const normalize = (value) => String(value || "")
@@ -401,42 +401,69 @@ async function kpopExtractRawDirectlyFromTab(tabId, normalizedTitle) {
             return total;
           };
 
+          const visible = (element) => {
+            if (!(element instanceof Element)) return false;
+            try {
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              if (!style || !rect) return false;
+              if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) return false;
+              return rect.width >= 100 && rect.height >= 40;
+            } catch {
+              return false;
+            }
+          };
+
           const candidates = [];
-          const push = (source, value, trusted = false, priority = 0) => {
+          const push = (source, element, value, priority) => {
             const raw = normalize(value);
-            if (!raw) return;
-            candidates.push({ source, raw, trusted, priority, score: score(raw) });
+            if (!raw || !visible(element)) return;
+            candidates.push({
+              source,
+              raw,
+              priority,
+              score: score(raw),
+              area: Math.max(0, element.getBoundingClientRect().width * element.getBoundingClientRect().height),
+            });
           };
 
           for (const textarea of document.querySelectorAll("textarea")) {
-            push(
-              `direct:textarea${textarea.name ? `[name=${textarea.name}]` : ""}`,
-              textarea.value || textarea.textContent || "",
-              true,
-              200,
-            );
+            push("ui:textarea", textarea, textarea.value || textarea.textContent || "", 300);
           }
 
-          for (const node of document.querySelectorAll("pre, pre code, code")) {
-            push(`direct:${node.tagName.toLowerCase()}`, node.innerText || node.textContent || "", true, 150);
+          for (const element of document.querySelectorAll('[contenteditable="true"], [role="textbox"]')) {
+            push("ui:editable", element, element.innerText || element.textContent || "", 220);
           }
 
-          const titleMatch = location.pathname.match(/^\/raw\/(.+?)\/?$/i);
-          let pageTitle = "";
-          if (titleMatch?.[1]) {
-            try { pageTitle = decodeURIComponent(titleMatch[1]); }
-            catch { pageTitle = titleMatch[1]; }
+          for (const element of document.querySelectorAll(".cm-content, .CodeMirror-code, .monaco-editor .view-lines")) {
+            const lines = [...element.querySelectorAll(".cm-line, .CodeMirror-line, .view-line")];
+            const value = lines.length
+              ? lines.map((line) => line.textContent || "").join("\n")
+              : element.innerText || element.textContent || "";
+            push("ui:editor", element, value, 200);
+          }
+
+          for (const element of document.querySelectorAll("pre, pre code")) {
+            push("ui:pre", element, element.innerText || element.textContent || "", 120);
           }
 
           candidates.sort((a, b) =>
             b.priority - a.priority ||
             b.score - a.score ||
+            b.area - a.area ||
             b.raw.length - a.raw.length
           );
 
           const best = candidates[0] || null;
+          if (best) {
+            try {
+              const element = document.querySelector("textarea");
+              element?.focus?.();
+              element?.select?.();
+            } catch {}
+          }
+
           return {
-            pageTitle: String(pageTitle || "").normalize("NFKC").trim(),
             href: location.href,
             documentTitle: document.title,
             candidateCount: candidates.length,
@@ -444,45 +471,53 @@ async function kpopExtractRawDirectlyFromTab(tabId, normalizedTitle) {
           };
         },
       }),
-      2000,
-      "direct RAW tab extraction"
+      2500,
+      "visible RAW UI extraction"
     );
 
-    const payload = Array.isArray(results) ? results[0]?.result : null;
-    const best = payload?.best || null;
+    const payloads = (Array.isArray(results) ? results : [])
+      .map((item) => item?.result)
+      .filter(Boolean);
+    const candidates = payloads
+      .map((payload) => ({ payload, best: payload.best }))
+      .filter((item) => item.best?.raw)
+      .sort((a, b) =>
+        Number(b.best.priority || 0) - Number(a.best.priority || 0) ||
+        Number(b.best.score || 0) - Number(a.best.score || 0) ||
+        String(b.best.raw || "").length - String(a.best.raw || "").length
+      );
+
+    const winner = candidates[0] || null;
+    const best = winner?.best || null;
     const isTemplate = /^틀:/i.test(normalizedTitle);
     const valid = Boolean(
       best?.raw &&
       (
-        (isTemplate && ((best.trusted && best.raw.length >= 1) || (best.raw.length >= 20 && best.score >= 1))) ||
-        (!isTemplate && best.raw.length >= 200 && best.score >= 2)
+        (isTemplate && best.raw.length >= 1) ||
+        (!isTemplate && best.raw.length >= 200 && Number(best.score || 0) >= 2)
       )
     );
 
     if (!valid) {
       return {
         ok: false,
-        error: `Direct RAW extraction found no valid NamuMark (candidates=${payload?.candidateCount || 0})`,
-        debug: payload || null,
+        error: `Visible RAW UI not found or invalid (frames=${payloads.length}, candidates=${payloads.reduce((n, p) => n + Number(p.candidateCount || 0), 0)})`,
       };
     }
 
     return {
       ok: true,
-      sourceTitle: payload?.pageTitle || normalizedTitle,
-      rawUrl: payload?.href || null,
-      extractionMethod: best.source || "direct:raw-tab",
+      sourceTitle: normalizedTitle,
+      rawUrl: winner?.payload?.href || null,
+      extractionMethod: best.source || "ui:raw-copy",
       charCount: best.raw.length,
       signalScore: Number(best.score || 0),
-      trustedSource: Boolean(best.trusted),
-      trustedEditor: Boolean(best.trusted),
+      trustedSource: true,
+      trustedEditor: true,
       raw: best.raw,
     };
   } catch (error) {
-    return {
-      ok: false,
-      error: error?.message || String(error),
-    };
+    return { ok: false, error: error?.message || String(error) };
   }
 }
 
@@ -532,7 +567,7 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
       } catch {}
 
       try {
-        const direct = await kpopExtractRawDirectlyFromTab(tab.id, normalizedTitle);
+        const direct = await kpopExtractVisibleRawFromTab(tab.id, normalizedTitle);
         if (direct?.ok && direct.raw) {
           await kpopClearVerification();
           return direct;
@@ -622,7 +657,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
 
   const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(normalizedTitle)}`;
   let extracted = null;
-  let sourceMode = "raw";
+  const sourceMode = "raw";
 
   try {
     const rawView = await kpopTryReadOnlyRawTitle(normalizedTitle);
@@ -632,11 +667,9 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
         `RAW VIEW CAPTURED ${normalizedTitle} -> ${Number(rawView.charCount || rawView.raw.length).toLocaleString()} chars via ${rawView.extractionMethod || "raw-page"}`
       );
     } else {
-      sourceMode = "edit";
-      console.log(
-        `RAW VIEW FALLBACK ${normalizedTitle} -> edit (${rawView?.error || "no valid RAW payload"})`
+      throw new Error(
+        `RAW UI capture failed for ${normalizedTitle}: ${rawView?.error || "visible RAW source was not detected"}`
       );
-      extracted = await kpopTryEditRawTitle(normalizedTitle);
     }
 
     const saved = await kpopControllerJson("/raw-source", {
