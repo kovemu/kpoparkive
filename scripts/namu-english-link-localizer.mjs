@@ -199,16 +199,19 @@ export function buildEnglishLabelIndex(rows = []) {
 function resolveDetailLabel(target, currentTitle, index) {
   const key = normalize(target);
   if (!key) return "";
-  const exact = cleanEnglishLabel(index?.exact?.get(key));
-  if (exact) return exact;
 
   const segment = lastPathSegment(key);
   const suffix = cleanEnglishLabel(index?.suffix?.get(segment));
-  if (suffix) {
-    const owner = normalize(currentTitle);
-    if (owner && key.startsWith(owner + "/")) return suffix;
-    return suffix;
-  }
+  const owner = normalize(currentTitle);
+
+  // For a detail link to the current document's own subpage, prefer the
+  // translated subpage label ("Music Show Fancams", "Trivia", etc.) over a
+  // verbose fully-qualified translated title.
+  if (owner && key.startsWith(owner + "/") && suffix) return suffix;
+
+  const exact = cleanEnglishLabel(index?.exact?.get(key));
+  if (exact) return exact;
+  if (suffix) return suffix;
   return "";
 }
 
