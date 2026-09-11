@@ -412,6 +412,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
         translate: true,
         extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
         signalScore: Number(extracted.signalScore || 0),
+        trustedEditor: Boolean(extracted.trustedEditor),
       }),
     });
 
