@@ -314,8 +314,13 @@ async function kpopStartHelperClone(options = {}) {
   }
 
   const rootTitle = String(options.rootTitle || "").trim() || "RESCENE";
-  const maxDepth = Math.max(0, Math.min(3, Number(options.maxDepth || 0) || 0));
-  const maxDocs = Math.max(1, Math.min(200, Number(options.maxDocs || 25) || 25));
+  const captureMode = String(options.captureMode || "dom").toLowerCase() === "raw" ? "raw" : "dom";
+  const maxDepth = captureMode === "raw"
+    ? 0
+    : Math.max(0, Math.min(3, Number(options.maxDepth || 0) || 0));
+  const maxDocs = captureMode === "raw"
+    ? 1
+    : Math.max(1, Math.min(200, Number(options.maxDocs || 25) || 25));
 
   const result = await kpopControllerJson("/clone/start", {
     method: "POST",
@@ -324,7 +329,7 @@ async function kpopStartHelperClone(options = {}) {
       rootUrl: activeTab.url,
       maxDepth,
       maxDocs,
-      captureMode: String(options.captureMode || "dom").toLowerCase() === "raw" ? "raw" : "dom",
+      captureMode,
     }),
   });
 
