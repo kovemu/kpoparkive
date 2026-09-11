@@ -318,13 +318,15 @@ async function rawSourceStatus(sourceTitle) {
   const rows = await db(
     `source_documents?source=eq.namu_mirror` +
     `&source_title=eq.${encodeURIComponent(title)}` +
-    `&select=id,source_title,source_wikitext,raw_extracted_at,translation_status&limit=1`,
+    `&select=id,source_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html&limit=1`,
   );
   const row = rows?.[0] || null;
   return {
     exists: Boolean(row),
     rawCaptured: Boolean(row?.source_wikitext && row?.raw_extracted_at),
     rawExtractedAt: row?.raw_extracted_at || null,
+    sourceRenderedAt: row?.source_namumark_rendered_at || null,
+    sourceRendered: Boolean(row?.source_namumark_html && row?.source_namumark_rendered_at),
     translationStatus: row?.translation_status || null,
     raw: row?.source_wikitext || null,
   };
