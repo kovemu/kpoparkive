@@ -454,12 +454,72 @@ function applyTemplateDomFallbackMarkers(rawValue, fallbackByTitle) {
   return { renderedSource, replacements };
 }
 
+function setInlineStyleProperties(element, properties, removeProperties = []) {
+  const raw = String(element?.getAttribute?.("style") || "");
+  const map = new Map();
+  for (const chunk of raw.split(";")) {
+    const colon = chunk.indexOf(":");
+    if (colon < 0) continue;
+    const key = chunk.slice(0, colon).trim().toLowerCase();
+    const value = chunk.slice(colon + 1).trim();
+    if (key && value) map.set(key, value);
+  }
+  for (const key of removeProperties) map.delete(String(key).toLowerCase());
+  for (const [key, value] of Object.entries(properties || {})) {
+    if (value === null || value === undefined || value === "") map.delete(key.toLowerCase());
+    else map.set(key.toLowerCase(), String(value));
+  }
+  const next = [...map.entries()].map(([key, value]) => `${key}:${value}`).join(";");
+  if (next) element.setAttribute("style", next);
+  else element.removeAttribute("style");
+}
+
+function normalizePortableFallbackHtml(htmlValue) {
+  let root;
+  try { root = parseHtml(String(htmlValue || ""), { comment: false }); }
+  catch { return String(htmlValue || ""); }
+
+  const displayByTag = {
+    table: "table",
+    thead: "table-header-group",
+    tbody: "table-row-group",
+    tfoot: "table-footer-group",
+    tr: "table-row",
+    td: "table-cell",
+    th: "table-cell",
+    colgroup: "table-column-group",
+    col: "table-column",
+    caption: "table-caption",
+  };
+
+  for (const node of root.querySelectorAll("*")) {
+    const tag = String(node.tagName || "").toLowerCase();
+    const expectedDisplay = displayByTag[tag];
+    if (expectedDisplay) setInlineStyleProperties(node, { display: expectedDisplay });
+
+    if (tag === "details") {
+      setInlineStyleProperties(node, { display: "block", height: "auto" }, ["min-height", "max-height"]);
+    } else if (tag === "summary") {
+      setInlineStyleProperties(node, { display: "list-item", height: "auto" }, ["min-height", "max-height"]);
+    } else if (["strong", "b", "em", "i", "small"].includes(tag)) {
+      const display = String(node.getAttribute("style") || "").match(/(?:^|;)display:([^;]+)/i)?.[1]?.trim() || "";
+      if (/^table(?:-|$)/i.test(display)) {
+        setInlineStyleProperties(node, { display: "inline", width: "auto", height: "auto" }, ["min-width", "max-width", "min-height", "max-height"]);
+      }
+    } else if (tag === "div") {
+      const display = String(node.getAttribute("style") || "").match(/(?:^|;)display:([^;]+)/i)?.[1]?.trim() || "";
+      if (/^table(?:-|$)/i.test(display)) setInlineStyleProperties(node, { display: "block" });
+    }
+  }
+
+  return root.toString();
+}
 function injectTemplateDomFallbacks(htmlValue, replacements) {
   let html = String(htmlValue || "");
   const injected = [];
   for (const item of replacements || []) {
     if (!html.includes(item.marker)) continue;
-    html = html.split(item.marker).join(item.fallback.html);
+    html = html.split(item.marker).join(normalizePortableFallbackHtml(item.fallback.html));
     injected.push(item.fallback.templateTitle);
   }
   return { html, injected };
