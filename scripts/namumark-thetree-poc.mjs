@@ -986,7 +986,7 @@ async function syncSourceTemplateFallback(target, replacement, sourceBrowserCapt
     "template_dom_fallbacks?source_document_id=eq." + encodeURIComponent(target.id) +
     "&template_title=eq." + encodeURIComponent(replacement.title) +
     "&include_hash=eq." + encodeURIComponent(hash) +
-    "&select=id,source_html_hash,translation_status,en_html,en_text_map&limit=1"
+    "&select=id,source_html_hash,source_text_nodes,translation_status,en_html,en_text_map,recovery_status,recovery_version,recovery_meta&limit=1"
   );
   const existing = existingRows?.[0] || null;
   const now = new Date().toISOString();
@@ -1012,12 +1012,38 @@ async function syncSourceTemplateFallback(target, replacement, sourceBrowserCapt
     return { ...existing, ...base, changed: false };
   }
 
+  const existingMap =
+    existing?.en_text_map && typeof existing.en_text_map === "object"
+      ? existing.en_text_map
+      : {};
+  const newTextNodes = Array.isArray(base.source_text_nodes) ? base.source_text_nodes : [];
+  const untranslatedHangul = newTextNodes
+    .filter((node) => node?.hasHangul)
+    .map((node) => normalizeVisibleText(node?.text || ""))
+    .filter((text) => text && !Object.prototype.hasOwnProperty.call(existingMap, text));
+
+  let preservedEnHtml = null;
+  let preservedTranslationStatus = "pending_chatgpt";
+  let preservedTranslatedAt = null;
+  let preservedMap = {};
+  if (existing?.id && untranslatedHangul.length === 0 && Object.keys(existingMap).length > 0) {
+    const translated = translateFallbackHtml(sourceHtml, existingMap);
+    if (translated.html && translated.unresolvedHangul.length === 0) {
+      preservedEnHtml = translated.html;
+      preservedTranslationStatus = ["reviewed", "translated_by_chatgpt"].includes(String(existing.translation_status || ""))
+        ? existing.translation_status
+        : "reviewed";
+      preservedTranslatedAt = now;
+      preservedMap = existingMap;
+    }
+  }
+
   const reset = {
     ...base,
-    en_html: null,
-    en_text_map: {},
-    translation_status: "pending_chatgpt",
-    translated_at: null,
+    en_html: preservedEnHtml,
+    en_text_map: preservedMap,
+    translation_status: preservedTranslationStatus,
+    translated_at: preservedTranslatedAt,
     synthetic_document_id: null,
     recovery_status: "pending",
     recovery_version: null,
@@ -1365,7 +1391,7 @@ async function main() {
     domFallbackMediaRewritten: Number(injectedFallbacks.mediaRewritten || 0),
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
-    fallbackExtractorVersion: 2,
+    fallbackExtractorVersion: 3,
     assetReconcilerVersion: 2,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
