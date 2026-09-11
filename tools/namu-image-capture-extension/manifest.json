@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "UI-copy-first NamuWiki RAW capture using visible browser content, full template graph, required assets, and The Tree render. No automatic edit fallback.",
   "permissions": [
     "activeTab",
