@@ -34,6 +34,9 @@ type MediaPayload = { ok?: boolean; media?: MediaItem[]; error?: string };
 type AddedParam = { localId: string; name: string; value: string };
 type MediaDraft = { target: string; params: Record<string, string>; removed: string[]; added: AddedParam[] };
 type DraftMap = Record<string, MediaDraft>;
+type MediaOperationResult =
+  | { kind: "document"; operation: V3RegisteredOperation }
+  | { kind: "table"; ownerNodeId: string; call: Record<string, unknown> };
 
 const EDITING_CLASS = "kpoparkiveAstEditing";
 const BUTTON_ID = "kpoparkive-ve3-media-button";
@@ -173,12 +176,15 @@ function mediaChanges(item: MediaItem, draft: MediaDraft): NamuMediaChanges {
   };
 }
 
-function operationFor(item: MediaItem, draft: MediaDraft) {
+function operationFor(item: MediaItem, draft: MediaDraft): MediaOperationResult {
   const changes = mediaChanges(item, draft);
   if (item.ownerType === "table") {
-    return { ownerNodeId: item.ownerNodeId, call: { callId: item.callId!, ...changes } };
+    return { kind: "table", ownerNodeId: item.ownerNodeId, call: { callId: item.callId!, ...changes } };
   }
-  return { operation: { op: "media-fields", nodeId: item.nodeId!, ...changes } as V3RegisteredOperation };
+  return {
+    kind: "document",
+    operation: { op: "media-fields", nodeId: item.nodeId!, ...changes } as V3RegisteredOperation,
+  };
 }
 
 function collectOperations(items: MediaItem[], drafts: DraftMap) {
@@ -194,8 +200,9 @@ function collectOperations(items: MediaItem[], drafts: DraftMap) {
       continue;
     }
     const result = operationFor(item, draft);
-    if ("operation" in result) operations.push(result.operation);
-    else {
+    if (result.kind === "document") {
+      operations.push(result.operation);
+    } else {
       const list = tableCalls.get(result.ownerNodeId) || [];
       list.push(result.call);
       tableCalls.set(result.ownerNodeId, list);
