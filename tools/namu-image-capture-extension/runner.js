@@ -164,31 +164,16 @@ async function runnerProcessTask(task) {
       const sourceTitle = kpopTitleFromDocumentUrl(task.url);
       if (!sourceTitle) throw new Error("Could not resolve raw document title from task URL.");
 
-      runnerSetStatus(`RAW · ${sourceTitle}\nDepth ${task.depth || 0}\nTrying read-only /raw/ first · /edit/ only as fallback…`);
+      runnerSetStatus(`RAW · ${sourceTitle}\nRoot source only · reading visible /raw/ page…`);
       const raw = await kpopCaptureRawBundle({
         rootTitle: runnerRootTitle,
         sourceTitle,
       });
 
       runnerSetStatus(
-        `RAW · ${sourceTitle}\nTemplates complete: ${raw.templatesCaptured || 0}\nResolving ${raw.requiredFiles?.length || 0} file dependencies…`
+        `RAW · ${sourceTitle}\nRoot source saved\nIncludes referenced: ${raw.templatesDiscovered || 0}\nFiles referenced: ${raw.requiredFiles?.length || 0}\nUsing cached DOM/assets · waiting for The Tree render…`
       );
 
-      const assetJob = await rawAssetV2ResolveNow({
-        rootTitle: runnerRootTitle,
-        sourceTitle,
-        requiredFiles: raw.requiredFiles || [],
-      });
-
-      if (Number(assetJob?.remaining || 0) > 0 || Number(assetJob?.failed || 0) > 0) {
-        throw new Error(
-          `Raw assets incomplete for ${sourceTitle}: remaining=${assetJob?.remaining || 0}, failed=${assetJob?.failed || 0}`
-        );
-      }
-
-      runnerSetStatus(
-        `RAW · ${sourceTitle}\nTemplates complete: ${raw.templatesCaptured || 0}\nAssets complete: ${assetJob?.resolved || 0}\nWaiting for The Tree render…`
-      );
       await runnerWaitForSourceRender(sourceTitle);
 
       await runnerJson("/clone/complete", {
@@ -198,13 +183,12 @@ async function runnerProcessTask(task) {
           sourceTitle: raw.sourceTitle,
           internalLinks: raw.internalLinks || [],
           media: {
-            resolved: Number(assetJob?.resolved || 0),
-            skippedKnown: Math.max(
-              0,
-              Number(assetJob?.required || 0) - Number(assetJob?.planned || 0),
-            ),
-            failed: Number(assetJob?.failed || 0),
-            rawTemplates: raw.templatesCaptured || 0,
+            resolved: 0,
+            skippedKnown: Number(raw.requiredFiles?.length || 0),
+            failed: 0,
+            rawTemplates: 0,
+            includesReferenced: Number(raw.templatesDiscovered || 0),
+            capturePolicy: "root-raw-only",
           },
         }),
       });
@@ -212,9 +196,11 @@ async function runnerProcessTask(task) {
       return {
         ok: true,
         sourceTitle: raw.sourceTitle,
-        rawTemplates: raw.templatesCaptured || 0,
-        assetsResolved: Number(assetJob?.resolved || 0),
+        rawTemplates: 0,
+        includesReferenced: Number(raw.templatesDiscovered || 0),
+        assetsResolved: 0,
         rendered: true,
+        capturePolicy: "root-raw-only",
       };
     }
 
@@ -314,7 +300,7 @@ async function runnerMain() {
       await runnerLoadKnownAssets(runnerRootTitle);
       runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nKnown media cached: ${runnerKnownAssetUrls.size}`);
     } else {
-      runnerSetStatus(`Running RAW crawl · ${runnerRootTitle}\nOne document at a time · verification pauses the whole queue`);
+      runnerSetStatus(`Running RAW crawl · ${runnerRootTitle}\nRoot RAW only · templates/assets come from cache and DOM captures`);
     }
 
     const concurrency = runnerCaptureMode === "raw" ? 1 : KPOP_RUNNER_DOC_CONCURRENCY;
