@@ -18,7 +18,7 @@ import {
   type V3TableModel,
   type V3TableSurfaceRecord,
 } from "./visualEditorV3TableBridge";
-import { clearV3OperationProviders, collectV3RegisteredOperations, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
+import { clearV3OperationProviders, collectV3RegisteredOperations, preflightV3Operations, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type AstInlineNode = {
   id: string;
@@ -805,8 +805,10 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       });
     }
     operations.push(...templateEdits.standalone);
+    let preparedOperations: V3RegisteredOperation[];
     try {
       operations.push(...collectV3RegisteredOperations());
+      preparedOperations = preflightV3Operations(operations as V3RegisteredOperation[]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not collect visual editor changes";
       setStatus(message);
@@ -814,11 +816,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       return;
     }
 
-    if (!operations.length) {
+    if (!preparedOperations.length) {
       setStatus("No changes were made");
       return;
     }
-    if (operations.length > 500) {
+    if (preparedOperations.length > 500) {
       const message = "This edit contains more than 500 structural operations. Save a smaller batch first.";
       setStatus(message);
       window.alert(message);
@@ -826,7 +828,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
 
     setSaving(true);
-    setStatus(`Validating ${operations.length} exact AST edit${operations.length === 1 ? "" : "s"}…`);
+    setStatus(`Validating ${preparedOperations.length} exact AST edit${preparedOperations.length === 1 ? "" : "s"}…`);
     try {
       const response = await fetch("/api/wiki-edit-document-v3", {
         method: "POST",
@@ -835,7 +837,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
           title,
           baseRevisionNo: payload.document.publicRevisionNo,
           baseSourceHash: payload.document.sourceHash,
-          operations,
+          operations: preparedOperations,
           summary: "Visual Editor V3 AST edit",
         }),
       });
