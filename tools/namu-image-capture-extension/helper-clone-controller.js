@@ -187,6 +187,28 @@ function kpopExtractRawDocumentLinks(rawValue, currentTitle) {
   return output;
 }
 
+function kpopExtractRawFileRefs(rawValue) {
+  const raw = String(rawValue || "");
+  const output = [];
+  const seen = new Set();
+  const re = /\[\[(?:파일|File):([^\]|]+)(?=[\]|])/gi;
+  let match;
+
+  while ((match = re.exec(raw))) {
+    const fileName = String(match[1] || "")
+      .normalize("NFKC")
+      .replace(/\u00a0/g, " ")
+      .trim();
+    const key = fileName.toLowerCase();
+    if (!fileName || seen.has(key)) continue;
+    seen.add(key);
+    output.push(`파일:${fileName}`);
+    if (output.length >= 5000) break;
+  }
+
+  return output;
+}
+
 function kpopShouldCaptureTemplate(value) {
   const title = String(value || "").normalize("NFKC").replace(/\u00a0/g, " ").trim();
   if (!/^틀:/i.test(title)) return false;
@@ -395,6 +417,9 @@ async function kpopCaptureRawBundle({
   const seen = new Set([normalizedSource]);
   const capturedTemplates = [];
   const templateFailures = [];
+  const requiredFiles = new Map(
+    kpopExtractRawFileRefs(rootCapture.raw).map((ref) => [ref.toLowerCase(), ref]),
+  );
   let discoveredTemplates = queue.length;
 
   while (queue.length) {
@@ -419,6 +444,9 @@ async function kpopCaptureRawBundle({
           charCount: String(known.raw).length,
           reused: true,
         });
+        for (const ref of kpopExtractRawFileRefs(known.raw)) {
+          requiredFiles.set(ref.toLowerCase(), ref);
+        }
 
         const nested = kpopExtractIncludeTitles(known.raw).filter(kpopShouldCaptureTemplate);
         discoveredTemplates += nested.length;
@@ -433,6 +461,9 @@ async function kpopCaptureRawBundle({
         sourceTitle: title,
       });
       capturedTemplates.push({ title, depth, charCount: capture.charCount, reused: false });
+      for (const ref of kpopExtractRawFileRefs(capture.raw)) {
+        requiredFiles.set(ref.toLowerCase(), ref);
+      }
 
       const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
       discoveredTemplates += nested.length;
@@ -456,6 +487,7 @@ async function kpopCaptureRawBundle({
     templatesDiscovered: discoveredTemplates,
     templateFailures,
     capturedTemplates,
+    requiredFiles: [...requiredFiles.values()],
   };
 }
 
