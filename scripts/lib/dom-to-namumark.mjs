@@ -449,6 +449,11 @@ function setSimilarity(a, b) {
 function compactText(value) {
   return String(value || "")
     .normalize("NFKC")
+    // The Tree's file hydrator can leave a literal serialized media tag in
+    // innerText while the same media is also present as a real DOM node.
+    // Media identity is compared separately, so do not count that serializer
+    // artifact as visible text.
+    .replace(/<\s*(?:img|video)\b[^>]*>/gi, " ")
     .replace(/[\u200b-\u200d\u2060\ufeff\s]+/g, "")
     .toLowerCase();
 }
