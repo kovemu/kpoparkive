@@ -6,12 +6,6 @@ const nextConfig = {
       "./node_modules/thetree/utils/global.js",
       "./node_modules/thetree/utils/types.js",
       "./node_modules/thetree/utils/index.js"
-    ],
-    "/api/thetree-render-probe": [
-      "./node_modules/thetree/utils/namumark/**/*",
-      "./node_modules/thetree/utils/global.js",
-      "./node_modules/thetree/utils/types.js",
-      "./node_modules/thetree/utils/index.js"
     ]
   }
 };
