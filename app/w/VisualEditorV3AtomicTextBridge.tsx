@@ -112,7 +112,8 @@ function simpleStyle(raw: string) {
 }
 
 function styleSimpleSpan(span: HTMLElement, token: string) {
-  if (/^#[0-9a-f]{3,8}$/i.test(token)) span.style.color = token;
+  const previewColor = token.split(",")[0]?.trim() || "";
+  if (/^#[0-9a-f]{3,8}$/i.test(previewColor)) span.style.color = previewColor;
   const size = token.match(/^([+-])(\d+)$/);
   if (size) {
     const delta = Math.min(5, Number(size[2]));
