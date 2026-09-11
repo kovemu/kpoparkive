@@ -49,13 +49,13 @@
         <input id="maxDocs" type="number" min="1" max="200" value="1" />
       </div>
     </div>
-    <p style="margin-top:8px">Depth controls linked documents only. Templates and required files for each page are always completed.</p>
-    <button id="rawCrawl">Capture Root RAW</button>
+    <p style="margin-top:8px">Recommended order: harvest normal /w/ pages first, then capture the root RAW. Depth and Max documents apply only to DOM Harvest; RAW always reads exactly one page.</p>
+    <button id="clone">Broad /w/ DOM Harvest</button>
+    <button id="rawCrawl" class="raw">Capture Root RAW</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
       <summary>Advanced / Debug</summary>
       <button id="raw" class="raw">Capture Current Page Only</button>
-      <button id="clone">Broad /w/ DOM Harvest</button>
       <button id="assets" class="assets">Resolve Missing Raw Assets</button>
       <button id="compare" class="compare">Compare Live NamuWiki vs The Tree</button>
       <button id="reset" class="reset">Reset Job / Clear Queue</button>
