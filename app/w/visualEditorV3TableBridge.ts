@@ -264,6 +264,7 @@ export function buildV3TableSurfaces(options: {
   article: HTMLElement;
   sectionRoots: Map<number, HTMLElement>;
   onActivate: (surface: HTMLElement) => void;
+  editableFields?: boolean;
 }) {
   const records: V3TableSurfaceRecord[] = [];
   const claimedTables = new Set<HTMLTableElement>();
@@ -290,6 +291,16 @@ export function buildV3TableSurfaces(options: {
     table.dataset.ve3TableNodeId = model.nodeId;
     mappedTables += 1;
 
+    if (options.editableFields === false) {
+      const atomicHost = table.closest<HTMLElement>(".wiki-table-wrap") || table;
+      if (!atomicHost.hasAttribute("data-ve3-previous-contenteditable")) {
+        atomicHost.setAttribute("data-ve3-previous-contenteditable", atomicHost.getAttribute("contenteditable") ?? "");
+      }
+      atomicHost.setAttribute("contenteditable", "false");
+      atomicHost.dataset.ve3CanvasAtomic = "table";
+      continue;
+    }
+
     const claimedHosts = new Set<HTMLElement>();
     for (const field of allFields(model)) {
       const expectedCell = directCell(table, field);
@@ -309,6 +320,13 @@ export function cleanupV3TableSurfaces(records: V3TableSurfaceRecord[]) {
   for (const table of Array.from(document.querySelectorAll<HTMLElement>(".kpoparkiveAstTableMapped"))) {
     table.classList.remove("kpoparkiveAstTableMapped");
     table.removeAttribute("data-ve3-table-node-id");
+  }
+  for (const host of Array.from(document.querySelectorAll<HTMLElement>("[data-ve3-canvas-atomic='table']"))) {
+    const previous = host.getAttribute("data-ve3-previous-contenteditable");
+    if (previous === "") host.removeAttribute("contenteditable");
+    else if (previous !== null) host.setAttribute("contenteditable", previous);
+    host.removeAttribute("data-ve3-previous-contenteditable");
+    host.removeAttribute("data-ve3-canvas-atomic");
   }
 }
 
