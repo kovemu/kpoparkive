@@ -624,8 +624,16 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
           anchorOffset >= 0 && anchorOffset <= 1 ? 220 :
           anchorOffset >= 0 && anchorOffset <= 12 ? 90 :
           anchorOffset >= 0 && anchorOffset <= 40 ? 25 : 0;
-        const structureScore = Math.min(4, tableCount) * 12 + Math.min(3, selfLinkCount) * 8;
-        const score = 760 + frontScore + structureScore - depth * 6;
+        const compactScore =
+          text.length <= 700 ? 90 :
+          text.length <= 1600 ? 45 :
+          text.length <= 3200 ? 10 : -20;
+        const tableScore =
+          tableCount <= 4 ? 28 :
+          tableCount <= 8 ? 12 :
+          -Math.min(80, (tableCount - 8) * 5);
+        const selfLinkScore = selfLinkCount === 1 ? 12 : Math.max(-30, 12 - (selfLinkCount - 1) * 12);
+        const score = 760 + frontScore + compactScore + tableScore + selfLinkScore - depth * 6;
 
         pushCandidate(current, "self-link-wrapper", score, {
           // Computed-style captures are verbose. Complex navigation templates
