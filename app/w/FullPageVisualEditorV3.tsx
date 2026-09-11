@@ -801,10 +801,23 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       });
     }
     operations.push(...templateEdits.standalone);
-    operations.push(...collectV3RegisteredOperations());
+    try {
+      operations.push(...collectV3RegisteredOperations());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not collect visual editor changes";
+      setStatus(message);
+      window.alert(message);
+      return;
+    }
 
     if (!operations.length) {
       setStatus("No changes were made");
+      return;
+    }
+    if (operations.length > 500) {
+      const message = "This edit contains more than 500 structural operations. Save a smaller batch first.";
+      setStatus(message);
+      window.alert(message);
       return;
     }
 
