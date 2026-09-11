@@ -241,7 +241,12 @@ async function saveRawSource(payload) {
 
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
   const capturedAt = new Date().toISOString();
-  const shouldTranslate = rootTitle === sourceTitle || process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
+  const isTemplate = /^틀:/i.test(sourceTitle);
+  const isOperationalTemplate = /^틀:\s*접근\s*제한(?:$|\/)/i.test(sourceTitle);
+  const shouldTranslate =
+    rootTitle === sourceTitle ||
+    (isTemplate && !isOperationalTemplate) ||
+    process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
