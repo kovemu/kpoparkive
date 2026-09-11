@@ -119,72 +119,7 @@ const stats = {
   documentErrors: 0,
   proxiedAssets: 0,
   proxyErrors: 0,
-  translationQueued: 0,
-  translationCompleted: 0,
-  translationFailed: 0,
-  translationActive: false,
-  translationLastTitle: "",
-  translationLastError: "",
 };
-
-let aiTranslationSerial = Promise.resolve();
-const aiTranslationQueuedTitles = new Set();
-
-function runAiTranslation(sourceTitle) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [path.resolve("scripts/namu-ai-translate.mjs"), encodeURIComponent(sourceTitle)],
-      { env: { ...process.env }, stdio: "inherit" },
-    );
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`AI translation worker failed for ${sourceTitle} (code=${code ?? "null"}, signal=${signal || "none"})`));
-    });
-  });
-}
-
-function queueAiTranslation(sourceTitle) {
-  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_AI_API_KEY) {
-    const message = "GEMINI_API_KEY or GOOGLE_AI_API_KEY is missing";
-    stats.translationLastTitle = sourceTitle;
-    stats.translationLastError = message;
-    console.warn(`AI TRANSLATION NOT QUEUED ${sourceTitle}: ${message}`);
-    return false;
-  }
-
-  if (aiTranslationQueuedTitles.has(sourceTitle)) {
-    console.log(`AI TRANSLATION ALREADY QUEUED ${sourceTitle}`);
-    return true;
-  }
-
-  aiTranslationQueuedTitles.add(sourceTitle);
-  stats.translationQueued += 1;
-
-  aiTranslationSerial = aiTranslationSerial
-    .catch(() => {})
-    .then(async () => {
-      stats.translationActive = true;
-      stats.translationLastTitle = sourceTitle;
-      stats.translationLastError = "";
-      console.log(`AI TRANSLATION QUEUE START ${sourceTitle}`);
-      try {
-        await runAiTranslation(sourceTitle);
-        stats.translationCompleted += 1;
-        console.log(`AI TRANSLATION QUEUE COMPLETE ${sourceTitle}`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        stats.translationFailed += 1;
-        stats.translationLastError = message;
-        console.error(`AI TRANSLATION QUEUE FAILED ${sourceTitle}: ${message}`);
-      } finally {
-        stats.translationActive = false;
-        aiTranslationQueuedTitles.delete(sourceTitle);
-      }
-    });
-  return true;
-}
 
 async function ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks }) {
   const docs = await db(
@@ -306,7 +241,7 @@ async function saveRawSource(payload) {
 
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
   const capturedAt = new Date().toISOString();
-  const shouldAutoTranslate = rootTitle === sourceTitle || process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
+  const shouldTranslate = rootTitle === sourceTitle || process.env.KPOPARKIVE_TRANSLATE_RELATED === "1";
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -315,24 +250,16 @@ async function saveRawSource(payload) {
       source_format: "namuwiki_raw",
       source_extraction_version: "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
-      translation_status: shouldAutoTranslate ? "pending" : "ready",
-      translation_version: "namumark-ai-en-v1",
+      translation_status: shouldTranslate ? "pending_chatgpt" : "ready",
+      translation_version: shouldTranslate ? "chatgpt-en-v1" : null,
       updated_at: capturedAt,
     }),
   });
 
   const bytes = Buffer.byteLength(raw, "utf8");
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
-  const translationQueued = shouldAutoTranslate ? queueAiTranslation(sourceTitle) : false;
-  if (shouldAutoTranslate && !translationQueued) {
-    await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({
-        translation_status: "failed",
-        updated_at: new Date().toISOString(),
-      }),
-    });
+  if (shouldTranslate) {
+    console.log(`CHATGPT TRANSLATION PENDING ${sourceTitle}`);
   }
 
   return {
@@ -343,11 +270,7 @@ async function saveRawSource(payload) {
     bytes,
     capturedAt,
     sourceFormat: "namuwiki_raw",
-    translation: translationQueued
-      ? "queued"
-      : shouldAutoTranslate
-        ? "not-configured"
-        : "skipped-related",
+    translation: shouldTranslate ? "pending_chatgpt" : "skipped-related",
   };
 }
 
