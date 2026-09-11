@@ -11,6 +11,7 @@ const ROOT_DIR = process.cwd();
 const THETREE_REPO = "https://github.com/wjdgustn/thetree.git";
 const THETREE_COMMIT = "7435e93e4d695e666aee5eddbabf68533f7b7b21";
 const ENGINE_NAME = "thetree-unmodified-render-poc";
+const DOM_FALLBACK_NORMALIZER_VERSION = 2;
 const CACHE_DIR = path.resolve(ROOT_DIR, ".cache", "thetree-render-poc");
 const ENGINE_PATCHSET = String(process.env.KPOPARKIVE_THETREE_PATCHSET || "").trim();
 const title = decodeURIComponent(process.argv[2] || "RESCENE").normalize("NFKC").trim();
@@ -1424,6 +1425,7 @@ async function main() {
     domFallbackTemplates: injectedFallbacks.injected,
     domFallbackTemplateCount: injectedFallbacks.injected.length,
     domFallbackLanguage: process.env.KPOPARKIVE_RENDER_CONTENT ? "en" : "ko",
+    domFallbackNormalizerVersion: DOM_FALLBACK_NORMALIZER_VERSION,
     domFallbackMediaRewritten: Number(injectedFallbacks.mediaRewritten || 0),
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
