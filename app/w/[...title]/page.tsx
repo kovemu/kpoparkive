@@ -115,31 +115,6 @@ function rewriteInternalHref(href: string, sourceTitle: string) {
   return href;
 }
 
-function englishLinkTooltip(anchor: any) {
-  const visible = normalizeWikiKey(anchor?.text || anchor?.innerText || "");
-  if (visible && !/[가-힣]/.test(visible)) return visible;
-
-  const aria = normalizeWikiKey(anchor?.getAttribute?.("aria-label") || "");
-  if (aria && !/[가-힣]/.test(aria)) return aria;
-
-  return "";
-}
-
-function localizeLinkTooltips(root: any) {
-  for (const anchor of root.querySelectorAll("a[href]")) {
-    const tooltip = englishLinkTooltip(anchor);
-    if (tooltip) {
-      anchor.setAttribute("title", tooltip);
-      anchor.setAttribute("aria-label", tooltip);
-    } else if (/[가-힣]/.test(anchor.getAttribute("title") || "")) {
-      // Do not leak the Korean canonical document name into the English UI.
-      // Image-only links can legitimately have no visible label; until an
-      // English page-title alias exists, no tooltip is better than Korean.
-      anchor.removeAttribute("title");
-    }
-  }
-}
-
 function sanitizeAndHydrate(html: string, assets: Record<string, string>, sourceTitle: string) {
   const root = parse(`<div id="kpop-raw-wiki-root">${html}</div>`);
   const lookup = createNamuAssetLookup(assets);
@@ -151,6 +126,12 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>, source
     for (const name of Object.keys(node.attributes)) {
       if (/^on/i.test(name)) node.removeAttribute(name);
     }
+
+    // Public wiki intentionally has no hover tooltips. The Tree and NamuWiki
+    // frequently emit canonical Korean document names/footnote text via title=,
+    // which leaks untranslated text and creates noisy browser-native tooltips.
+    // Keep aria-label for accessibility, but strip title from every element.
+    node.removeAttribute("title");
 
     const href = node.getAttribute("href") || "";
     if (/^javascript:/i.test(href)) node.removeAttribute("href");
@@ -183,8 +164,6 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>, source
       image.removeAttribute("data-src");
     }
   }
-
-  localizeLinkTooltips(root);
 
   return root.querySelector("#kpop-raw-wiki-root")?.innerHTML || "";
 }
