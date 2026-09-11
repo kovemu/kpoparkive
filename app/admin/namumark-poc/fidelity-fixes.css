@@ -6,6 +6,17 @@
   overflow-wrap: break-word;
 }
 
+/* Keep horizontal table panning available for genuinely wide tables, but do
+   not render a permanent scrollbar track under normal-sized Namu tables. */
+.namumarkPocDocument.wiki-content .wiki-table-wrap {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.namumarkPocDocument.wiki-content .wiki-table-wrap::-webkit-scrollbar {
+  display: none;
+}
+
 /* tablealign=center is emitted on the wrapper. A wrapper without an explicit
    width otherwise stretches to the full article width, so auto margins alone
    do not visibly center the 640px YouTube table. Shrink those wrappers to the
