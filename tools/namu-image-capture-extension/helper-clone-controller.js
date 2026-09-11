@@ -70,12 +70,81 @@ async function kpopControllerJson(path, init = {}) {
   return body;
 }
 
-async function kpopOpenOrReuseRawEditTab(editUrl) {
+async function kpopRestoreRawTabState() {
+  try {
+    const stored = await chrome.storage.local.get([
+      "kpoparkiveRawEditTabId",
+      "kpoparkiveRawVerification",
+    ]);
+    const storedTabId = Number(stored.kpoparkiveRawEditTabId || 0) || null;
+    const verification = stored.kpoparkiveRawVerification || null;
+
+    if (!kpopRawEditTabId && storedTabId) {
+      try {
+        const tab = await chrome.tabs.get(storedTabId);
+        if (tab?.id) kpopRawEditTabId = tab.id;
+      } catch {
+        try { await chrome.storage.local.remove("kpoparkiveRawEditTabId"); } catch {}
+      }
+    }
+
+    if (!kpopRawVerification.active && verification?.active) {
+      const verificationTabId = Number(verification.tabId || 0) || null;
+      if (verificationTabId) {
+        try {
+          const tab = await chrome.tabs.get(verificationTabId);
+          if (tab?.id) {
+            kpopRawVerification = {
+              active: true,
+              sourceTitle: String(verification.sourceTitle || "").normalize("NFKC").trim(),
+              tabId: tab.id,
+              since: Number(verification.since || Date.now()) || Date.now(),
+            };
+            kpopRawEditTabId = tab.id;
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
+async function kpopOpenOrReuseRawEditTab(editUrl, sourceTitle = "") {
+  await kpopRestoreRawTabState();
+
+  const normalizedTitle = String(sourceTitle || "").normalize("NFKC").trim();
+
+  // Human verification owns the current RAW tab. Never navigate it away and
+  // never open another tab while the user is completing verification.
+  if (kpopRawVerification.active) {
+    const verificationTitle = String(kpopRawVerification.sourceTitle || "").normalize("NFKC").trim();
+    if (verificationTitle && normalizedTitle && verificationTitle !== normalizedTitle) {
+      throw new Error(
+        `NamuWiki verification is still in progress for ${verificationTitle}. Complete it in the existing tab before capturing ${normalizedTitle}.`
+      );
+    }
+
+    const verificationTabId = Number(kpopRawVerification.tabId || kpopRawEditTabId || 0) || null;
+    if (verificationTabId) {
+      try {
+        const existing = await chrome.tabs.get(verificationTabId);
+        if (existing?.id) {
+          kpopRawEditTabId = existing.id;
+          await chrome.storage.local.set({ kpoparkiveRawEditTabId: existing.id });
+          return existing;
+        }
+      } catch {}
+    }
+  }
+
   if (kpopRawEditTabId) {
     try {
       const existing = await chrome.tabs.get(kpopRawEditTabId);
       if (existing?.id) {
-        await chrome.tabs.update(existing.id, { url: editUrl, active: false });
+        const currentUrl = String(existing.url || "");
+        if (currentUrl !== editUrl) {
+          await chrome.tabs.update(existing.id, { url: editUrl, active: false });
+        }
+        await chrome.storage.local.set({ kpoparkiveRawEditTabId: existing.id });
         return await chrome.tabs.get(existing.id);
       }
     } catch {
@@ -84,14 +153,16 @@ async function kpopOpenOrReuseRawEditTab(editUrl) {
   }
 
   const created = await chrome.tabs.create({ url: editUrl, active: false });
-  if (!created?.id) throw new Error("Could not open the NamuWiki edit page.");
+  if (!created?.id) throw new Error("Could not open the NamuWiki RAW/edit page.");
   kpopRawEditTabId = created.id;
+  await chrome.storage.local.set({ kpoparkiveRawEditTabId: created.id });
   return created;
 }
 
 async function kpopCloseRawEditTab() {
   const id = kpopRawEditTabId;
   kpopRawEditTabId = null;
+  try { await chrome.storage.local.remove("kpoparkiveRawEditTabId"); } catch {}
   if (!id) return;
   try { await chrome.tabs.remove(id); } catch {}
 }
@@ -528,33 +599,40 @@ async function kpopExtractVisibleRawFromTab(tabId, normalizedTitle) {
 }
 
 async function kpopTryReadOnlyRawTitle(normalizedTitle) {
-  if (kpopRawVerification.active) {
-    await kpopClearVerification();
-  }
+  await kpopRestoreRawTabState();
+
   const rawUrl = `https://namu.wiki/raw/${encodeURIComponent(normalizedTitle)}`;
-  const tab = await kpopOpenOrReuseRawEditTab(rawUrl);
+  const tab = await kpopOpenOrReuseRawEditTab(rawUrl, normalizedTitle);
   if (!tab?.id) throw new Error(`Could not open the NamuWiki RAW page for ${normalizedTitle}.`);
 
-  let verificationShown = false;
+  let verificationShown = Boolean(
+    kpopRawVerification.active &&
+    Number(kpopRawVerification.tabId || 0) === Number(tab.id)
+  );
   let lastResult = null;
   const started = Date.now();
+  const softWaitMs = 2500;
+  const maxHumanWaitMs = 10 * 60 * 1000;
 
-  while (Date.now() - started < 5000 || kpopRawVerification.active) {
+  while (Date.now() - started < maxHumanWaitMs) {
     let current;
-    try { current = await chrome.tabs.get(tab.id); }
-    catch { throw new Error(`The NamuWiki RAW tab for ${normalizedTitle} was closed before capture finished.`); }
+    try {
+      current = await chrome.tabs.get(tab.id);
+    } catch {
+      throw new Error(`The NamuWiki RAW tab for ${normalizedTitle} was closed before capture finished.`);
+    }
 
     if (current.status === "complete") {
       try {
         const result = await kpopWithTimeout(
           chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-raw-page" }),
-          1500,
+          1800,
           "RAW page extraction"
         );
         lastResult = result || lastResult;
 
         if (result?.ok && result.raw) {
-          await kpopClearVerification();
+          if (kpopRawVerification.active) await kpopClearVerification();
           return {
             ...result,
             rawUrl: result.rawUrl || rawUrl,
@@ -562,50 +640,44 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
           };
         }
 
-        if (result?.blocked) {
-          if (!verificationShown) {
-            verificationShown = true;
-            await kpopShowVerification(current, normalizedTitle);
-          }
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          continue;
+        if (result?.blocked && !verificationShown) {
+          verificationShown = true;
+          await kpopShowVerification(current, normalizedTitle);
         }
       } catch {}
 
       try {
         const direct = await kpopExtractVisibleRawFromTab(tab.id, normalizedTitle);
         if (direct?.ok && direct.raw) {
-          await kpopClearVerification();
+          if (kpopRawVerification.active) await kpopClearVerification();
           return direct;
         }
-        if (!lastResult && direct?.error) lastResult = direct;
+        if (direct?.error) lastResult = direct;
       } catch {}
+
+      // NamuWiki sometimes presents a verification/interstitial page that does
+      // not match our challenge selectors. If the RAW source is still absent
+      // after a short grace period, treat the SAME tab as a human-wait tab.
+      // This prevents fail/retry loops from spawning or navigating new tabs.
+      if (!verificationShown && Date.now() - started >= softWaitMs) {
+        verificationShown = true;
+        await kpopShowVerification(current, normalizedTitle);
+      }
     }
 
-    if (!verificationShown && Date.now() - started > 2000) {
-      verificationShown = true;
-      try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, verificationShown ? 1000 : 400));
   }
 
-  if (kpopRawVerification.active) {
-    await kpopClearVerification();
-  }
-
-  return {
-    ok: false,
-    blocked: false,
-    sourceTitle: normalizedTitle,
-    rawUrl,
-    error: lastResult?.error || "NamuWiki RAW view did not expose a valid source payload.",
-  };
+  // Keep the verification state and the existing tab intact. The user can
+  // explicitly cancel/reset from the extension if verification cannot finish.
+  throw new Error(
+    `RAW capture is still waiting for NamuWiki verification for ${normalizedTitle}. The existing RAW tab was kept open; no new tab was created.`
+  );
 }
 
 async function kpopTryEditRawTitle(normalizedTitle) {
   const editUrl = `https://namu.wiki/edit/${encodeURIComponent(normalizedTitle)}`;
-  const editTab = await kpopOpenOrReuseRawEditTab(editUrl);
+  const editTab = await kpopOpenOrReuseRawEditTab(editUrl, normalizedTitle);
   if (!editTab?.id) throw new Error(`Could not open the NamuWiki edit page for ${normalizedTitle}.`);
 
   let extracted = null;
@@ -704,7 +776,9 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
       extractionMethod: extracted.extractionMethod || (sourceMode === "raw" ? "normal-chrome-raw-page" : "normal-chrome-edit"),
     };
   } catch (error) {
-    await kpopClearVerification();
+    // Verification is intentionally sticky: never resume/retry the queue merely
+    // because extraction has not completed yet. Only successful extraction or
+    // an explicit reset/cancel clears the human-verification state.
     throw error;
   }
 }
