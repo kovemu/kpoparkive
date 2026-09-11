@@ -1,5 +1,6 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
+const rawCrawlButton = document.getElementById("rawCrawl");
 const rawButton = document.getElementById("raw");
 const assetsButton = document.getElementById("assets");
 const compareButton = document.getElementById("compare");
@@ -8,6 +9,7 @@ const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
 const health = document.getElementById("health");
 const status = document.getElementById("status");
+const verification = document.getElementById("verification");
 let pollTimer = null;
 let rawAssetPollTimer = null;
 
@@ -42,9 +44,17 @@ async function refreshHealth() {
 function formatJob(job) {
   if (!job || !job.id) return "Ready.";
   const current = Array.isArray(job.current) ? job.current.filter(Boolean).join(" · ") : String(job.current || "");
+  const state = job.paused
+    ? "PAUSED · VERIFICATION"
+    : job.running
+      ? "RUNNING"
+      : job.done
+        ? "DONE"
+        : String(job.status || "IDLE").toUpperCase();
   const lines = [
     `Root: ${job.rootTitle || "—"}`,
-    `State: ${job.running ? "RUNNING" : job.done ? "DONE" : String(job.status || "IDLE").toUpperCase()}`,
+    `Mode: ${job.captureMode === "raw" ? "RAW" : "DOM"}`,
+    `State: ${state}`,
     `Processed: ${job.processed || 0}/${job.maxDocs || 0}`,
     `Captured: ${job.captured || 0}`,
     `Reused: ${job.skipped || 0}`,
@@ -53,6 +63,7 @@ function formatJob(job) {
     `Failed: ${job.failed || 0}`,
   ];
   if (current) lines.push(`Current: ${current}`);
+  if (job.paused && job.pauseReason) lines.push(`Pause reason: ${job.pauseReason}`);
   if (job.lastMedia) {
     lines.push(`Last media: ${job.lastMedia.resolved || 0} new · ${job.lastMedia.skippedKnown || 0} reused · ${job.lastMedia.failed || 0} failed`);
   }
@@ -95,6 +106,7 @@ async function pollStatus() {
     const job = response.job;
     if (job?.id) setStatus(formatJob(job), job.failed ? "" : "ok");
     cloneButton.disabled = Boolean(job?.running);
+    rawCrawlButton.disabled = Boolean(job?.running);
     if (!job?.running && pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -133,6 +145,37 @@ rootInput.addEventListener("change", () => {
 depthInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneDepth: Number(depthInput.value || 1) }));
 maxDocsInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 25) }));
 
+rawCrawlButton.addEventListener("click", async () => {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
+  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 25) || 25));
+
+  await chrome.storage.local.set({
+    kpoparkiveRootTitle: rootTitle,
+    kpoparkiveCloneDepth: maxDepth,
+    kpoparkiveCloneMaxDocs: maxDocs,
+  });
+
+  rawCrawlButton.disabled = true;
+  setStatus(
+    `Starting RAW crawl...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\n\nVerification pauses the entire queue and brings the challenge tab forward.`
+  );
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "kpoparkive-start-helper-clone",
+      options: { rootTitle, maxDepth, maxDocs, captureMode: "raw" },
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not start RAW crawl.");
+    setStatus(formatJob(response.job), "ok");
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollStatus, 1000);
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+    rawCrawlButton.disabled = false;
+  }
+});
+
 cloneButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
@@ -150,7 +193,7 @@ cloneButton.addEventListener("click", async () => {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-start-helper-clone",
-      options: { rootTitle, maxDepth, maxDocs },
+      options: { rootTitle, maxDepth, maxDocs, captureMode: "dom" },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start import.");
     setStatus(formatJob(response.job), "ok");
@@ -272,6 +315,7 @@ resetButton.addEventListener("click", async () => {
     }
     setStatus("Job reset complete.\nQueue, leases and progress were cleared.\nCaptured Supabase documents/media were kept.", "ok");
     cloneButton.disabled = false;
+    rawCrawlButton.disabled = false;
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
   } finally {
@@ -279,6 +323,23 @@ resetButton.addEventListener("click", async () => {
   }
 });
 
+async function pollVerificationStatus() {
+  try {
+    const stored = await chrome.storage.local.get(["kpoparkiveRawVerification"]);
+    const item = stored.kpoparkiveRawVerification || null;
+    if (item?.active) {
+      verification.classList.add("show");
+      verification.textContent =
+        `PAUSED · Complete NamuWiki verification\n${item.sourceTitle || "Current document"}\nThe RAW queue resumes automatically when verification clears.`;
+    } else {
+      verification.classList.remove("show");
+      verification.textContent = "PAUSED · NamuWiki verification required";
+    }
+  } catch {}
+}
+
 refreshHealth();
 pollStatus();
 pollRawAssetStatus(false);
+pollVerificationStatus();
+setInterval(pollVerificationStatus, 600);
