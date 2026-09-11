@@ -725,10 +725,113 @@ function setInlineStyleProperties(element, properties, removeProperties = []) {
   else element.removeAttribute("style");
 }
 
-function normalizePortableFallbackHtml(htmlValue) {
+function fallbackAssetMap(assetRows) {
+  const map = new Map();
+  for (const row of assetRows || []) {
+    const url = assetUrl(row);
+    const key = canonicalAssetKey(row?.source_ref || row?.label || "");
+    if (!url || !key || map.has(key)) continue;
+    map.set(key, { url, row });
+  }
+  return map;
+}
+
+function fallbackFileNameFromHref(href) {
+  const raw = String(href || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw, "https://namu.wiki");
+    const match = url.pathname.match(/^\/w\/(.+)$/i);
+    if (!match?.[1]) return "";
+    let title = match[1];
+    try { title = decodeURIComponent(title); } catch {}
+    title = normalizeTitle(title);
+    return /^(?:파일|File):/i.test(title)
+      ? title.replace(/^(?:파일|File):/i, "")
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function fallbackMediaFileName(node) {
+  const directAlt = normalizeTitle(node?.getAttribute?.("alt") || "");
+  if (/^(?:파일|File):/i.test(directAlt)) {
+    return directAlt.replace(/^(?:파일|File):/i, "");
+  }
+
+  let current = node;
+  for (let depth = 0; current && depth < 5; depth += 1, current = current.parentNode) {
+    const anchors = current.querySelectorAll?.("a[href]") || [];
+    const files = [];
+    const seen = new Set();
+    for (const anchor of anchors) {
+      const name = fallbackFileNameFromHref(anchor.getAttribute("href") || "");
+      const key = canonicalAssetKey(name);
+      if (!name || !key || seen.has(key)) continue;
+      seen.add(key);
+      files.push(name);
+    }
+    if (files.length === 1) return files[0];
+    if (files.length > 1) break;
+  }
+
+  if (directAlt) {
+    const exactAlt = directAlt.replace(/^(?:파일|File):/i, "");
+    if (/\.(?:jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)$/i.test(exactAlt)) return exactAlt;
+  }
+  return "";
+}
+
+function rewriteFallbackMediaToStorage(root, assetRows) {
+  const assets = fallbackAssetMap(assetRows);
+  let rewritten = 0;
+  let remoteRemaining = 0;
+
+  for (const node of root.querySelectorAll("img,video,source")) {
+    const tag = String(node.tagName || "").toLowerCase();
+    const src = String(node.getAttribute("src") || node.getAttribute("data-src") || "");
+    const fileName = fallbackMediaFileName(node);
+    const matched = fileName ? assets.get(canonicalAssetKey(fileName)) : null;
+
+    if (matched?.url) {
+      node.setAttribute("src", matched.url);
+      node.removeAttribute("data-src");
+      node.removeAttribute("data-original");
+      if (tag === "video") {
+        node.setAttribute("preload", "metadata");
+        node.setAttribute("playsinline", "");
+      }
+      rewritten += 1;
+      continue;
+    }
+
+    if (/^(?:https?:)?\/\/i\.namu\.wiki\//i.test(src)) remoteRemaining += 1;
+  }
+
+  // Namu image wrappers commonly contain a data-URI placeholder plus the real
+  // image. Once the real sibling has a self-hosted source the placeholder only
+  // creates duplicate layout/media nodes, so remove it.
+  for (const image of root.querySelectorAll("img")) {
+    const src = String(image.getAttribute("src") || "");
+    if (!/^data:image\//i.test(src)) continue;
+    const parent = image.parentNode;
+    const siblings = parent?.querySelectorAll?.("img") || [];
+    if ([...siblings].some((sibling) =>
+      sibling !== image &&
+      /\/storage\/v1\/object\/public\/wiki-media\//.test(String(sibling.getAttribute("src") || ""))
+    )) {
+      image.remove();
+    }
+  }
+
+  return { rewritten, remoteRemaining };
+}
+
+function normalizePortableFallbackHtml(htmlValue, assetRows = []) {
   let root;
   try { root = parseHtml(String(htmlValue || ""), { comment: false }); }
-  catch { return String(htmlValue || ""); }
+  catch { return { html: String(htmlValue || ""), media: { rewritten: 0, remoteRemaining: 0 } }; }
 
   const displayByTag = {
     table: "table",
@@ -763,17 +866,23 @@ function normalizePortableFallbackHtml(htmlValue) {
     }
   }
 
-  return root.toString();
+  const media = rewriteFallbackMediaToStorage(root, assetRows);
+  return { html: root.toString(), media };
 }
-function injectTemplateDomFallbacks(htmlValue, replacements) {
+function injectTemplateDomFallbacks(htmlValue, replacements, assetRows = []) {
   let html = String(htmlValue || "");
   const injected = [];
+  let mediaRewritten = 0;
+  let remoteMediaRemaining = 0;
   for (const item of replacements || []) {
     if (!html.includes(item.marker)) continue;
-    html = html.split(item.marker).join(normalizePortableFallbackHtml(item.fallback.html));
+    const normalized = normalizePortableFallbackHtml(item.fallback.html, assetRows);
+    html = html.split(item.marker).join(normalized.html);
+    mediaRewritten += Number(normalized.media?.rewritten || 0);
+    remoteMediaRemaining += Number(normalized.media?.remoteRemaining || 0);
     injected.push(item.fallback.templateTitle);
   }
-  return { html, injected };
+  return { html, injected, mediaRewritten, remoteMediaRemaining };
 }
 function sha256Text(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex");
@@ -1192,7 +1301,7 @@ async function main() {
   const injectedYouTube = injectYouTubeMacros(html, preparedYouTube.embeds);
   html = injectedYouTube.html;
 
-  const injectedFallbacks = injectTemplateDomFallbacks(html, templateFallbackReplacements);
+  const injectedFallbacks = injectTemplateDomFallbacks(html, templateFallbackReplacements, assetRows);
   html = injectedFallbacks.html;
 
   const requiredFiles = uniqueNormalizedStrings(Array.isArray(result?.files) ? result.files : []);
@@ -1229,6 +1338,8 @@ async function main() {
     domFallbackTemplates: injectedFallbacks.injected,
     domFallbackTemplateCount: injectedFallbacks.injected.length,
     domFallbackLanguage: process.env.KPOPARKIVE_RENDER_CONTENT ? "en" : "ko",
+    domFallbackMediaRewritten: Number(injectedFallbacks.mediaRewritten || 0),
+    domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
     fallbackExtractorVersion: 2,
     assetReconcilerVersion: 2,
@@ -1264,7 +1375,12 @@ async function main() {
   console.log(`youtube-macros=${meta.youtubeMacros.length} youtube-injected=${meta.youtubeEmbedsInjected.length} youtube-missing=${meta.missingYouTubeEmbeds.length}`);
   if (meta.missingYouTubeEmbeds.length) console.log(`youtube-missing: ${meta.missingYouTubeEmbeds.join(" | ")}`);
   if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
-  if (injectedFallbacks.injected.length) console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
+  if (injectedFallbacks.injected.length) {
+    console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
+    console.log(
+      `dom-fallback-media: rewritten=${injectedFallbacks.mediaRewritten || 0} remote-remaining=${injectedFallbacks.remoteMediaRemaining || 0}`
+    );
+  }
   if (fallbackTranslationQueue.length) console.log(`fallback-translation-queue: ${fallbackTranslationQueue.map((item) => `${item.templateTitle}:${item.translationStatus}${item.changed ? ":changed" : ""}`).join(" | ")}`);
   if (enginePatches.length) console.log(`engine-patches: ${enginePatches.join(" | ")}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
