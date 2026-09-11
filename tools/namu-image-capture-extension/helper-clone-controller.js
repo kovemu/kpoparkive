@@ -33,6 +33,14 @@ async function kpopShowVerification(tab, sourceTitle) {
   } catch {}
 
   await chrome.storage.local.set({ kpoparkiveRawVerification });
+  try {
+    await kpopControllerJson("/clone/pause", {
+      method: "POST",
+      body: JSON.stringify({
+        reason: `human_verification:${kpopRawVerification.sourceTitle || "unknown"}`,
+      }),
+    });
+  } catch {}
 }
 
 async function kpopClearVerification() {
@@ -43,6 +51,9 @@ async function kpopClearVerification() {
     await chrome.action.setTitle({ title: "Kpoparkive Namu Capture" });
   } catch {}
   await chrome.storage.local.set({ kpoparkiveRawVerification });
+  try {
+    await kpopControllerJson("/clone/resume", { method: "POST", body: "{}" });
+  } catch {}
 }
 
 async function kpopControllerJson(path, init = {}) {
@@ -344,6 +355,9 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
       charCount: Number(extracted.charCount || extracted.raw.length),
       extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
     };
+  } catch (error) {
+    await kpopClearVerification();
+    throw error;
   } finally {
     try { await chrome.tabs.remove(editTab.id); } catch {}
   }
