@@ -390,25 +390,32 @@ function directSafe(block: AstBlock) {
   return false;
 }
 
-function candidateElements(root: HTMLElement, leadOnly = false) {
+type CandidateRecord = {
+  candidate: HTMLElement;
+  text: string;
+};
+
+function candidateElements(root: HTMLElement, leadOnly = false): CandidateRecord[] {
   return Array.from(root.querySelectorAll<HTMLElement>(".wiki-paragraph, .wiki-list, ul, ol, blockquote, .wiki-indent, .wiki-quote"))
     .filter((node) => {
-      if (!normalize(node.innerText || node.textContent || "")) return false;
       if (leadOnly && (node.closest(".wiki-heading-content") || node.closest(".wiki-heading"))) return false;
       if (node.closest(".wiki-table")) return false;
       if (node.closest("table")) return false;
       if (node.closest(".wiki-folding")) return false;
       if (node.querySelector("iframe, video, table")) return false;
       return true;
-    });
+    })
+    .map((candidate) => ({ candidate, text: candidate.innerText || candidate.textContent || "" }))
+    .filter((record) => Boolean(normalize(record.text)));
 }
 
-function bestUniqueCandidate(root: HTMLElement, block: AstBlock, used: Set<HTMLElement>, leadOnly = false) {
+function bestUniqueCandidate(candidates: CandidateRecord[], block: AstBlock, used: Set<HTMLElement>) {
   const expected = renderedPlainText(block.raw);
   if (!expected) return null;
-  const scored = candidateElements(root, leadOnly)
-    .filter((candidate) => !used.has(candidate) && !Array.from(used).some((other) => other.contains(candidate) || candidate.contains(other)))
-    .map((candidate) => ({ candidate, score: textScore(expected, candidate.innerText || candidate.textContent || "") }))
+  const usedList = Array.from(used);
+  const scored = candidates
+    .filter(({ candidate }) => !used.has(candidate) && !usedList.some((other) => other.contains(candidate) || candidate.contains(other)))
+    .map(({ candidate, text }) => ({ candidate, score: textScore(expected, text) }))
     .sort((a, b) => b.score - a.score);
   if (!scored.length || scored[0].score < .78) return null;
   if (scored[1] && scored[1].score >= scored[0].score - .04) return null;
@@ -597,10 +604,11 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       const root = section === 0 ? article : roots.get(section);
       if (!root) continue;
       const used = new Set<HTMLElement>();
+      const candidates = candidateElements(root, section === 0);
 
       for (const block of blocks) {
         if (!directSafe(block)) continue;
-        const candidate = bestUniqueCandidate(root, block, used, section === 0);
+        const candidate = bestUniqueCandidate(candidates, block, used);
         if (!candidate) continue;
         used.add(candidate);
 
