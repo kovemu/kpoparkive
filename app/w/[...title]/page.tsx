@@ -1,4 +1,5 @@
 import { parse } from "node-html-parser";
+import { redirect } from "next/navigation";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
@@ -168,10 +169,23 @@ export default async function RawWikiPage({
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
 
-  const docs = await db<DocRow[]>(
+  let docs = await db<DocRow[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
       `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at&limit=1`,
   );
+
+  if (!docs[0]) {
+    const candidates = await db<DocRow[]>(
+      `source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(sourceTitle)}` +
+        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at&limit=5`,
+    );
+    const folded = normalizeWikiKey(sourceTitle).toLocaleLowerCase();
+    const match = candidates.find(
+      (row) => normalizeWikiKey(row.source_title).toLocaleLowerCase() === folded,
+    );
+    docs = match ? [match] : [];
+  }
+
   const source = docs[0];
 
   if (!source) {
@@ -181,6 +195,13 @@ export default async function RawWikiPage({
         <p>This Kpoparkive document has not been imported yet.</p>
       </main>
     );
+  }
+
+  if (source.source_title !== sourceTitle) {
+    redirect(`/w/${source.source_title
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/")}`);
   }
 
   const publishedContentHtml = source.content_status === "published" ? source.content_namumark_html : null;
