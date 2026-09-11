@@ -245,7 +245,7 @@ async function saveRawSource(payload) {
   const validDocument = !isTemplate && raw.length >= 200 && signals >= 2;
   if (!validTemplate && !validDocument) {
     throw new Error(
-      `captured edit source does not look like complete NamuMark (${raw.length} chars, ${signals} signals, trustedEditor=${trustedEditor})`
+      `captured raw source does not look like complete NamuMark (${raw.length} chars, ${signals} signals, trustedSource=${trustedEditor})`
     );
   }
 
@@ -266,7 +266,9 @@ async function saveRawSource(payload) {
     body: JSON.stringify({
       source_wikitext: raw,
       source_format: "namuwiki_raw",
-      source_extraction_version: "normal-chrome-edit-source-v1",
+      source_extraction_version: String(payload?.extractionMethod || "").startsWith("normal-chrome-raw-page:")
+        ? "normal-chrome-raw-view-v1"
+        : "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
       discovered_links: internalLinks,
       translation_status: shouldTranslate ? "pending_chatgpt" : "ready",
