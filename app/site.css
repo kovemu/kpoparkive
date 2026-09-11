@@ -1,95 +1,126 @@
-
 .siteTopbar {
   position: sticky;
   top: 0;
   z-index: 100;
-  border-bottom: 1px solid #e8e8ec;
-  background: rgba(255,255,255,.98);
-  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, .12);
+  background: linear-gradient(135deg, #5522a8 0%, #6d28d9 50%, #8b2bd7 100%);
+  box-shadow: 0 6px 18px rgba(70, 28, 135, .16);
 }
 
 .siteTopbarInner {
-  min-height: 56px;
-  width: min(100%, 980px);
+  min-height: 70px;
+  width: min(100%, 1180px);
   margin: 0 auto;
-  padding: 8px 12px;
+  padding: 10px 16px;
   display: grid;
-  grid-template-columns: auto minmax(0,1fr) auto;
+  grid-template-columns: auto minmax(320px, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
 }
 
 .siteLogo {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: #16161a;
+  gap: 10px;
+  color: #fff;
   text-decoration: none;
-  font-size: 17px;
-  font-weight: 800;
-  letter-spacing: -.03em;
+  font-size: 18px;
+  font-weight: 850;
+  letter-spacing: -.035em;
+  white-space: nowrap;
 }
 
-.siteLogo:hover { text-decoration: none; }
+.siteLogo:hover {
+  color: #fff;
+  text-decoration: none;
+}
 
 .siteLogoMark {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  background: linear-gradient(135deg,#6544d8,#e44ac6);
-  color: white;
-  font-size: 16px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 4px 8px rgba(52, 20, 104, .2));
+}
+
+.siteLogoMark svg {
+  display: block;
+  width: 38px;
+  height: 38px;
+}
+
+.siteLogoText {
+  color: #fff;
 }
 
 .siteSearch {
-  height: 38px;
+  width: 100%;
+  height: 48px;
   display: grid;
-  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
-  border: 1px solid #d8d9df;
-  border-radius: 8px;
-  background: #fff;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 5px 16px rgba(53, 20, 109, .12);
 }
 
 .siteSearch:focus-within {
-  border-color: #8f7adf;
-  box-shadow: 0 0 0 3px rgba(101,68,216,.08);
+  border-color: rgba(255, 255, 255, .82);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, .15), 0 5px 16px rgba(53, 20, 109, .12);
 }
 
 .siteSearch svg {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
   justify-self: center;
   fill: none;
-  stroke: #8a8d96;
-  stroke-width: 1.8;
+  stroke: #7244ca;
+  stroke-width: 1.9;
   stroke-linecap: round;
 }
 
 .siteSearch input {
   width: 100%;
   min-width: 0;
-  height: 36px;
+  height: 46px;
   border: 0;
   outline: 0;
-  padding: 0 9px 0 0;
+  padding: 0 14px 0 0;
   background: transparent;
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   color: #202124;
 }
 
+.siteSearch input::placeholder {
+  color: #9296a2;
+}
+
 .siteLogin {
-  color: #4f3ab6;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 11px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
   text-decoration: none;
   font-size: 13px;
   font-weight: 750;
   white-space: nowrap;
 }
 
-.siteLogin:hover { text-decoration: none; color: #34227d; }
+.siteLogin:hover {
+  color: #fff;
+  text-decoration: none;
+  background: rgba(255, 255, 255, .2);
+}
 
 .homePage,
 .searchPage,
@@ -275,22 +306,66 @@
 }
 
 @media (min-width: 820px) {
-  .siteTopbarInner { padding-left: 0; padding-right: 0; }
+  .siteTopbarInner {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
   .homePage { width: min(100% - 48px, 920px); }
   .homeGrid { grid-template-columns: minmax(0,1.55fr) minmax(260px,.8fr); align-items: start; }
 }
 
 @media (max-width: 560px) {
   .siteTopbarInner {
-    grid-template-columns: auto minmax(0,1fr) auto;
-    padding: 7px 10px;
+    min-height: 76px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 11px 10px;
   }
 
-  .siteLogo span:last-child { display: none; }
-  .siteLogo { gap: 0; }
-  .siteSearch { height: 36px; }
-  .siteSearch input { height: 34px; font-size: 13px; }
-  .siteLogin { font-size: 12px; }
-  .homePage, .searchPage, .simplePage { width: min(100% - 20px,760px); padding-top: 20px; }
-  .homeIntro h1, .searchPage h1, .simplePage h1 { font-size: 24px; }
+  .siteLogo {
+    gap: 0;
+  }
+
+  .siteLogoText {
+    display: none;
+  }
+
+  .siteLogoMark,
+  .siteLogoMark svg {
+    width: 40px;
+    height: 40px;
+  }
+
+  .siteSearch {
+    height: 52px;
+    grid-template-columns: 42px minmax(0, 1fr);
+    border-radius: 15px;
+  }
+
+  .siteSearch input {
+    height: 50px;
+    padding-right: 10px;
+    font-size: 16px;
+  }
+
+  .siteSearch input::placeholder {
+    font-size: 14px;
+  }
+
+  .siteLogin {
+    min-height: 46px;
+    padding: 0 11px;
+    border-radius: 11px;
+    font-size: 12px;
+  }
+
+  .homePage, .searchPage, .simplePage {
+    width: min(100% - 20px,760px);
+    padding-top: 20px;
+  }
+
+  .homeIntro h1, .searchPage h1, .simplePage h1 {
+    font-size: 24px;
+  }
 }
