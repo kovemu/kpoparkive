@@ -236,13 +236,15 @@ async function saveRawSource(payload) {
     /\[include\(/i,
     /\{\{\{#!/,
   ].filter((pattern) => pattern.test(raw)).length;
-  if (raw.length < 200 || signals < 2) {
+  const isTemplate = /^틀:/i.test(sourceTitle);
+  const minChars = isTemplate ? 1 : 200;
+  const minSignals = isTemplate ? 0 : 2;
+  if (raw.length < minChars || signals < minSignals) {
     throw new Error(`captured edit source does not look like complete NamuMark (${raw.length} chars, ${signals} signals)`);
   }
 
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
   const capturedAt = new Date().toISOString();
-  const isTemplate = /^틀:/i.test(sourceTitle);
   const isOperationalTemplate = /^틀:\s*접근\s*제한(?:$|\/)/i.test(sourceTitle);
   const shouldTranslate =
     !isOperationalTemplate &&
