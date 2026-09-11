@@ -57,7 +57,7 @@ function sleep(ms) {
 
 function runRenderer(title) {
   return new Promise((resolve, reject) => {
-    console.log(`ASSISTANT PUBLISH: rendering ${title} with local The Tree...`);
+    console.log(`ASSISTANT RENDER: rendering ${title} with local The Tree...`);
     const child = spawn(
       process.execPath,
       ["--no-node-snapshot", path.resolve("scripts/namumark-thetree-content.mjs"), title],
@@ -116,14 +116,20 @@ async function fetchSourceRenderPending() {
 }
 
 async function fetchPending() {
-  return db(
+  const rows = await db(
     "source_documents?source=eq.namu_mirror" +
       "&translation_status=eq.translated_by_chatgpt" +
       "&content_language=eq.en" +
       "&content_wikitext=not.is.null" +
-      "&select=id,source_title,content_revision_no,translation_version" +
-      "&order=translated_at.asc.nullsfirst,updated_at.asc&limit=10",
+      "&select=id,source_title,content_revision_no,translation_version,translated_at,content_namumark_rendered_at,content_namumark_meta" +
+      "&order=translated_at.asc.nullsfirst,updated_at.asc&limit=30",
   );
+
+  return (rows || []).filter((row) => {
+    const revision = Number(row?.content_revision_no || 0) || 0;
+    const renderedRevision = Number(row?.content_namumark_meta?.editableContent?.revisionNo || 0) || 0;
+    return revision > 0 && renderedRevision !== revision;
+  }).slice(0, 10);
 }
 
 async function resumeReviewedDomFallbackTranslations() {
@@ -163,7 +169,7 @@ async function resumeReviewedDomFallbackTranslations() {
     });
 
     console.log(
-      `ASSISTANT PUBLISH RESUMED ${title}: source hash unchanged and ${fallbacks.length} DOM fallback translation(s) reviewed.`,
+      `ASSISTANT RENDER RESUMED ${title}: source hash unchanged and ${fallbacks.length} DOM fallback translation(s) reviewed.`,
     );
   }
 }
@@ -185,14 +191,14 @@ async function fetchRendered(id) {
   return rows?.[0] || null;
 }
 
-async function publish(row, expectedRevision) {
+async function validateRenderedDraft(row, expectedRevision) {
   if (!row) throw new Error("Rendered document disappeared");
   if (row.translation_status !== "translated_by_chatgpt") {
-    console.log(`ASSISTANT PUBLISH: ${row.source_title} status changed to ${row.translation_status}; skipping.`);
+    console.log(`ASSISTANT RENDER: ${row.source_title} status changed to ${row.translation_status}; skipping.`);
     return false;
   }
   if (Number(row.content_revision_no || 0) !== Number(expectedRevision || 0)) {
-    console.log(`ASSISTANT PUBLISH: ${row.source_title} changed from r${expectedRevision} to r${row.content_revision_no}; rerender deferred.`);
+    console.log(`ASSISTANT RENDER: ${row.source_title} changed from r${expectedRevision} to r${row.content_revision_no}; rerender deferred.`);
     return false;
   }
   if (row.content_language !== "en") throw new Error("content_language is not en");
@@ -211,35 +217,18 @@ async function publish(row, expectedRevision) {
   if (meta?.hasError) throw new Error(`The Tree reported render error ${meta?.errorCode || "unknown"}`);
   if (Number(meta?.missingTemplateCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingTemplateCount} missing template(s)`);
   if (Number(meta?.missingFileCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingFileCount} missing file(s)`);
-  if (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0) throw new Error(`The Tree render still has ${meta.missingYouTubeEmbeds.length} missing YouTube embed(s)`);
+  if (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0) {
+    throw new Error(`The Tree render still has ${meta.missingYouTubeEmbeds.length} missing YouTube embed(s)`);
+  }
 
-  const now = new Date().toISOString();
-  await db(`source_documents?id=eq.${encodeURIComponent(row.id)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      content_status: "published",
-      published_content_wikitext: row.content_wikitext,
-      published_content_language: "en",
-      published_revision_no: row.content_revision_no,
-      published_namumark_html: row.content_namumark_html,
-      published_namumark_meta: meta,
-      published_namumark_engine: row.content_namumark_engine,
-      published_namumark_engine_version: row.content_namumark_engine_version,
-      published_at: now,
-      translation_status: "reviewed",
-      updated_at: now,
-    }),
-  });
-
-  console.log(`ASSISTANT PUBLISH COMPLETE ${row.source_title} r${row.content_revision_no}`);
-  console.log(`Public: https://kpoparkive.vercel.app/w/${row.source_title.split("/").map(encodeURIComponent).join("/")}`);
+  console.log(`ASSISTANT DRAFT READY ${row.source_title} r${row.content_revision_no}`);
+  console.log(`Local preview: http://localhost:3000/w/${row.source_title.split("/").map(encodeURIComponent).join("/")}`);
   return true;
 }
 
 async function markFailed(id, title, error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`ASSISTANT PUBLISH FAILED ${title}: ${message}`);
+  console.error(`ASSISTANT RENDER FAILED ${title}: ${message}`);
   try {
     await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -290,7 +279,7 @@ async function tick() {
         const pendingFallbacks = await pendingDomFallbacks(id);
         if (pendingFallbacks?.length) {
           console.log(
-            `ASSISTANT PUBLISH DEFERRED ${title}: waiting for DOM fallback translation ` +
+            `ASSISTANT RENDER DEFERRED ${title}: waiting for DOM fallback translation ` +
             pendingFallbacks.map((row) => row.template_title).join(" | "),
           );
           continue;
@@ -298,7 +287,7 @@ async function tick() {
 
         await runRenderer(title);
         const rendered = await fetchRendered(id);
-        await publish(rendered, revision);
+        await validateRenderedDraft(rendered, revision);
       } catch (error) {
         await markFailed(id, title, error);
       }
@@ -313,7 +302,7 @@ async function tick() {
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
 
-console.log(`Kpoparkive render/publish worker watching every ${Math.round(POLL_MS / 1000)}s`);
+console.log(`Kpoparkive draft-render worker watching every ${Math.round(POLL_MS / 1000)}s; production publish is manual`);
 await tick();
 while (!stopping) {
   await sleep(POLL_MS);
