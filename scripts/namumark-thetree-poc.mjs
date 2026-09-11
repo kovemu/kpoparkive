@@ -464,6 +464,162 @@ function injectTemplateDomFallbacks(htmlValue, replacements) {
   }
   return { html, injected };
 }
+function sha256Text(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function includeHash(includeSource) {
+  return sha256Text(String(includeSource || "").normalize("NFKC").trim());
+}
+
+function hasHangul(value) {
+  return /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(String(value || ""));
+}
+
+function fallbackTextNodes(htmlValue) {
+  let root;
+  try { root = parseHtml(String(htmlValue || ""), { comment: false }); }
+  catch { return []; }
+  const counts = new Map();
+  const visit = (node, blocked = false) => {
+    const tag = String(node?.tagName || "").toLowerCase();
+    const nextBlocked = blocked || ["script", "style", "noscript"].includes(tag);
+    if (!nextBlocked && Number(node?.nodeType) === 3) {
+      const text = normalizeVisibleText(node.text || node.rawText || "");
+      if (text) counts.set(text, (counts.get(text) || 0) + 1);
+      return;
+    }
+    for (const child of node?.childNodes || []) visit(child, nextBlocked);
+  };
+  visit(root);
+  return [...counts.entries()]
+    .map(([text, count]) => ({ text, count, hasHangul: hasHangul(text) }))
+    .sort((a, b) => Number(b.hasHangul) - Number(a.hasHangul) || a.text.localeCompare(b.text));
+}
+
+function escapeHtmlText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function translateFallbackHtml(sourceHtml, textMap) {
+  let root;
+  try { root = parseHtml(String(sourceHtml || ""), { comment: false }); }
+  catch { return { html: null, unresolvedHangul: ["HTML_PARSE_FAILED"] }; }
+  const map = textMap && typeof textMap === "object" ? textMap : {};
+  const unresolved = new Set();
+  const visit = (node, blocked = false) => {
+    const tag = String(node?.tagName || "").toLowerCase();
+    const nextBlocked = blocked || ["script", "style", "noscript"].includes(tag);
+    if (!nextBlocked && Number(node?.nodeType) === 3) {
+      const raw = String(node.rawText || "");
+      const visible = normalizeVisibleText(node.text || raw);
+      if (!visible) return;
+      if (Object.prototype.hasOwnProperty.call(map, visible)) {
+        const leading = raw.match(/^\s*/)?.[0] || "";
+        const trailing = raw.match(/\s*$/)?.[0] || "";
+        node.rawText = leading + escapeHtmlText(map[visible]) + trailing;
+      } else if (hasHangul(visible)) {
+        unresolved.add(visible);
+      }
+      return;
+    }
+    for (const child of node?.childNodes || []) visit(child, nextBlocked);
+  };
+  visit(root);
+  return { html: root.toString(), unresolvedHangul: [...unresolved] };
+}
+
+async function syncSourceTemplateFallback(target, replacement, sourceBrowserCapturedAt) {
+  const includeSource = String(replacement?.source || "");
+  const hash = includeHash(includeSource);
+  const sourceHtml = String(replacement?.fallback?.html || "");
+  if (!target?.id || !replacement?.title || !hash || !sourceHtml) return null;
+  const sourceHtmlHash = sha256Text(sourceHtml);
+  const existingRows = await db(
+    "template_dom_fallbacks?source_document_id=eq." + encodeURIComponent(target.id) +
+    "&template_title=eq." + encodeURIComponent(replacement.title) +
+    "&include_hash=eq." + encodeURIComponent(hash) +
+    "&select=id,source_html_hash,translation_status,en_html,en_text_map&limit=1"
+  );
+  const existing = existingRows?.[0] || null;
+  const now = new Date().toISOString();
+  const base = {
+    source_document_id: target.id,
+    source_title: target.source_title,
+    template_title: replacement.title,
+    include_source: includeSource,
+    include_hash: hash,
+    source_html: sourceHtml,
+    source_html_hash: sourceHtmlHash,
+    source_text_nodes: fallbackTextNodes(sourceHtml),
+    source_browser_captured_at: sourceBrowserCapturedAt || null,
+    updated_at: now,
+  };
+
+  if (existing?.id && existing.source_html_hash === sourceHtmlHash) {
+    await db("template_dom_fallbacks?id=eq." + encodeURIComponent(existing.id), {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(base),
+    });
+    return { ...existing, ...base, changed: false };
+  }
+
+  const reset = {
+    ...base,
+    en_html: null,
+    en_text_map: {},
+    translation_status: "pending_chatgpt",
+    translated_at: null,
+  };
+  await db("template_dom_fallbacks?on_conflict=source_document_id,template_title,include_hash", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(reset),
+  });
+  return { ...reset, changed: true };
+}
+
+async function translatedTemplateFallbackMap(target, renderSource, missingTemplates) {
+  const output = new Map();
+  if (!target?.id || !missingTemplates?.length) return output;
+  const rows = await db(
+    "template_dom_fallbacks?source_document_id=eq." + encodeURIComponent(target.id) +
+    "&translation_status=in.(translated_by_chatgpt,reviewed)" +
+    "&select=id,template_title,include_hash,source_html,en_html,en_text_map,translation_status&order=updated_at.desc"
+  );
+  const ranges = findIncludeRanges(renderSource);
+  const counts = new Map();
+  for (const range of ranges) counts.set(range.title, (counts.get(range.title) || 0) + 1);
+
+  for (const templateTitle of missingTemplates) {
+    if ((counts.get(templateTitle) || 0) !== 1) continue;
+    const candidates = (rows || []).filter((row) => normalizeTitle(row.template_title) === normalizeTitle(templateTitle));
+    if (candidates.length !== 1) continue;
+    const row = candidates[0];
+    let html = typeof row.en_html === "string" && row.en_html.length > 0 ? row.en_html : null;
+    if (!html) {
+      const translated = translateFallbackHtml(row.source_html, row.en_text_map);
+      if (!translated.html || translated.unresolvedHangul.length) continue;
+      html = translated.html;
+      await db("template_dom_fallbacks?id=eq." + encodeURIComponent(row.id), {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ en_html: html, updated_at: new Date().toISOString() }),
+      });
+    }
+    output.set(templateTitle, {
+      templateTitle,
+      label: plainTemplateLabel(templateTitle),
+      html,
+      translationStatus: row.translation_status,
+    });
+  }
+  return output;
+}
 function uniqueNormalizedStrings(values) {
   const output = [];
   const seen = new Set();
