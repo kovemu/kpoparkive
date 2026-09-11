@@ -66,6 +66,53 @@ function prepareCapturedToggleTarget(target: HTMLElement) {
   }
 }
 
+function capturedCommonAncestor(
+  trigger: HTMLElement,
+  target: HTMLElement,
+  root: HTMLElement,
+) {
+  let current: HTMLElement | null = target.parentElement;
+  while (current && current !== root) {
+    if (current.contains(trigger)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function releaseCapturedToggleFlow(
+  trigger: HTMLElement,
+  target: HTMLElement,
+  root: HTMLElement,
+) {
+  const common = capturedCommonAncestor(trigger, target, root);
+  if (!common) return;
+
+  // Computed-style DOM captures freeze the closed-state height on the widget
+  // container. When a hidden tab/panel is later shown, that fixed pixel height
+  // makes the content overflow over the following wiki sections instead of
+  // participating in normal document flow. Let the dynamic container and the
+  // small wrapper chain above it size from content again.
+  let current: HTMLElement | null = common;
+  let depth = 0;
+  while (current && current !== root && depth < 4) {
+    if (current.style.height && current.style.height !== "auto") {
+      current.style.height = "auto";
+    }
+    if (current.style.maxHeight && current.style.maxHeight !== "none") {
+      current.style.maxHeight = "none";
+    }
+    if (
+      current.style.overflowY === "hidden" ||
+      current.style.overflowY === "clip"
+    ) {
+      current.style.overflowY = "visible";
+    }
+    current.dataset.kpoparkiveDynamicToggleFlow = "1";
+    current = current.parentElement;
+    depth += 1;
+  }
+}
+
 function applyCapturedClassOperation(
   target: HTMLElement,
   operation: string,
@@ -189,7 +236,11 @@ function hydrateTheTreeRuntime() {
         for (const [, targetClass] of actions) {
           if (!targetClass) continue;
           for (const target of Array.from(root.getElementsByClassName(targetClass))) {
-            if (target instanceof HTMLElement) prepareCapturedToggleTarget(target);
+            if (!(target instanceof HTMLElement)) continue;
+            prepareCapturedToggleTarget(target);
+            if (target.dataset.kpoparkiveToggleHiddenPanel === "1") {
+              releaseCapturedToggleFlow(trigger, target, root);
+            }
           }
         }
 
