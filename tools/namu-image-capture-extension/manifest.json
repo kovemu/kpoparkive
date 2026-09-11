@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.8.7",
-  "description": "Resumable NamuWiki import, canonical raw capture, raw asset resolution including video-backed GIF files, and live fidelity comparison.",
-  "permissions": ["activeTab", "storage", "tabs"],
+  "version": "0.9.0",
+  "description": "Raw-first NamuWiki capture with resumable Raw Crawl, verification pause/resume, template reuse, asset recovery, and fidelity debugging.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://namu.wiki/*",
     "https://*.namu.wiki/*",
@@ -21,13 +25,28 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://namu.wiki/w/*", "https://www.namu.wiki/w/*"],
-      "js": ["ad-filter.js", "content.js", "raw-file-media.js", "rendered-dom.js", "rendered-root-guard.js", "links.js", "fidelity-capture.js"],
+      "matches": [
+        "https://namu.wiki/w/*",
+        "https://www.namu.wiki/w/*"
+      ],
+      "js": [
+        "ad-filter.js",
+        "content.js",
+        "raw-file-media.js",
+        "rendered-dom.js",
+        "rendered-root-guard.js",
+        "links.js",
+        "fidelity-capture.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://kpoparkive.vercel.app/admin/thetree-frontend-poc/*"],
-      "js": ["fidelity-capture.js"],
+      "matches": [
+        "https://kpoparkive.vercel.app/admin/thetree-frontend-poc/*"
+      ],
+      "js": [
+        "fidelity-capture.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -37,7 +56,9 @@
         "https://namu.wiki/new_edit_request/*",
         "https://www.namu.wiki/new_edit_request/*"
       ],
-      "js": ["edit-source.js"],
+      "js": [
+        "edit-source.js"
+      ],
       "run_at": "document_idle"
     }
   ]
