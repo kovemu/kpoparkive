@@ -166,7 +166,10 @@ export function buildEnglishLabelIndex(rows = []) {
   for (const row of rows || []) {
     const sourceTitle = normalize(row?.source_title);
     const translatedTitle = cleanEnglishLabel(row?.translated_title);
-    if (sourceTitle && translatedTitle) setExact(sourceTitle, translatedTitle);
+    if (sourceTitle && translatedTitle) {
+      setExact(sourceTitle, translatedTitle);
+      setSuffix(sourceTitle, translatedTitle);
+    }
 
     const content = typeof row?.content_wikitext === "string" ? row.content_wikitext : "";
     if (!content || row?.content_language !== "en") continue;
