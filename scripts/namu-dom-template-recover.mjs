@@ -72,7 +72,7 @@ async function getDocument(templateTitle) {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
     `&source_title=eq.${eq(templateTitle)}` +
-    "&select=id,source_title,source_format,source_wikitext,content_revision_no&limit=1"
+    "&select=id,source_title,source_format,source_wikitext,content_wikitext,content_revision_no&limit=1"
   );
   return rows?.[0] || null;
 }
@@ -143,13 +143,29 @@ async function createOrRefreshSynthetic(ownerTitle, templateTitle, sourceResult,
 
 async function saveEnglish(documentId, templateTitle, englishResult) {
   if (!englishResult?.namumark) return null;
-  const rev = await rpc("save_source_document_revision", {
-    p_document_id: documentId,
-    p_content_wikitext: englishResult.namumark,
-    p_content_language: "en",
-    p_summary: `Synthetic English NamuMark recovered from DOM for ${templateTitle}`,
-    p_editor_label: "DOM Recovery",
-  });
+
+  const rows = await db(
+    `source_documents?id=eq.${eq(documentId)}&select=id,content_wikitext,content_revision_no&limit=1`
+  );
+  const existing = rows?.[0] || null;
+  const sameContent =
+    typeof existing?.content_wikitext === "string" &&
+    existing.content_wikitext === englishResult.namumark;
+
+  let rev = null;
+  if (sameContent) {
+    rev = { revision_no: Number(existing?.content_revision_no || 0) || 0, unchanged: true };
+  } else {
+    const saved = await rpc("save_source_document_revision", {
+      p_document_id: documentId,
+      p_content_wikitext: englishResult.namumark,
+      p_content_language: "en",
+      p_summary: `Synthetic English NamuMark recovered from DOM for ${templateTitle}`,
+      p_editor_label: "DOM Recovery",
+    });
+    rev = saved?.[0] || null;
+  }
+
   await db(`source_documents?id=eq.${eq(documentId)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -160,7 +176,7 @@ async function saveEnglish(documentId, templateTitle, englishResult) {
       updated_at: new Date().toISOString(),
     }),
   });
-  return rev?.[0] || null;
+  return rev;
 }
 
 async function patchFallback(id, patch) {
