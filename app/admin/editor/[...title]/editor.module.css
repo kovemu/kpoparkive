@@ -240,6 +240,122 @@
   font-size: 12px;
 }
 
+.previewHeader {
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ece8f0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.previewHeading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.previewHeading strong {
+  font-size: 14px;
+  color: #242129;
+}
+
+.previewState {
+  color: #81778b;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.previewControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.previewRefresh {
+  border: 0;
+  background: transparent;
+  color: #332e39;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 5px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.previewRefresh:hover {
+  background: #f5f3f8;
+}
+
+.previewRefresh:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.previewDivider {
+  width: 1px;
+  height: 22px;
+  background: #dfdbe4;
+}
+
+.autoRefreshControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #403a47;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.toggleOff,
+.toggleOn {
+  width: 36px;
+  height: 21px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: #b9b6bf;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+.toggleOn {
+  background: #169da0;
+  justify-content: flex-end;
+}
+
+.toggleOff span,
+.toggleOn span {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+  display: block;
+}
+
+.previewSpin {
+  display: inline-block;
+  animation: previewSpin .8s linear infinite;
+}
+
+@keyframes previewSpin {
+  to { transform: rotate(360deg); }
+}
+
 .previewTitleGroup {
   min-width: 0;
   display: grid;
