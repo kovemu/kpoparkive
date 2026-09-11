@@ -211,6 +211,7 @@ async function publish(row, expectedRevision) {
   if (meta?.hasError) throw new Error(`The Tree reported render error ${meta?.errorCode || "unknown"}`);
   if (Number(meta?.missingTemplateCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingTemplateCount} missing template(s)`);
   if (Number(meta?.missingFileCount || 0) > 0) throw new Error(`The Tree render still has ${meta.missingFileCount} missing file(s)`);
+  if (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0) throw new Error(`The Tree render still has ${meta.missingYouTubeEmbeds.length} missing YouTube embed(s)`);
 
   const now = new Date().toISOString();
   await db(`source_documents?id=eq.${encodeURIComponent(row.id)}`, {
