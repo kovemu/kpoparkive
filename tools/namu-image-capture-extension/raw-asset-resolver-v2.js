@@ -40,11 +40,11 @@ async function rawAssetV2HelperHealth() {
   }
 }
 
-async function rawAssetV2Plan(rootTitle, sourceTitle = rootTitle) {
+async function rawAssetV2Plan(rootTitle, sourceTitle = rootTitle, requiredFiles = []) {
   const response = await fetch(`${RAW_ASSET_HELPER_V2}/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rootTitle, sourceTitle }),
+    body: JSON.stringify({ rootTitle, sourceTitle, requiredFiles }),
   });
   const text = await response.text();
   let body;
@@ -97,7 +97,45 @@ function rawAssetV2PickImage(extracted, fileName) {
 
 async function rawAssetV2ExtractUntilFound(tabId, fileName) {
   let lastDebug = null;
-  for (let attempt = 0; attempt < 14; attempt += 1) {
+  let verificationActive = false;
+
+  for (let attempt = 0; attempt < 14 || verificationActive; attempt += 1) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      if (verificationActive && typeof kpopClearVerification === "function") {
+        try { await kpopClearVerification(); } catch {}
+      }
+      throw new Error(`The NamuWiki file tab for ${fileName} was closed before asset capture finished.`);
+    }
+
+    let blocked = false;
+    try {
+      const state = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-detect-namu-verification" });
+      blocked = Boolean(state?.blocked);
+    } catch {}
+
+    if (blocked) {
+      if (!verificationActive) {
+        verificationActive = true;
+        if (typeof kpopShowVerification === "function") {
+          try { await kpopShowVerification(tab, `파일:${fileName}`); } catch {}
+        } else {
+          try { await chrome.tabs.update(tabId, { active: true }); } catch {}
+        }
+      }
+      await wait(1000);
+      continue;
+    }
+
+    if (verificationActive) {
+      verificationActive = false;
+      if (typeof kpopClearVerification === "function") {
+        try { await kpopClearVerification(); } catch {}
+      }
+    }
+
     try {
       const media = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-file-media" });
       if (media?.ok && Array.isArray(media.media) && media.media.length) {
@@ -124,7 +162,7 @@ async function rawAssetV2ExtractUntilFound(tabId, fileName) {
   const detail = lastDebug
     ? ` images=${lastDebug.images || 0}, labeled=${lastDebug.labeledAssets || 0}, anonymous=${lastDebug.anonymousAssets || 0}`
     : "";
-  throw new Error(`Could not locate ${fileName} on its NamuWiki file page.${detail} If verification is visible, complete it and run the resolver again.`);
+  throw new Error(`Could not locate ${fileName} on its NamuWiki file page.${detail}`);
 }
 
 async function rawAssetV2CaptureVideo(rootTitle, sourceTitle, fileName, pageUrl, asset) {
@@ -252,11 +290,11 @@ async function rawAssetV2SaveJob() {
   await chrome.storage.local.set({ kpoparkiveRawAssetJob: rawAssetV2Job });
 }
 
-async function runRawAssetV2Resolver({ rootTitle, sourceTitle }) {
+async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [] }) {
   const health = await rawAssetV2HelperHealth();
   if (!health.ok) throw new Error("Raw asset helper is not running. Restart: npm.cmd run namu:capture-helper");
 
-  const plan = await rawAssetV2Plan(rootTitle, sourceTitle);
+  const plan = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles);
   rawAssetV2Job.required = Number(plan.requiredCount || 0);
   rawAssetV2Job.planned = Number(plan.missingCount || 0);
   rawAssetV2Job.remaining = rawAssetV2Job.planned;
@@ -278,7 +316,7 @@ async function runRawAssetV2Resolver({ rootTitle, sourceTitle }) {
   }
 
   try {
-    const verification = await rawAssetV2Plan(rootTitle, sourceTitle);
+    const verification = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles);
     rawAssetV2Job.remaining = Number(verification.missingCount || 0);
   } catch (error) {
     rawAssetV2Job.errors = [...rawAssetV2Job.errors, `Verification: ${error?.message || error}`].slice(-20);
@@ -293,9 +331,10 @@ function startRawAssetV2Resolver(options = {}) {
   if (rawAssetV2Job.running) throw new Error("Raw asset resolver is already running.");
   const rootTitle = String(options.rootTitle || "RESCENE").normalize("NFKC").trim() || "RESCENE";
   const sourceTitle = String(options.sourceTitle || rootTitle).normalize("NFKC").trim() || rootTitle;
+  const requiredFiles = Array.isArray(options.requiredFiles) ? options.requiredFiles : [];
   rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle };
   rawAssetV2SaveJob();
-  runRawAssetV2Resolver({ rootTitle, sourceTitle }).catch(async (error) => {
+  runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles }).catch(async (error) => {
     rawAssetV2Job.running = false;
     rawAssetV2Job.done = true;
     rawAssetV2Job.failed += 1;
@@ -303,6 +342,26 @@ function startRawAssetV2Resolver(options = {}) {
     await rawAssetV2SaveJob();
   });
   return { ...rawAssetV2Job };
+}
+
+async function rawAssetV2ResolveNow(options = {}) {
+  if (rawAssetV2Job.running) throw new Error("Raw asset resolver is already running.");
+  const rootTitle = String(options.rootTitle || "RESCENE").normalize("NFKC").trim() || "RESCENE";
+  const sourceTitle = String(options.sourceTitle || rootTitle).normalize("NFKC").trim() || rootTitle;
+  const requiredFiles = Array.isArray(options.requiredFiles) ? options.requiredFiles : [];
+  rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle };
+  await rawAssetV2SaveJob();
+  try {
+    await runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles });
+    return { ...rawAssetV2Job };
+  } catch (error) {
+    rawAssetV2Job.running = false;
+    rawAssetV2Job.done = true;
+    rawAssetV2Job.failed += 1;
+    rawAssetV2Job.errors = [...rawAssetV2Job.errors, error?.message || String(error)].slice(-20);
+    await rawAssetV2SaveJob();
+    throw error;
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
