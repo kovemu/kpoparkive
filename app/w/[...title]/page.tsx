@@ -221,7 +221,7 @@ export default async function RawWikiPage({
   }
 
   const assetRows = await dbAll<AssetRow>(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(source.root_title)}&asset_type=eq.image` +
+    `source_asset_queue?asset_type=eq.image` +
       `&select=source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
   );
   const resolvedRows = assetRows.filter((row) => row.status === "resolved");
