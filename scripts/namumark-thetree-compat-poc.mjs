@@ -242,7 +242,10 @@ function joinMultilineDirectiveHeaders(lines, local) {
 }
 
 function applyCompatibility(raw, title, options = {}) {
-  const source = normalizeNewlines(raw);
+  const source = normalizeNewlines(raw).replace(
+    /^\s*\[include\(\s*틀\s*:\s*접근\s*제한(?:\s*,[^\]\r\n]*)?\)\]\s*$/gim,
+    "",
+  );
   const local = {
     commentLinesRemoved: 0,
     commentContinuationLinesRemoved: 0,
