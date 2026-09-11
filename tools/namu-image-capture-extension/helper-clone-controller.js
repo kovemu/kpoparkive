@@ -44,7 +44,6 @@ async function kpopShowVerification(tab, sourceTitle) {
 }
 
 async function kpopClearVerification() {
-  if (!kpopRawVerification.active) return;
   kpopRawVerification = { active: false, sourceTitle: "", tabId: null, since: 0 };
   try {
     await chrome.action.setBadgeText({ text: "" });
