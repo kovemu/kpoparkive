@@ -24,6 +24,8 @@ type SourceRow = {
   content_language: string | null;
   content_status: string | null;
   translation_status: string | null;
+  source_format: string | null;
+  source_fidelity_meta: Record<string, unknown> | null;
   source_namumark_html?: string | null;
 };
 
@@ -467,7 +469,7 @@ async function getSourceRows() {
   if (sourceCache && sourceCache.expiresAt > Date.now()) return sourceCache.rows;
   const rows = await dbAll<SourceRow>(
     "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null" +
-      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,source_namumark_html&order=id.asc",
+      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,source_format,source_fidelity_meta,source_namumark_html&order=id.asc",
   );
   sourceCache = { expiresAt: Date.now() + 60_000, rows };
   return rows;
@@ -490,7 +492,13 @@ export async function renderExactNamuPreview(title: string, source: string, lang
   if (!normalizedTitle) throw new Error("title is required");
   if (!source.trim()) throw new Error("source is empty");
 
-  const rawRows = await getSourceRows();
+  const loadedRawRows = await getSourceRows();
+  const rawRows = loadedRawRows.filter((row) => {
+    const synthetic = String(row.source_format || "") === "namumark-synthetic-dom";
+    if (!synthetic) return true;
+    if (normalizeTitle(row.source_title) === normalizedTitle) return true;
+    return String(row.source_fidelity_meta?.stage || "") === "verified";
+  });
   const target = rawRows.find((row) => normalizeTitle(row.source_title) === normalizedTitle);
   if (!target) throw new Error(`No source document for ${title}`);
 
