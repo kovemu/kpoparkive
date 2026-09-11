@@ -214,8 +214,8 @@ async function buildPlan(payload) {
   }
 
   const rows = await dbAll(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&asset_type=eq.image` +
-    `&select=id,source_document_id,source_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
+    `source_asset_queue?asset_type=eq.image` +
+    `&select=id,source_document_id,root_title,source_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
   );
   const byKey = new Map();
   for (const row of rows) {
