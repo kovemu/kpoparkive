@@ -126,6 +126,48 @@ async function fetchPending() {
   );
 }
 
+async function resumeReviewedDomFallbackTranslations() {
+  const candidates = await db(
+    "source_documents?source=eq.namu_mirror" +
+      "&translation_status=eq.pending_chatgpt" +
+      "&content_language=eq.en" +
+      "&content_wikitext=not.is.null" +
+      "&content_revision_no=gt.0" +
+      "&select=id,source_title,source_hash,translation_source_hash,content_revision_no" +
+      "&order=updated_at.asc&limit=50",
+  );
+
+  for (const row of candidates || []) {
+    const id = String(row?.id || "");
+    const title = String(row?.source_title || "").normalize("NFKC").trim();
+    const sourceHash = String(row?.source_hash || "");
+    const translationSourceHash = String(row?.translation_source_hash || "");
+    if (!id || !title || !sourceHash || sourceHash !== translationSourceHash) continue;
+
+    const fallbacks = await db(
+      `template_dom_fallbacks?source_document_id=eq.${encodeURIComponent(id)}` +
+        "&select=id,template_title,translation_status&order=updated_at.asc&limit=200",
+    );
+    if (!Array.isArray(fallbacks) || !fallbacks.length) continue;
+
+    const allReviewed = fallbacks.every((item) => item?.translation_status === "reviewed");
+    if (!allReviewed) continue;
+
+    await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        translation_status: "translated_by_chatgpt",
+        updated_at: new Date().toISOString(),
+      }),
+    });
+
+    console.log(
+      `ASSISTANT PUBLISH RESUMED ${title}: source hash unchanged and ${fallbacks.length} DOM fallback translation(s) reviewed.`,
+    );
+  }
+}
+
 async function pendingDomFallbacks(sourceDocumentId) {
   if (!sourceDocumentId) return [];
   return db(
@@ -232,6 +274,8 @@ async function tick() {
         );
       }
     }
+
+    await resumeReviewedDomFallbackTranslations();
 
     const pending = await fetchPending();
     for (const item of pending || []) {
