@@ -83,7 +83,7 @@ function meaningfulBorderColor(table) {
     const styles = styleMap(element);
     for (const key of ["border-color", "border-top-color", "border-left-color"]) {
       const color = cssColor(styles.get(key));
-      if (color && !["#dddddd", "#000000", "#212529"].includes(color)) return color;
+      if (color && !["#dddddd", "#ffffff", "#fff", "#000000", "#212529"].includes(color)) return color;
     }
   }
   return "";
