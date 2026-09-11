@@ -97,6 +97,52 @@ function runSourceRenderer(title) {
   });
 }
 
+function runDomRecovery(ownerTitle, templateTitle) {
+  return new Promise((resolve, reject) => {
+    console.log(`DOM RECOVERY: ${ownerTitle} -> ${templateTitle}`);
+    const child = spawn(
+      process.execPath,
+      [path.resolve("scripts/namu-dom-template-recover.mjs"), ownerTitle, templateTitle],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve(true);
+      else if (code === 2) {
+        console.warn(`DOM RECOVERY NEEDS REVIEW ${templateTitle}; keeping captured HTML fallback active.`);
+        resolve(false);
+      } else {
+        reject(new Error(`DOM recovery exited code=${code ?? "null"} signal=${signal || "none"}`));
+      }
+    });
+  });
+}
+
+async function recoverFreshDomFallbacks(ownerTitle) {
+  const rows = await db(
+    "template_dom_fallbacks?source_title=eq." + encodeURIComponent(ownerTitle) +
+      "&source_html=not.is.null" +
+      "&synthetic_document_id=is.null" +
+      "&select=id,template_title,recovery_status,synthetic_document_id" +
+      "&order=updated_at.asc&limit=20",
+  );
+
+  let attempted = 0;
+  let verified = 0;
+  for (const row of rows || []) {
+    const templateTitle = String(row?.template_title || "").normalize("NFKC").trim();
+    if (!templateTitle) continue;
+    attempted += 1;
+    if (await runDomRecovery(ownerTitle, templateTitle)) verified += 1;
+  }
+  return { attempted, verified };
+}
+
 async function fetchSourceRenderPending() {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
@@ -264,6 +310,13 @@ async function tick() {
       if (!title) continue;
       try {
         await runSourceRenderer(title);
+        const recovery = await recoverFreshDomFallbacks(title);
+        if (recovery.attempted > 0) {
+          console.log(
+            `DOM RECOVERY COMPLETE ${title}: ${recovery.verified}/${recovery.attempted} verified; refreshing source render.`,
+          );
+          await runSourceRenderer(title);
+        }
       } catch (error) {
         console.error(
           `SOURCE RENDER FAILED ${title}:`,
