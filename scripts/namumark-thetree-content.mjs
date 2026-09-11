@@ -1,3 +1,8 @@
+import {
+  buildEnglishLabelIndex,
+  localizeEnglishTemplateLabels,
+} from "./namu-english-link-localizer.mjs";
+
 // Exact renderer for editable Kpoparkive content.
 //
 // This wrapper keeps the public integration code separate from the permitted
@@ -9,6 +14,12 @@
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const targetTitle = decodeURIComponent(process.argv[2] || "RESCENE").normalize("NFKC").trim();
 let targetRevisionNo = 0;
+let targetEnglishLinkLocalization = {
+  version: 1,
+  flagOutputsAdded: 0,
+  detailLabelsAdded: 0,
+  unresolved: [],
+};
 
 function normalizeTitle(value) {
   return String(value || "")
@@ -59,6 +70,7 @@ function withContentColumns(rawUrl) {
   fields.add("content_language");
   fields.add("content_status");
   fields.add("translation_status");
+  fields.add("translated_title");
   url.searchParams.set("select", [...fields].join(","));
   return url.toString();
 }
@@ -84,6 +96,8 @@ globalThis.fetch = async (input, init = undefined) => {
     const rows = await response.json();
     if (!Array.isArray(rows)) return responseWithJson(rows, response);
 
+    const englishLabelIndex = buildEnglishLabelIndex(rows);
+
     const transformed = rows.map((row) => {
       const isTarget = normalizeTitle(row?.source_title) === normalizeTitle(targetTitle);
       const hasEditableContent = typeof row?.content_wikitext === "string" && row.content_wikitext.length > 0;
@@ -94,19 +108,40 @@ globalThis.fetch = async (input, init = undefined) => {
 
       if (isTarget) {
         targetRevisionNo = Number(row?.content_revision_no || 0) || 0;
+        if (!hasEditableContent) {
+          return { ...row, source_wikitext: null };
+        }
+
+        const localized = localizeEnglishTemplateLabels(
+          stripEnglishExcludedIncludes(row.content_wikitext),
+          { currentTitle: row.source_title || targetTitle, index: englishLabelIndex },
+        );
+        targetEnglishLinkLocalization = localized.stats;
         return {
           ...row,
-          source_wikitext: hasEditableContent ? stripEnglishExcludedIncludes(row.content_wikitext) : null,
+          source_wikitext: localized.text,
+        };
+      }
+
+      const englishInput = hasReviewedEnglishContent
+        ? row.content_wikitext
+        : row?.content_status === "published" && hasEditableContent
+          ? row.content_wikitext
+          : null;
+
+      if (englishInput) {
+        return {
+          ...row,
+          source_wikitext: localizeEnglishTemplateLabels(
+            englishInput,
+            { currentTitle: row.source_title || "", index: englishLabelIndex },
+          ).text,
         };
       }
 
       return {
         ...row,
-        source_wikitext: hasReviewedEnglishContent
-          ? row.content_wikitext
-          : row?.content_status === "published" && hasEditableContent
-            ? row.content_wikitext
-            : row.source_wikitext,
+        source_wikitext: row.source_wikitext,
       };
     });
 
@@ -126,12 +161,14 @@ globalThis.fetch = async (input, init = undefined) => {
                 revisionNo: targetRevisionNo,
                 note: "Rendered from content_wikitext; captured source_wikitext and source_namumark_* remain unchanged.",
               },
+              englishLinkLocalization: targetEnglishLinkLocalization,
             }
           : {
               editableContent: {
                 revisionNo: targetRevisionNo,
                 note: "Rendered from content_wikitext; captured source_wikitext and source_namumark_* remain unchanged.",
               },
+              englishLinkLocalization: targetEnglishLinkLocalization,
             };
 
         const contentBody = {
