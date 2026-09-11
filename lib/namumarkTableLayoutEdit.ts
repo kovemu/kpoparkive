@@ -23,7 +23,10 @@ function preferredEol(value: string) {
 }
 
 function spanOption(value: string) {
-  return /<\s*(?:-\d+|\|\d+)\s*>/.test(value);
+  // NamuWiki permits alignment/vertical modifiers around span syntax, e.g.
+  // <|2>, <^|2>, <v|3>, <-2>. Any cell option containing these structural
+  // forms is excluded from row/column visual restructuring.
+  return /<[^>\r\n]*(?:\|\s*\d+|-\s*\d+)[^>\r\n]*>/.test(value);
 }
 
 function inspect(tableRaw: string) {
