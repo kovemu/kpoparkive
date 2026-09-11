@@ -100,6 +100,16 @@ function tableOptions(table) {
   return opts.join("");
 }
 
+function inheritedStyleColor(element, property) {
+  let current = element;
+  for (let depth = 0; current && depth < 5; depth += 1, current = current.parentNode) {
+    const color = cssColor(styleMap(current).get(property));
+    if (color) return color;
+    if (String(current?.tagName || "").toLowerCase() === "table") break;
+  }
+  return "";
+}
+
 function cellOptions(cell, tableWidth) {
   const opts = [];
   const colspan = Number(cell.getAttribute("colspan") || 1);
@@ -109,12 +119,8 @@ function cellOptions(cell, tableWidth) {
 
   const styles = styleMap(cell);
   const rowStyles = styleMap(cell.parentNode);
-  const ownBg = cssColor(styles.get("background-color"));
-  const rowBg = cssColor(rowStyles.get("background-color"));
-  const bg = ownBg || rowBg;
-  const ownColor = cssColor(styles.get("color"));
-  const rowColor = cssColor(rowStyles.get("color"));
-  const color = ownColor || rowColor;
+  const bg = inheritedStyleColor(cell, "background-color");
+  const color = inheritedStyleColor(cell, "color");
 
   if (bg) opts.push(`<bgcolor=${bg}>`);
   if (color && color !== "#212529" && color !== "#000000" && !(color === "#ffffff" && !bg)) {
