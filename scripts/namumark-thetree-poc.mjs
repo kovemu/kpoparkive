@@ -491,6 +491,37 @@ async function main() {
   const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
 
+  const referencedTemplates = uniqueNormalizedStrings(
+    extractIncludeTitles(target.source_wikitext).filter((item) => /^틀:/i.test(item))
+  );
+  const availableRawTitles = new Set(
+    (rawRows || [])
+      .filter((row) => row?.source_wikitext)
+      .map((row) => normalizeTitle(row.source_title))
+  );
+  const missingTemplatesBeforeFallback = referencedTemplates.filter(
+    (template) => !availableRawTitles.has(normalizeTitle(template))
+  );
+
+  let renderSource = String(target.source_wikitext);
+  let templateFallbackReplacements = [];
+  if (!process.env.KPOPARKIVE_RENDER_CONTENT && missingTemplatesBeforeFallback.length) {
+    const browserRows = await db(
+      "source_documents?id=eq." + encodeURIComponent(target.id) + "&select=source_browser_article_html&limit=1"
+    );
+    const articleHtml = String(browserRows?.[0]?.source_browser_article_html || "");
+    if (articleHtml) {
+      const fallbackByTitle = new Map();
+      for (const templateTitle of missingTemplatesBeforeFallback) {
+        const fallback = extractTemplateDomFallback(articleHtml, templateTitle);
+        if (fallback) fallbackByTitle.set(templateTitle, fallback);
+      }
+      const prepared = applyTemplateDomFallbackMarkers(renderSource, fallbackByTitle);
+      renderSource = prepared.renderedSource;
+      templateFallbackReplacements = prepared.replacements;
+    }
+  }
+
   // Assets are a global filename registry. A file captured while browsing any
   // NamuWiki document must be reusable by every other document that references
   // the same [[파일:...]] title. Do not scope assets to target.root_title.
@@ -503,6 +534,7 @@ async function main() {
   const targetDoc = virtualWiki.byFullTitle.get(fullTitle(parseDocumentName(title)));
   const targetRev = virtualWiki.histories.find((item) => item.document === targetDoc?.uuid);
   if (!targetDoc || !targetRev) throw new Error(`Virtual The Tree document was not built for ${title}`);
+  targetRev.content = renderSource;
 
   process.chdir(CACHE_DIR);
   global.config = config;
@@ -515,7 +547,7 @@ async function main() {
   const Piscina = requireFromTree("piscina");
   const workerPath = requireFromTree.resolve("./utils/namumark/toHtmlWorker");
 
-  const parsed = parser(String(target.source_wikitext));
+  const parsed = parser(renderSource);
   const pool = new Piscina({
     filename: workerPath,
     workerData: { config, macroPluginPaths: [] },
