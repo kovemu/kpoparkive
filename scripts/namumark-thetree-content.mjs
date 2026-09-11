@@ -19,6 +19,15 @@ function normalizeTitle(value) {
     .trim();
 }
 
+function stripEnglishExcludedIncludes(value) {
+  return String(value || "")
+    .replace(
+      /^\s*\[include\(\s*틀:다른\s*뜻(?:\s*,[^\]\r\n]*)?\)\]\s*$/gim,
+      "",
+    )
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 function requestUrl(input) {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
@@ -49,6 +58,7 @@ function withContentColumns(rawUrl) {
   fields.add("content_revision_no");
   fields.add("content_language");
   fields.add("content_status");
+  fields.add("translation_status");
   url.searchParams.set("select", [...fields].join(","));
   return url.toString();
 }
@@ -77,19 +87,26 @@ globalThis.fetch = async (input, init = undefined) => {
     const transformed = rows.map((row) => {
       const isTarget = normalizeTitle(row?.source_title) === normalizeTitle(targetTitle);
       const hasEditableContent = typeof row?.content_wikitext === "string" && row.content_wikitext.length > 0;
+      const hasReviewedEnglishContent =
+        hasEditableContent &&
+        row?.content_language === "en" &&
+        ["translated_by_chatgpt", "reviewed"].includes(String(row?.translation_status || ""));
+
       if (isTarget) {
         targetRevisionNo = Number(row?.content_revision_no || 0) || 0;
         return {
           ...row,
-          source_wikitext: hasEditableContent ? row.content_wikitext : null,
+          source_wikitext: hasEditableContent ? stripEnglishExcludedIncludes(row.content_wikitext) : null,
         };
       }
 
       return {
         ...row,
-        source_wikitext: row?.content_status === "published" && hasEditableContent
+        source_wikitext: hasReviewedEnglishContent
           ? row.content_wikitext
-          : row.source_wikitext,
+          : row?.content_status === "published" && hasEditableContent
+            ? row.content_wikitext
+            : row.source_wikitext,
       };
     });
 
