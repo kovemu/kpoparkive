@@ -170,14 +170,14 @@ function dimensionsFromBytes(bytes, contentType) {
 }
 
 const queueCache = new Map();
-async function loadQueue(rootTitle, force = false) {
-  const cached = queueCache.get(rootTitle);
+async function loadQueue(_rootTitle, force = false) {
+  const cacheKey = "__global__";
+  const cached = queueCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) return cached;
   const rows = [];
-  for (let offset = 0; offset < 10000; offset += 1000) {
+  for (let offset = 0; offset < 20000; offset += 1000) {
     const batch = await db(
-      `source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}` +
-      `&asset_type=eq.image&select=id,source_title,source_ref,label,status,metadata` +
+      `source_asset_queue?asset_type=eq.image&select=id,root_title,source_title,source_ref,label,status,metadata` +
       `&order=id.asc&limit=1000&offset=${offset}`,
     );
     rows.push(...batch);
@@ -194,7 +194,7 @@ async function loadQueue(rootTitle, force = false) {
     }
   }
   const value = { loadedAt: Date.now(), rows, byKey };
-  queueCache.set(rootTitle, value);
+  queueCache.set(cacheKey, value);
   return value;
 }
 
