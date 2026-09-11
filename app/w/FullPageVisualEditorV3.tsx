@@ -18,7 +18,7 @@ import {
   type V3TableModel,
   type V3TableSurfaceRecord,
 } from "./visualEditorV3TableBridge";
-import { collectV3RegisteredOperations, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
+import { clearV3OperationProviders, collectV3RegisteredOperations, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type AstInlineNode = {
   id: string;
@@ -518,6 +518,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     }
     headingsRef.current = [];
     activeSurfaceRef.current = null;
+    clearV3OperationProviders();
     setActiveHeadingId(null);
     setTemplatePanelOpen(false);
     setSelectedTemplateKey(null);
@@ -567,6 +568,9 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       surface.addEventListener("click", (event) => {
         const anchor = (event.target as Element | null)?.closest?.("a");
         if (anchor) event.preventDefault();
+      });
+      surface.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.preventDefault();
       });
       heading.appendChild(surface);
       records.push(record);

@@ -203,6 +203,12 @@ function makeSurface(host: HTMLElement, model: V3TableModel, field: V3TableField
     const anchor = (event.target as Element | null)?.closest?.("a");
     if (anchor) event.preventDefault();
   });
+  surface.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    document.execCommand("insertHTML", false, "<br>");
+    surface.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 
   if (host.matches("td,th")) {
     const cell = host as HTMLTableCellElement;
