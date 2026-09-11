@@ -330,6 +330,7 @@ async function kpopStartHelperClone(options = {}) {
       maxDepth,
       maxDocs,
       captureMode,
+      refreshExisting: Boolean(options.refreshExisting),
     }),
   });
 
