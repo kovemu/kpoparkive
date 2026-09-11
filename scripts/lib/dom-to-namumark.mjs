@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 
 const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
-export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v3";
+export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v3.1";
 
 function normalizeText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/[\t\r\n ]+/g, " ").trim();
@@ -166,6 +166,55 @@ function childrenToNamu(node, ctx) {
   return (node?.childNodes || []).map((child) => nodeToNamu(child, ctx)).join("");
 }
 
+function internalFileTargetFromHref(href) {
+  if (!isInternalHref(href)) return "";
+  const target = decodeWikiTarget(href);
+  return /^(?:파일|File):/i.test(target) ? target.replace(/^(?:파일|File):/i, "") : "";
+}
+
+function descendantFileTargets(node) {
+  const output = [];
+  const seen = new Set();
+  for (const anchor of node?.querySelectorAll?.("a[href]") || []) {
+    const file = internalFileTargetFromHref(anchor.getAttribute("href") || "");
+    const key = normalizeText(file).toLowerCase();
+    if (!file || !key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(file);
+  }
+  return output;
+}
+
+function preferredVisualImage(node) {
+  const images = node?.querySelectorAll?.("img") || [];
+  const ranked = [...images].map((image) => {
+    const src = String(image.getAttribute("src") || "");
+    const alt = normalizeText(image.getAttribute("alt") || "");
+    const placeholder = /^data:/i.test(src) || !src;
+    return {
+      image,
+      placeholder,
+      alt,
+      area: Math.max(0, Number(layoutWidth(image) || 0)),
+    };
+  }).sort((a, b) =>
+    Number(a.placeholder) - Number(b.placeholder) ||
+    Number(Boolean(b.alt)) - Number(Boolean(a.alt)) ||
+    b.area - a.area
+  );
+  return ranked[0]?.image || null;
+}
+
+function fileMarkup(fileName, imageNode, linkTarget = "") {
+  const file = normalizeText(fileName);
+  if (!file) return "";
+  const params = [];
+  const width = layoutWidth(imageNode);
+  if (width) params.push(`width=${Math.max(12, Math.round(width))}`);
+  if (linkTarget && !/^(?:파일|File):/i.test(linkTarget)) params.push(`link=${linkTarget}`);
+  return `[[파일:${file}${params.length ? "|" + params.join("|") : ""}]]`;
+}
+
 function nodeToNamu(node, ctx) {
   if (!node) return "";
   const type = Number(node.nodeType);
@@ -188,14 +237,36 @@ function nodeToNamu(node, ctx) {
 
   if (tag === "a") {
     const href = String(node.getAttribute("href") || "").trim();
-    const label = childrenToNamu(node, ctx).trim() || textOf(node);
-    if (!href || href === "#") return label;
+    if (!href || href === "#") return childrenToNamu(node, ctx).trim() || textOf(node);
+
     if (isInternalHref(href)) {
       const target = decodeWikiTarget(href);
+      const directFile = /^(?:파일|File):/i.test(target)
+        ? target.replace(/^(?:파일|File):/i, "")
+        : "";
+
+      if (directFile) {
+        return fileMarkup(directFile, preferredVisualImage(node));
+      }
+
       const plainLabel = normalizeText(textOf(node));
+      const nestedFiles = descendantFileTargets(node);
+
+      // Namu's rendered DOM can place an empty /w/파일:* metadata anchor
+      // beside the actual <img> inside a larger article link. Re-emitting that
+      // as a wikilink inside another wikilink creates invalid NamuMark. When
+      // the outer link is image-only, represent the same semantics with the
+      // native file macro's link= parameter.
+      if (!plainLabel && nestedFiles.length === 1) {
+        return fileMarkup(nestedFiles[0], preferredVisualImage(node), target);
+      }
+
+      const label = childrenToNamu(node, ctx).trim() || plainLabel;
       if (normalizeText(target) === plainLabel) return `[[${target}]]`;
       return `[[${target}|${label || plainLabel || target}]]`;
     }
+
+    const label = childrenToNamu(node, ctx).trim() || textOf(node);
     if (/^https?:\/\//i.test(href)) return `[${href}${label ? " " + label : ""}]`;
     return label;
   }
@@ -204,10 +275,13 @@ function nodeToNamu(node, ctx) {
     const alt = normalizeText(node.getAttribute("alt") || "");
     if (/^(?:파일|File):/i.test(alt)) {
       const file = alt.replace(/^(?:파일|File):/i, "");
-      const width = layoutWidth(node);
-      return `[[파일:${file}${width ? `|width=${Math.max(12, Math.round(width))}` : ""}]]`;
+      return fileMarkup(file, node);
     }
-    return alt ? escapeText(alt) : "";
+
+    // alt text on NamuWiki media is accessibility/metadata, not rendered body
+    // text. Emitting it as NamuMark duplicates invisible labels such as
+    // "리브(RESCENE) 로고" and breaks text fidelity.
+    return "";
   }
 
   if (tag === "iframe") {
@@ -302,7 +376,13 @@ function collectDomMetrics(root) {
   const images = new Set();
   for (const anchor of root.querySelectorAll("a")) {
     const href = String(anchor.getAttribute("href") || "");
-    if (isInternalHref(href)) links.add(decodeWikiTarget(href));
+    if (!isInternalHref(href)) continue;
+    const target = decodeWikiTarget(href);
+    if (/^(?:파일|File):/i.test(target)) {
+      images.add(target.replace(/^(?:파일|File):/i, ""));
+    } else {
+      links.add(target);
+    }
   }
   for (const image of root.querySelectorAll("img")) {
     const alt = normalizeText(image.getAttribute("alt") || "");
@@ -336,6 +416,10 @@ function collectNamuMetrics(source) {
   );
   const links = [...String(source || "").matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)]
     .map((m) => m[1]).filter((value) => !/^(?:파일|File):/i.test(value));
+  for (const match of String(source || "").matchAll(/\[\[(?:파일|File):[^\]]*\|link=([^|\]]+)/gi)) {
+    const target = normalizeText(match[1]);
+    if (target) links.push(target);
+  }
   const images = [...String(source || "").matchAll(/\[\[(?:파일|File):([^\]|]+)(?:\|[^\]]+)?\]\]/gi)].map((m) => m[1]);
   const youtube = [...String(source || "").matchAll(/\[youtube\(([A-Za-z0-9_-]{6,20})/gi)].map((m) => m[1]);
   const lines = String(source || "").split(/\r?\n/);
