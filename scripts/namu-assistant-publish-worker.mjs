@@ -5,6 +5,7 @@ import path from "node:path";
 const ROOT = process.cwd();
 const POLL_MS = Math.max(3000, Number(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_POLL_MS || 5000) || 5000);
 const DOM_RECOVERY_TARGET_VERSION = "dom-to-namumark-v3.1";
+const FALLBACK_EXTRACTOR_TARGET_VERSION = 3;
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -288,7 +289,7 @@ async function markSourceRepairVersions(id, { videoAttempted = false } = {}) {
     body: JSON.stringify({
       source_namumark_meta: {
         ...meta,
-        fallbackExtractorVersion: Math.max(2, Number(meta?.fallbackExtractorVersion || 0)),
+        fallbackExtractorVersion: Math.max(FALLBACK_EXTRACTOR_TARGET_VERSION, Number(meta?.fallbackExtractorVersion || 0)),
         assetReconcilerVersion: Math.max(2, Number(meta?.assetReconcilerVersion || 0)),
         domVideoRecoveryVersion: videoAttempted
           ? Math.max(1, Number(meta?.domVideoRecoveryVersion || 0))
@@ -344,6 +345,42 @@ async function resumeRepairableFailedDraft(id) {
     `ASSISTANT SOURCE REPAIR RESUMED ${row.source_title}: source is clean; re-queueing existing English draft r${row.content_revision_no}.`,
   );
   return true;
+}
+
+async function refreshOutdatedHtmlFallbackFrames() {
+  const fallbacks = await db(
+    "template_dom_fallbacks?source_html=not.is.null" +
+      "&select=id,source_title,template_title,recovery_meta,updated_at" +
+      "&order=updated_at.asc&limit=200",
+  );
+
+  const owners = [...new Set(
+    (fallbacks || [])
+      .filter((row) => Boolean(row?.recovery_meta?.htmlFallbackRequired))
+      .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+      .filter(Boolean)
+  )];
+
+  let refreshed = 0;
+  for (const ownerTitle of owners) {
+    const docs = await db(
+      "source_documents?source=eq.namu_mirror" +
+        `&source_title=eq.${encodeURIComponent(ownerTitle)}` +
+        "&select=id,source_title,source_namumark_meta&limit=1",
+    );
+    const doc = docs?.[0] || null;
+    if (!doc?.id) continue;
+    const version = Number(doc?.source_namumark_meta?.fallbackExtractorVersion || 0) || 0;
+    if (version >= FALLBACK_EXTRACTOR_TARGET_VERSION) continue;
+
+    console.log(
+      `DOM FALLBACK FRAME REFRESH ${ownerTitle}: extractor v${version || 0} -> v${FALLBACK_EXTRACTOR_TARGET_VERSION}`,
+    );
+    await runSourceRenderer(ownerTitle);
+    refreshed += 1;
+  }
+
+  return refreshed;
 }
 
 async function recoverOutdatedDomFallbacks() {
@@ -560,6 +597,7 @@ async function tick() {
       }
     }
 
+    await refreshOutdatedHtmlFallbackFrames();
     await recoverOutdatedDomFallbacks();
     await recoverReviewedSyntheticFallbacks();
     await resumeReviewedDomFallbackTranslations();
