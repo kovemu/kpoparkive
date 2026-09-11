@@ -1,4 +1,5 @@
 import { parse } from "node-html-parser";
+import { stripNamuOperationalHtml } from "./namuOperationalNotices";
 
 function rewriteHref(href: string, title: string) {
   if (/^\/edit\//i.test(href)) {
@@ -17,6 +18,7 @@ export function sanitizeExactPreviewHtml(html: string, title: string) {
   const root = parse(`<div id="kpop-preview-root">${html}</div>`);
 
   for (const script of root.querySelectorAll("script")) script.remove();
+  stripNamuOperationalHtml(root);
 
   for (const node of root.querySelectorAll("*")) {
     for (const name of Object.keys(node.attributes)) {
