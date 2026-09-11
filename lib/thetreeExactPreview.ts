@@ -1,3 +1,4 @@
+import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { MessageChannel } from "node:worker_threads";
@@ -490,7 +491,14 @@ export async function renderExactNamuPreview(title: string, source: string) {
     maxThreads: number;
   }) => PiscinaPool;
   const Piscina = require("piscina") as PiscinaConstructor;
-  const workerPath = require.resolve("thetree/utils/namumark/toHtmlWorker");
+  const workerPath = path.join(
+    process.cwd(),
+    "node_modules",
+    "thetree",
+    "utils",
+    "namumark",
+    "toHtmlWorker.js",
+  );
 
   process.env.S3_PUBLIC_HOST = process.env.S3_PUBLIC_HOST || "https://invalid.local/";
   process.env.S3_PUBLIC_HOST_PREFIX = "";
