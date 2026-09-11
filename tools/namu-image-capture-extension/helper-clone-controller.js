@@ -33,7 +33,7 @@ async function kpopShowVerification(tab, sourceTitle) {
     });
   } catch {}
 
-  await chrome.storage.local.set({ kpoparkiveRawVerification });
+  await chrome.storage.local.set({ kpoparkiveRawVerification: kpopRawVerification });
   try {
     await kpopControllerJson("/clone/pause", {
       method: "POST",
@@ -50,7 +50,7 @@ async function kpopClearVerification() {
     await chrome.action.setBadgeText({ text: "" });
     await chrome.action.setTitle({ title: "Kpoparkive Namu Capture" });
   } catch {}
-  await chrome.storage.local.set({ kpoparkiveRawVerification });
+  await chrome.storage.local.set({ kpoparkiveRawVerification: kpopRawVerification });
   try {
     await kpopControllerJson("/clone/resume", { method: "POST", body: "{}" });
   } catch {}
