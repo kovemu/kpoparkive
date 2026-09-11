@@ -6,7 +6,7 @@ import path from "node:path";
 const BUCKET = "wiki-media";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const CACHE_TTL_MS = 15000;
 const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|avif|svg)$/i;
 
@@ -121,16 +121,42 @@ function detectContentType(bytes, declared = "", url = "") {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
   if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp" && /^(?:avif|avis)$/i.test(bytes.subarray(8, 12).toString("ascii"))) return "image/avif";
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii");
+    if (/^(?:avif|avis)$/i.test(brand)) return "image/avif";
+    if (/^(?:isom|iso2|mp41|mp42|avc1|dash|M4V |MSNV)$/i.test(brand)) return "video/mp4";
+  }
   const sample = bytes.subarray(0, Math.min(bytes.length, 8192)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
   if (/^(?:<\?xml[\s\S]{0,1000}?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg\b/i.test(sample)) return "image/svg+xml";
   if (/^image\/(?:jpeg|png|gif|webp|avif|svg\+xml)$/.test(header)) return header;
-  const ext = String(url || "").match(/\.(jpe?g|png|gif|webp|avif|svg)(?:$|[?#])/i)?.[1]?.toLowerCase();
-  return ({ jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" })[ext] || "";
+  if (/^video\/(?:mp4|webm|quicktime)$/.test(header)) return header;
+  const ext = String(url || "").match(/\.(jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)(?:$|[?#])/i)?.[1]?.toLowerCase();
+  return ({
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    gif: "image/gif",
+    webp: "image/webp",
+    avif: "image/avif",
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mov: "video/quicktime",
+  })[ext] || "";
 }
 
 function extensionFor(contentType) {
-  return ({ "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "image/avif": "avif", "image/svg+xml": "svg" })[contentType] || "bin";
+  return ({
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/avif": "avif",
+    "image/svg+xml": "svg",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+  })[contentType] || "bin";
 }
 
 function dimensionsFromBytes(bytes, contentType) {
@@ -337,6 +363,7 @@ async function patchResolved(rows, stored, meta, contentType, width, height, byt
         original_url: meta.sourceUrl,
         browser_source_page: meta.pageUrl,
         content_type: contentType,
+        media_type: String(meta.mediaType || (contentType.startsWith("video/") ? "video" : "image")),
         bytes: byteLength,
         width,
         height,
@@ -416,7 +443,9 @@ const server = http.createServer(async (req, res) => {
     const rawHeight = Math.max(Number(meta.height || 0), Number(parsed.height || 0));
     const width = Number.isFinite(rawWidth) ? Math.max(0, Math.round(rawWidth)) : 0;
     const height = Number.isFinite(rawHeight) ? Math.max(0, Math.round(rawHeight)) : 0;
-    if (contentType !== "image/svg+xml" && (width < 8 || height < 8)) throw new Error(`placeholder-sized image ${width}x${height}`);
+    if (!contentType.startsWith("video/") && contentType !== "image/svg+xml" && (width < 8 || height < 8)) {
+      throw new Error(`placeholder-sized image ${width}x${height}`);
+    }
     if (meta.visual?.valid === false) throw new Error(meta.visual.reason || "browser visual validation failed");
 
     let cache = await loadQueue(meta.rootTitle);
