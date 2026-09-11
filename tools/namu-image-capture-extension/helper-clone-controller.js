@@ -373,6 +373,9 @@ function kpopWithTimeout(promise, timeoutMs, label = "operation") {
 }
 
 async function kpopTryReadOnlyRawTitle(normalizedTitle) {
+  if (kpopRawVerification.active) {
+    await kpopClearVerification();
+  }
   const rawUrl = `https://namu.wiki/raw/${encodeURIComponent(normalizedTitle)}`;
   const tab = await kpopOpenOrReuseRawEditTab(rawUrl);
   if (!tab?.id) throw new Error(`Could not open the NamuWiki RAW page for ${normalizedTitle}.`);
