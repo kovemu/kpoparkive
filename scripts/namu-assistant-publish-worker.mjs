@@ -149,7 +149,7 @@ async function recoverFreshDomFallbacks(ownerTitle) {
   const rows = await db(
     "template_dom_fallbacks?source_title=eq." + encodeURIComponent(ownerTitle) +
       "&source_html=not.is.null" +
-      "&select=id,template_title,recovery_status,recovery_version,translation_status,synthetic_document_id,en_html,source_browser_captured_at" +
+      "&select=id,template_title,recovery_status,recovery_version,recovery_meta,translation_status,synthetic_document_id,en_html,source_browser_captured_at" +
       "&order=updated_at.asc&limit=50",
   );
 
@@ -159,9 +159,14 @@ async function recoverFreshDomFallbacks(ownerTitle) {
     const templateTitle = String(row?.template_title || "").normalize("NFKC").trim();
     if (!templateTitle) continue;
 
+    const needsFidelityComparatorRetry =
+      String(row?.recovery_status || "") !== "verified" &&
+      Number(row?.recovery_meta?.fidelityComparatorVersion || 0) < 2;
+
     let shouldRecover =
       !row?.synthetic_document_id ||
-      String(row?.recovery_version || "") !== DOM_RECOVERY_TARGET_VERSION;
+      String(row?.recovery_version || "") !== DOM_RECOVERY_TARGET_VERSION ||
+      needsFidelityComparatorRetry;
     if (!shouldRecover) {
       const syntheticRows = await db(
         "source_documents?id=eq." + encodeURIComponent(row.synthetic_document_id) +
