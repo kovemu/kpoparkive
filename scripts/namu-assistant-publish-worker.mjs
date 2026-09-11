@@ -148,7 +148,7 @@ async function recoverFreshDomFallbacks(ownerTitle) {
   const rows = await db(
     "template_dom_fallbacks?source_title=eq." + encodeURIComponent(ownerTitle) +
       "&source_html=not.is.null" +
-      "&select=id,template_title,recovery_status,recovery_version,translation_status,synthetic_document_id,en_html" +
+      "&select=id,template_title,recovery_status,recovery_version,translation_status,synthetic_document_id,en_html,source_browser_captured_at" +
       "&order=updated_at.asc&limit=50",
   );
 
@@ -159,19 +159,30 @@ async function recoverFreshDomFallbacks(ownerTitle) {
     if (!templateTitle) continue;
 
     let shouldRecover = !row?.synthetic_document_id;
-    if (!shouldRecover && row?.translation_status === "reviewed" && row?.en_html) {
+    if (!shouldRecover) {
       const syntheticRows = await db(
         "source_documents?id=eq." + encodeURIComponent(row.synthetic_document_id) +
-          "&select=id,content_language,content_wikitext,content_revision_no,translation_status,content_status&limit=1",
+          "&select=id,source_render_manifest,source_fidelity_meta,content_language,content_wikitext,content_revision_no,translation_status,content_status&limit=1",
       );
       const synthetic = syntheticRows?.[0] || null;
+      const captureAt = Date.parse(row?.source_browser_captured_at || "");
+      const generatedAt = Date.parse(synthetic?.source_render_manifest?.generatedAt || "");
+      const sourceRecoveryStale =
+        Number.isFinite(captureAt) &&
+        (!Number.isFinite(generatedAt) || captureAt > generatedAt);
+
       const hasEnglishSynthetic =
         synthetic?.content_language === "en" &&
         typeof synthetic?.content_wikitext === "string" &&
         synthetic.content_wikitext.length > 0 &&
         Number(synthetic?.content_revision_no || 0) > 0 &&
         ["reviewed", "translated_by_chatgpt"].includes(String(synthetic?.translation_status || ""));
-      shouldRecover = !hasEnglishSynthetic;
+      const needsEnglishSynthetic =
+        row?.translation_status === "reviewed" &&
+        Boolean(row?.en_html) &&
+        !hasEnglishSynthetic;
+
+      shouldRecover = sourceRecoveryStale || needsEnglishSynthetic;
     }
 
     if (!shouldRecover) continue;
