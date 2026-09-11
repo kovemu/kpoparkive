@@ -76,6 +76,45 @@ function runRenderer(title) {
   });
 }
 
+function runSourceRenderer(title) {
+  return new Promise((resolve, reject) => {
+    console.log(`SOURCE RENDER: ${title} with local The Tree...`);
+    const child = spawn(
+      process.execPath,
+      ["--no-node-snapshot", path.resolve("scripts/namumark-thetree-compat-poc.mjs"), title],
+      {
+        cwd: ROOT,
+        env: { ...process.env, KPOPARKIVE_RENDER_LANGUAGE: "ko" },
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`The Tree source renderer exited code=${code ?? "null"} signal=${signal || "none"}`));
+    });
+  });
+}
+
+async function fetchSourceRenderPending() {
+  const rows = await db(
+    "source_documents?source=eq.namu_mirror" +
+      "&translation_status=eq.pending_chatgpt" +
+      "&source_wikitext=not.is.null" +
+      "&select=id,source_title,raw_extracted_at,source_namumark_rendered_at" +
+      "&order=updated_at.asc&limit=30",
+  );
+
+  return (rows || []).filter((row) => {
+    const title = String(row?.source_title || "");
+    if (!title || /^틀:/i.test(title)) return false;
+    const rawAt = Date.parse(row?.raw_extracted_at || "");
+    const renderedAt = Date.parse(row?.source_namumark_rendered_at || "");
+    return !Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt);
+  });
+}
+
 async function fetchPending() {
   return db(
     "source_documents?source=eq.namu_mirror" +
@@ -168,6 +207,21 @@ async function tick() {
   if (stopping || busy) return;
   busy = true;
   try {
+    const sourcePending = await fetchSourceRenderPending();
+    for (const item of sourcePending) {
+      if (stopping) break;
+      const title = String(item?.source_title || "").normalize("NFKC").trim();
+      if (!title) continue;
+      try {
+        await runSourceRenderer(title);
+      } catch (error) {
+        console.error(
+          `SOURCE RENDER FAILED ${title}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
     const pending = await fetchPending();
     for (const item of pending || []) {
       if (stopping) break;
@@ -194,7 +248,7 @@ async function tick() {
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
 
-console.log(`Kpoparkive assistant publish worker watching every ${Math.round(POLL_MS / 1000)}s`);
+console.log(`Kpoparkive render/publish worker watching every ${Math.round(POLL_MS / 1000)}s`);
 await tick();
 while (!stopping) {
   await sleep(POLL_MS);
