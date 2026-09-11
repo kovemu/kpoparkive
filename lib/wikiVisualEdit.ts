@@ -250,9 +250,26 @@ export function visualEditorPlainText(root: HTMLElement) {
     .trim();
 }
 
+function focusVisualEditingHost(activeEditor: HTMLElement) {
+  const selection = window.getSelection();
+  const range = selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+  const explicitHost = activeEditor.matches('[contenteditable="true"]')
+    ? activeEditor
+    : activeEditor.closest<HTMLElement>('[contenteditable="true"]');
+  const host = explicitHost || activeEditor;
+  host.focus({ preventScroll: true });
+  if (range && range.startContainer.isConnected && range.endContainer.isConnected && host.contains(range.commonAncestorContainer)) {
+    const current = window.getSelection();
+    if (current) {
+      current.removeAllRanges();
+      current.addRange(range);
+    }
+  }
+}
+
 export function applyVisualCommand(command: VisualEditToolbarCommand, activeEditor: HTMLElement | null) {
   if (!activeEditor) return false;
-  activeEditor.focus();
+  focusVisualEditingHost(activeEditor);
   if (command === "undo") return document.execCommand("undo");
   if (command === "redo") return document.execCommand("redo");
   if (command === "bold") return document.execCommand("bold");
@@ -293,6 +310,6 @@ export function applyVisualCommand(command: VisualEditToolbarCommand, activeEdit
 
 export function applyVisualTextColor(activeEditor: HTMLElement | null, color: string) {
   if (!activeEditor || !/^#[0-9a-f]{6}$/i.test(color)) return false;
-  activeEditor.focus();
+  focusVisualEditingHost(activeEditor);
   return document.execCommand("foreColor", false, color);
 }
