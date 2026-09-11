@@ -225,7 +225,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
   const started = Date.now();
 
   try {
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    for (let attempt = 0; attempt < 90 || kpopRawVerification.active; attempt += 1) {
       let tab;
       try { tab = await chrome.tabs.get(editTab.id); }
       catch { throw new Error(`The NamuWiki edit tab for ${normalizedTitle} was closed before source capture finished.`); }
@@ -253,7 +253,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
 
       if (!verificationShown && Date.now() - started > 8000) {
         verificationShown = true;
-        await kpopShowVerification(tab, normalizedTitle);
+        try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
