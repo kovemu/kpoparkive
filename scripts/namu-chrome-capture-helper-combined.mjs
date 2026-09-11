@@ -260,6 +260,37 @@ async function saveRawSource(payload) {
       isTemplate ||
       process.env.KPOPARKIVE_TRANSLATE_RELATED === "1"
     );
+
+  // Browser retries may POST the exact same canonical RAW multiple times.
+  // Do not advance raw_extracted_at or reset translation_status unless the
+  // source text actually changed, otherwise the render watcher sees a false
+  // "RAW newer than render" condition and loops forever.
+  const existingRows = await db(
+    `source_documents?id=eq.${encodeURIComponent(doc.id)}` +
+    "&select=source_wikitext,raw_extracted_at,translation_status&limit=1",
+  );
+  const existing = existingRows?.[0] || null;
+  const existingRaw = typeof existing?.source_wikitext === "string"
+    ? existing.source_wikitext.replace(/\\r\\n?/g, "\\n").replace(/^\\uFEFF/, "").trim()
+    : "";
+  const bytes = Buffer.byteLength(raw, "utf8");
+
+  if (existingRaw && existingRaw === raw) {
+    console.log(`RAW SOURCE UNCHANGED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB; keeping raw_extracted_at/status`);
+    return {
+      ok: true,
+      status: "unchanged",
+      sourceTitle,
+      rootTitle,
+      charCount: raw.length,
+      bytes,
+      capturedAt: existing?.raw_extracted_at || null,
+      sourceFormat: "namuwiki_raw",
+      internalLinkCount: internalLinks.length,
+      translation: existing?.translation_status || (shouldTranslate ? "pending_chatgpt" : "ready"),
+    };
+  }
+
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -277,7 +308,6 @@ async function saveRawSource(payload) {
     }),
   });
 
-  const bytes = Buffer.byteLength(raw, "utf8");
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
   if (shouldTranslate) {
     console.log(`CHATGPT TRANSLATION PENDING ${sourceTitle}`);
