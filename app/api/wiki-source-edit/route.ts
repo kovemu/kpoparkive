@@ -12,7 +12,6 @@ const MAX_PROPOSALS_PER_HOUR = 6;
 type SourceDocument = {
   id: string;
   source_title: string;
-  source_wikitext: string | null;
   content_wikitext: string | null;
   content_language: string | null;
   translation_status: string | null;
@@ -61,7 +60,7 @@ function normalizeTitle(value: string | null | undefined) {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      "&select=id,source_title,source_wikitext,content_wikitext,content_language,translation_status,content_status,content_revision_no,published_revision_no,source_format,source_fidelity_meta&limit=1",
+      "&select=id,source_title,content_wikitext,content_language,translation_status,content_status,content_revision_no,published_revision_no,source_format,source_fidelity_meta&limit=1",
   );
   return rows[0] || null;
 }
