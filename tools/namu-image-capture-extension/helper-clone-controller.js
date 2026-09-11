@@ -365,6 +365,13 @@ async function kpopResetHelperClone() {
   return result.job || null;
 }
 
+function kpopWithTimeout(promise, timeoutMs, label = "operation") {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)),
+  ]);
+}
+
 async function kpopTryReadOnlyRawTitle(normalizedTitle) {
   const rawUrl = `https://namu.wiki/raw/${encodeURIComponent(normalizedTitle)}`;
   const tab = await kpopOpenOrReuseRawEditTab(rawUrl);
@@ -374,14 +381,18 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
   let lastResult = null;
   const started = Date.now();
 
-  while (Date.now() - started < 6000 || kpopRawVerification.active) {
+  while (Date.now() - started < 5000 || kpopRawVerification.active) {
     let current;
     try { current = await chrome.tabs.get(tab.id); }
     catch { throw new Error(`The NamuWiki RAW tab for ${normalizedTitle} was closed before capture finished.`); }
 
     if (current.status === "complete") {
       try {
-        const result = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-raw-page" });
+        const result = await kpopWithTimeout(
+          chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-raw-page" }),
+          1500,
+          "RAW page extraction"
+        );
         lastResult = result || lastResult;
 
         if (result?.ok && result.raw) {
