@@ -365,11 +365,62 @@ async function kpopResetHelperClone() {
   return result.job || null;
 }
 
-async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
-  const normalizedTitle = String(sourceTitle || "").normalize("NFKC").trim();
-  if (!normalizedTitle) throw new Error("Raw source title is empty.");
+async function kpopTryReadOnlyRawTitle(normalizedTitle) {
+  const rawUrl = `https://namu.wiki/raw/${encodeURIComponent(normalizedTitle)}`;
+  const tab = await kpopOpenOrReuseRawEditTab(rawUrl);
+  if (!tab?.id) throw new Error(`Could not open the NamuWiki RAW page for ${normalizedTitle}.`);
 
-  const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(normalizedTitle)}`;
+  let verificationShown = false;
+  let lastResult = null;
+  const started = Date.now();
+
+  while (Date.now() - started < 6000 || kpopRawVerification.active) {
+    let current;
+    try { current = await chrome.tabs.get(tab.id); }
+    catch { throw new Error(`The NamuWiki RAW tab for ${normalizedTitle} was closed before capture finished.`); }
+
+    if (current.status === "complete") {
+      try {
+        const result = await chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-raw-page" });
+        lastResult = result || lastResult;
+
+        if (result?.ok && result.raw) {
+          await kpopClearVerification();
+          return {
+            ...result,
+            rawUrl: result.rawUrl || rawUrl,
+            trustedEditor: Boolean(result.trustedSource),
+          };
+        }
+
+        if (result?.blocked) {
+          if (!verificationShown) {
+            verificationShown = true;
+            await kpopShowVerification(current, normalizedTitle);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          continue;
+        }
+      } catch {}
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  if (kpopRawVerification.active) {
+    await kpopClearVerification();
+  }
+
+  return {
+    ok: false,
+    blocked: false,
+    sourceTitle: normalizedTitle,
+    rawUrl,
+    error: lastResult?.error || "NamuWiki RAW view did not expose a valid source payload.",
+  };
+}
+
+async function kpopTryEditRawTitle(normalizedTitle) {
   const editUrl = `https://namu.wiki/edit/${encodeURIComponent(normalizedTitle)}`;
   const editTab = await kpopOpenOrReuseRawEditTab(editUrl);
   if (!editTab?.id) throw new Error(`Could not open the NamuWiki edit page for ${normalizedTitle}.`);
@@ -378,45 +429,72 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
   let verificationShown = false;
   const started = Date.now();
 
-  try {
-    for (let attempt = 0; attempt < 90 || kpopRawVerification.active; attempt += 1) {
-      let tab;
-      try { tab = await chrome.tabs.get(editTab.id); }
-      catch { throw new Error(`The NamuWiki edit tab for ${normalizedTitle} was closed before source capture finished.`); }
+  for (let attempt = 0; attempt < 90 || kpopRawVerification.active; attempt += 1) {
+    let tab;
+    try { tab = await chrome.tabs.get(editTab.id); }
+    catch { throw new Error(`The NamuWiki edit tab for ${normalizedTitle} was closed before source capture finished.`); }
 
-      if (tab.status === "complete") {
-        try {
-          const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
-          if (result?.ok && result.raw) {
-            extracted = result;
-            await kpopClearVerification();
-            break;
+    if (tab.status === "complete") {
+      try {
+        const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
+        if (result?.ok && result.raw) {
+          extracted = result;
+          await kpopClearVerification();
+          break;
+        }
+        if (result?.blocked) {
+          if (!verificationShown) {
+            verificationShown = true;
+            await kpopShowVerification(tab, normalizedTitle);
           }
-          if (result?.blocked) {
-            if (!verificationShown) {
-              verificationShown = true;
-              await kpopShowVerification(tab, normalizedTitle);
-            }
-            // Keep this capture suspended on the same document until the
-            // human verification is completed. No following queue item runs.
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            continue;
-          }
-        } catch {}
-      }
-
-      if (!verificationShown && Date.now() - started > 2000) {
-        verificationShown = true;
-        try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          continue;
+        }
+      } catch {}
     }
 
-    if (!extracted?.raw) {
-      let tab = null;
-      try { tab = await chrome.tabs.get(editTab.id); } catch {}
-      await kpopShowVerification(tab, normalizedTitle);
-      throw new Error(`Could not read raw source for ${normalizedTitle} within 90 seconds.`);
+    if (!verificationShown && Date.now() - started > 2000) {
+      verificationShown = true;
+      try { await chrome.tabs.update(editTab.id, { active: true }); } catch {}
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  if (!extracted?.raw) {
+    let tab = null;
+    try { tab = await chrome.tabs.get(editTab.id); } catch {}
+    await kpopShowVerification(tab, normalizedTitle);
+    throw new Error(`Could not read raw source for ${normalizedTitle} within 90 seconds.`);
+  }
+
+  return {
+    ...extracted,
+    editUrl: extracted.editUrl || editUrl,
+    trustedEditor: Boolean(extracted.trustedEditor),
+  };
+}
+
+async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
+  const normalizedTitle = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!normalizedTitle) throw new Error("Raw source title is empty.");
+
+  const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(normalizedTitle)}`;
+  let extracted = null;
+  let sourceMode = "raw";
+
+  try {
+    const rawView = await kpopTryReadOnlyRawTitle(normalizedTitle);
+    if (rawView?.ok && rawView.raw) {
+      extracted = rawView;
+      console.log(
+        `RAW VIEW CAPTURED ${normalizedTitle} -> ${Number(rawView.charCount || rawView.raw.length).toLocaleString()} chars via ${rawView.extractionMethod || "raw-page"}`
+      );
+    } else {
+      sourceMode = "edit";
+      console.log(
+        `RAW VIEW FALLBACK ${normalizedTitle} -> edit (${rawView?.error || "no valid RAW payload"})`
+      );
+      extracted = await kpopTryEditRawTitle(normalizedTitle);
     }
 
     const saved = await kpopControllerJson("/raw-source", {
@@ -425,13 +503,14 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
         rootTitle,
         sourceTitle: normalizedTitle,
         pageUrl: sourcePageUrl,
-        editUrl: extracted.editUrl || editUrl,
+        editUrl: extracted.editUrl || null,
+        rawUrl: extracted.rawUrl || null,
         raw: extracted.raw,
         internalLinks: kpopExtractRawDocumentLinks(extracted.raw, normalizedTitle),
         translate: true,
-        extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+        extractionMethod: extracted.extractionMethod || (sourceMode === "raw" ? "normal-chrome-raw-page" : "normal-chrome-edit"),
         signalScore: Number(extracted.signalScore || 0),
-        trustedEditor: Boolean(extracted.trustedEditor),
+        trustedEditor: Boolean(extracted.trustedEditor || extracted.trustedSource),
       }),
     });
 
@@ -440,19 +519,14 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
       sourceTitle: normalizedTitle,
       raw: extracted.raw,
       charCount: Number(extracted.charCount || extracted.raw.length),
-      extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
+      sourceMode,
+      extractionMethod: extracted.extractionMethod || (sourceMode === "raw" ? "normal-chrome-raw-page" : "normal-chrome-edit"),
     };
   } catch (error) {
     await kpopClearVerification();
-    try {
-      await chrome.tabs.get(editTab.id);
-    } catch {
-      if (kpopRawEditTabId === editTab.id) kpopRawEditTabId = null;
-    }
     throw error;
   }
 }
-
 
 const KPOP_RAW_TEMPLATE_SAFETY_CAP = 1000;
 
