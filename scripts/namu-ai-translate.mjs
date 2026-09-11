@@ -180,9 +180,18 @@ function splitSource(source) {
 }
 
 function stripFence(text) {
-  const trimmed = String(text || "").trim();
+  const value = String(text || "").replace(/\r\n?/g, "\n");
+  const trimmed = value.trim();
   const match = trimmed.match(/^\x60\x60\x60(?:text|markdown|namumark)?\s*\n([\s\S]*?)\n\x60\x60\x60$/i);
-  return match ? match[1] : trimmed;
+  return match ? match[1] : value;
+}
+
+function normalizeOuterBlankLines(source, translated) {
+  const expected = source.split("\n").length;
+  const lines = translated.split("\n");
+  while (lines.length > expected && lines[0]?.trim() === "") lines.shift();
+  while (lines.length > expected && lines[lines.length - 1]?.trim() === "") lines.pop();
+  return lines.join("\n");
 }
 
 async function gemini(prompt, maxOutputTokens = 32768) {
@@ -245,8 +254,11 @@ async function translateChunk(chunk, index, total) {
       const begin = result.indexOf(beginToken);
       const end = result.lastIndexOf(endToken);
       if (begin >= 0 && end > begin) {
-        result = result.slice(begin + beginToken.length, end).replace(/^\s*\n|\n\s*$/g, "");
+        result = result.slice(begin + beginToken.length, end);
+        if (result.startsWith("\n")) result = result.slice(1);
+        if (result.endsWith("\n")) result = result.slice(0, -1);
       }
+      result = normalizeOuterBlankLines(chunk, result);
       result = restoreProtected(chunk, result);
       validateStructure(chunk, result);
       return result;
