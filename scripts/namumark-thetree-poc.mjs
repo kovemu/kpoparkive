@@ -994,13 +994,39 @@ async function main() {
 
   const loadedRawRows = await dbAll(
     "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null" +
-      "&select=id,source_title,root_title,source_wikitext,source_format,source_fidelity_meta&order=id.asc",
+      "&select=id,source_title,root_title,source_wikitext,source_format,raw_extracted_at,source_browser_captured_at,source_fidelity_meta,source_render_manifest&order=id.asc",
+  );
+  const browserCaptureByTitle = new Map(
+    (loadedRawRows || [])
+      .filter((row) => row?.source_title)
+      .map((row) => [normalizeTitle(row.source_title), row.source_browser_captured_at || null]),
   );
   const rawRows = (loadedRawRows || []).filter((row) => {
     const synthetic = String(row?.source_format || "") === "namumark-synthetic-dom";
     if (!synthetic) return true;
     if (normalizeTitle(row?.source_title) === normalizeTitle(title)) return true;
-    return String(row?.source_fidelity_meta?.stage || "") === "verified";
+    if (String(row?.source_fidelity_meta?.stage || "") !== "verified") return false;
+
+    // Verified synthetic RAW is only reusable while its owner DOM capture has
+    // not changed since the synthetic source was generated. A later normal-
+    // Chrome recapture must force the owner back through DOM fallback
+    // extraction + verification instead of silently reusing stale synthetic
+    // template markup forever.
+    const ownerTitle = normalizeTitle(
+      row?.source_render_manifest?.ownerTitle || row?.root_title || "",
+    );
+    const ownerCapturedAt = Date.parse(browserCaptureByTitle.get(ownerTitle) || "");
+    const generatedAt = Date.parse(
+      row?.source_render_manifest?.generatedAt || row?.raw_extracted_at || "",
+    );
+    if (
+      Number.isFinite(ownerCapturedAt) &&
+      Number.isFinite(generatedAt) &&
+      ownerCapturedAt > generatedAt
+    ) {
+      return false;
+    }
+    return true;
   });
   const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
