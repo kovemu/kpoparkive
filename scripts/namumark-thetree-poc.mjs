@@ -310,6 +310,46 @@ function translation(key) {
   return known[key] || key;
 }
 
+function extractIncludeTitles(rawValue) {
+  const raw = String(rawValue || "")
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*##/.test(line))
+    .join("\n");
+  const lower = raw.toLowerCase();
+  const output = [];
+  const seen = new Set();
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    const start = lower.indexOf("[include(", cursor);
+    if (start < 0) break;
+
+    let depth = 0;
+    let comma = -1;
+    let end = -1;
+    for (let i = start + 9; i < raw.length; i += 1) {
+      const ch = raw[i];
+      if (ch === "(") { depth += 1; continue; }
+      if (ch === ")") {
+        if (depth > 0) { depth -= 1; continue; }
+        if (raw[i + 1] === "]") { end = i; break; }
+      }
+      if (ch === "," && depth === 0 && comma < 0) comma = i;
+    }
+
+    if (end < 0) break;
+    const nameEnd = comma >= 0 && comma < end ? comma : end;
+    const title = normalizeTitle(raw.slice(start + 9, nameEnd));
+    if (title && !seen.has(title)) {
+      seen.add(title);
+      output.push(title);
+    }
+    cursor = end + 2;
+  }
+
+  return output;
+}
+
 function uniqueNormalizedStrings(values) {
   const output = [];
   const seen = new Set();
@@ -422,6 +462,15 @@ async function main() {
 
   const requiredFiles = uniqueNormalizedStrings(Array.isArray(result?.files) ? result.files : []);
   const missingFiles = requiredFiles.filter((file) => !hasRenderableFile(virtualWiki, file));
+  const referencedTemplates = uniqueNormalizedStrings(
+    extractIncludeTitles(target.source_wikitext).filter((item) => /^틀:/i.test(item))
+  );
+  const availableRawTitles = new Set(
+    (rawRows || [])
+      .filter((row) => row?.source_wikitext)
+      .map((row) => normalizeTitle(row.source_title))
+  );
+  const missingTemplates = referencedTemplates.filter((template) => !availableRawTitles.has(normalizeTitle(template)));
   const renderedAt = new Date().toISOString();
   const meta = {
     purpose: ENGINE_PATCHSET
@@ -441,6 +490,9 @@ async function main() {
     requiredFiles,
     missingFiles,
     missingFileCount: missingFiles.length,
+    referencedTemplates,
+    missingTemplates,
+    missingTemplateCount: missingTemplates.length,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
@@ -469,7 +521,7 @@ async function main() {
   console.log(`THE TREE POC SAVED ${title}`);
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
-  console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} categories=${meta.categories} headings=${meta.headings}`);
+  console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} categories=${meta.categories} headings=${meta.headings}`);\n  if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
   if (enginePatches.length) console.log(`engine-patches: ${enginePatches.join(" | ")}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
