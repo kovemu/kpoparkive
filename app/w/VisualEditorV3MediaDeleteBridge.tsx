@@ -67,7 +67,9 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
         const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
         const payload = await response.json() as Payload;
         if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load media AST");
-        setItems(payload.media || []);
+        const media = payload.media || [];
+        setItems(media);
+        setSelectedKey(media[0] ? mediaKey(media[0]) : null);
       } catch (error) {
         if (!controller.signal.aborted) console.warn("[VisualEditorV3MediaDeleteBridge]", error);
       }

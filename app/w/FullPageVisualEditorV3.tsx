@@ -446,6 +446,24 @@ function activeAnchor(surface: HTMLElement | null) {
   return anchor && surface.contains(anchor) ? anchor : null;
 }
 
+const EDITABLE_SURFACE_SELECTOR = ".kpoparkiveAstSurface,.kpoparkiveAstHeadingSurface,.kpoparkiveAstTableSurface,.kpoparkiveVe3AtomicSurface";
+
+function currentEditableSurface(fallback: HTMLElement | null) {
+  const selection = window.getSelection();
+  const selectedNode = selection?.anchorNode || selection?.focusNode || null;
+  const selectedElement = selectedNode instanceof Element ? selectedNode : selectedNode?.parentElement;
+  const selectedSurface = selectedElement?.closest<HTMLElement>(EDITABLE_SURFACE_SELECTOR) || null;
+  if (selectedSurface?.isContentEditable) return selectedSurface;
+
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeSurface = active?.matches(EDITABLE_SURFACE_SELECTOR)
+    ? active
+    : active?.closest<HTMLElement>(EDITABLE_SURFACE_SELECTOR) || null;
+  if (activeSurface?.isContentEditable) return activeSurface;
+
+  return fallback?.isConnected && fallback.isContentEditable ? fallback : null;
+}
+
 export default function FullPageVisualEditorV3({ title }: { title: string }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -698,17 +716,19 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
   }, [editing]);
 
   const command = (value: Parameters<typeof applyVisualCommand>[0]) => {
-    const surface = activeSurfaceRef.current;
+    const surface = currentEditableSurface(activeSurfaceRef.current);
     if (!surface) {
       setStatus("Click editable text or a table field first");
       return;
     }
+    activeSurfaceRef.current = surface;
     applyVisualCommand(value, surface);
     setStatus(`${value} applied to AST-backed visual content`);
   };
 
   const unlink = () => {
-    const surface = activeSurfaceRef.current;
+    const surface = currentEditableSurface(activeSurfaceRef.current);
+    if (surface) activeSurfaceRef.current = surface;
     const anchor = activeAnchor(surface);
     if (!surface || !anchor) {
       setStatus("Place the caret inside a link first");
