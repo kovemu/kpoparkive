@@ -286,7 +286,11 @@ export default function VisualEditorV3MediaBridge({ title }: { title: string }) 
     };
     sync();
     window.addEventListener("kpoparkive-ve3-atomic-media-sync", sync);
-    return () => window.removeEventListener("kpoparkive-ve3-atomic-media-sync", sync);
+    window.addEventListener("kpoparkive-ve3-atomic-surfaces-ready", sync);
+    return () => {
+      window.removeEventListener("kpoparkive-ve3-atomic-media-sync", sync);
+      window.removeEventListener("kpoparkive-ve3-atomic-surfaces-ready", sync);
+    };
   }, [editing, items, drafts]);
 
   useEffect(() => {

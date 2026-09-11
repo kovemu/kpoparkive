@@ -101,12 +101,13 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
   }, [editing]);
 
   useEffect(() => {
-    for (const element of Array.from(document.querySelectorAll<HTMLElement>(".kpoparkiveVe3PendingMediaDelete"))) {
-      element.classList.remove("kpoparkiveVe3PendingMediaDelete");
-    }
-    if (!editing) return;
+    const applyPending = () => {
+      for (const element of Array.from(document.querySelectorAll<HTMLElement>(".kpoparkiveVe3PendingMediaDelete"))) {
+        element.classList.remove("kpoparkiveVe3PendingMediaDelete");
+      }
+      if (!editing) return;
 
-    for (const item of items) {
+      for (const item of items) {
       const key = mediaKey(item);
       const chip = atomicMediaChip(item);
       const deleting = deleted.includes(key);
@@ -134,7 +135,12 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
       }
     }
 
-    window.dispatchEvent(new Event("kpoparkive-ve3-atomic-media-sync"));
+      window.dispatchEvent(new Event("kpoparkive-ve3-atomic-media-sync"));
+    };
+
+    applyPending();
+    window.addEventListener("kpoparkive-ve3-atomic-surfaces-ready", applyPending);
+    return () => window.removeEventListener("kpoparkive-ve3-atomic-surfaces-ready", applyPending);
   }, [editing, items, deleted]);
 
   useEffect(() => {

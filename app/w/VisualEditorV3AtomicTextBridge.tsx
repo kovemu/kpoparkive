@@ -283,6 +283,7 @@ export default function VisualEditorV3AtomicTextBridge({ title }: { title: strin
           }
         }
         recordsRef.current=created; setRecords(created);
+        window.dispatchEvent(new Event("kpoparkive-ve3-atomic-surfaces-ready"));
       } catch(error){if(!controller.signal.aborted)console.warn("[VisualEditorV3AtomicTextBridge]",error);}
     })(); }, 30);
     return()=>{window.clearTimeout(timer);controller.abort();cleanup();};
