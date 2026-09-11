@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.11.3",
-  "description": "RAW-view-first NamuWiki capture with visible-challenge verification detection, edit fallback, complete template graph, required assets, and The Tree render.",
+  "version": "0.11.4",
+  "description": "RAW-view-first NamuWiki capture with direct-tab RAW extraction fallback, visible-challenge detection, edit fallback, complete template graph, required assets, and The Tree render.",
   "permissions": [
     "activeTab",
     "storage",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "https://namu.wiki/*",
