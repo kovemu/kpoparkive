@@ -703,8 +703,6 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
   }
 }
 
-const KPOP_RAW_TEMPLATE_SAFETY_CAP = 1000;
-
 async function kpopCaptureRawBundle({
   rootTitle,
   sourceTitle,
@@ -718,83 +716,21 @@ async function kpopCaptureRawBundle({
     sourceTitle: normalizedSource,
   });
 
-  const queue = kpopExtractIncludeTitles(rootCapture.raw)
-    .filter(kpopShouldCaptureTemplate)
-    .map((title) => ({ title, depth: 1 }));
-  const seen = new Set([normalizedSource]);
-  const capturedTemplates = [];
-  const templateFailures = [];
-  const requiredFiles = new Map(
-    kpopExtractRawFileRefs(rootCapture.raw).map((ref) => [ref.toLowerCase(), ref]),
-  );
-  let discoveredTemplates = queue.length;
-
-  while (queue.length) {
-    if (seen.size > KPOP_RAW_TEMPLATE_SAFETY_CAP) {
-      throw new Error(
-        `Template dependency graph exceeded safety cap (${KPOP_RAW_TEMPLATE_SAFETY_CAP}) for ${normalizedSource}. Capture stopped instead of publishing an incomplete page.`
-      );
-    }
-    const item = queue.shift();
-    const title = String(item?.title || "").normalize("NFKC").trim();
-    const depth = Math.max(1, Number(item?.depth || 1) || 1);
-    if (!title || seen.has(title)) continue;
-    seen.add(title);
-    if (!kpopShouldCaptureTemplate(title)) continue;
-
-    try {
-      const known = await kpopRawStatus(title);
-      if (known?.rawCaptured && known?.raw) {
-        capturedTemplates.push({
-          title,
-          depth,
-          charCount: String(known.raw).length,
-          reused: true,
-        });
-        for (const ref of kpopExtractRawFileRefs(known.raw)) {
-          requiredFiles.set(ref.toLowerCase(), ref);
-        }
-
-        const nested = kpopExtractIncludeTitles(known.raw).filter(kpopShouldCaptureTemplate);
-        discoveredTemplates += nested.length;
-        for (const nestedTitle of nested) {
-          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
-        }
-        continue;
-      }
-
-      const capture = await kpopCaptureOneRawTitle({
-        rootTitle: normalizedRoot,
-        sourceTitle: title,
-      });
-      capturedTemplates.push({ title, depth, charCount: capture.charCount, reused: false });
-      for (const ref of kpopExtractRawFileRefs(capture.raw)) {
-        requiredFiles.set(ref.toLowerCase(), ref);
-      }
-
-      const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
-      discoveredTemplates += nested.length;
-      for (const nestedTitle of nested) {
-        if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
-      }
-    } catch (error) {
-      templateFailures.push({
-        title,
-        depth,
-        error: error?.message || String(error),
-      });
-    }
-  }
+  const includeTitles = kpopExtractIncludeTitles(rootCapture.raw)
+    .filter(kpopShouldCaptureTemplate);
+  const requiredFiles = kpopExtractRawFileRefs(rootCapture.raw);
 
   return {
     ...rootCapture,
     sourceTitle: normalizedSource,
     internalLinks: kpopExtractRawDocumentLinks(rootCapture.raw, normalizedSource),
-    templatesCaptured: capturedTemplates.length,
-    templatesDiscovered: discoveredTemplates,
-    templateFailures,
-    capturedTemplates,
-    requiredFiles: [...requiredFiles.values()],
+    templatesCaptured: 0,
+    templatesDiscovered: includeTitles.length,
+    templateFailures: [],
+    capturedTemplates: [],
+    includeTitles,
+    requiredFiles,
+    capturePolicy: "root-raw-only",
   };
 }
 
