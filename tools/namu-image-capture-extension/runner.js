@@ -108,6 +108,39 @@ async function runnerCaptureOneAssetWithRetry(prep, asset) {
   throw lastError || new Error("asset capture failed after retries");
 }
 
+async function runnerResolveRawAssets(sourceTitle, missingFiles, timeoutMs = 20 * 60 * 1000) {
+  const requiredFiles = Array.isArray(missingFiles) ? missingFiles.filter(Boolean) : [];
+  if (!requiredFiles.length) {
+    return { done: true, resolved: 0, failed: 0, remaining: 0, required: 0, processed: 0 };
+  }
+
+  const start = await chrome.runtime.sendMessage({
+    type: "kpoparkive-start-raw-asset-resolver",
+    options: {
+      rootTitle: runnerRootTitle,
+      sourceTitle,
+      requiredFiles,
+    },
+  });
+  if (!start?.ok) throw new Error(start?.error || "Could not start raw asset resolver.");
+
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await chrome.runtime.sendMessage({ type: "kpoparkive-raw-asset-status" });
+    if (!state?.ok) throw new Error(state?.error || "Could not read raw asset resolver status.");
+    const job = state.job || {};
+    runnerSetStatus(
+      `RAW · ${sourceTitle}\nResolving missing media from Namu file pages\n` +
+      `${job.processed || 0}/${job.planned || requiredFiles.length} processed · ` +
+      `${job.resolved || 0} resolved · ${job.failed || 0} failed\n` +
+      (job.current ? `Current: ${job.current}` : "Waiting for media resolver…")
+    );
+    if (job.done && !job.running) return job;
+    await runnerWait(1000);
+  }
+  throw new Error(`Raw asset resolver did not finish within ${Math.round(timeoutMs / 60000)} minutes for ${sourceTitle}`);
+}
+
 async function runnerWaitForSourceRender(sourceTitle, timeoutMs = 180000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -181,14 +214,30 @@ async function runnerProcessTask(task) {
         `RAW · ${sourceTitle}\nRoot source saved\nIncludes referenced: ${raw.templatesDiscovered || 0}\nFiles referenced: ${raw.requiredFiles?.length || 0}\nUsing cached DOM/assets · waiting for The Tree render…`
       );
 
-      const rendered = await runnerWaitForSourceRender(sourceTitle);
-      const missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
-      const missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+      let rendered = await runnerWaitForSourceRender(sourceTitle);
+      let missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
+      let missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+      let rawAssetJob = null;
+
+      if (missingFiles.length) {
+        runnerSetStatus(
+          `RAW · ${sourceTitle}\nThe Tree found ${missingFiles.length} missing media asset(s)\nOpening Namu file pages for exact capture…`
+        );
+        rawAssetJob = await runnerResolveRawAssets(sourceTitle, missingFiles);
+
+        // The raw-asset resolver invalidates the source render after uploads.
+        // Wait for the local The Tree worker to rebuild against storage-backed
+        // media and use that second render as the authoritative result.
+        rendered = await runnerWaitForSourceRender(sourceTitle, 300000);
+        missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
+        missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+      }
 
       runnerSetStatus(
         `RAW · ${sourceTitle}\nThe Tree render complete\nMissing files: ${missingFiles.length}\nMissing templates: ${missingTemplates.length}`
       );
 
+      const unresolvedDependencies = missingFiles.length + missingTemplates.length;
       await runnerJson("/clone/complete", {
         method: "POST",
         body: JSON.stringify({
@@ -196,30 +245,42 @@ async function runnerProcessTask(task) {
           sourceTitle: raw.sourceTitle,
           internalLinks: raw.internalLinks || [],
           media: {
-            resolved: 0,
-            skippedKnown: Number(raw.requiredFiles?.length || 0),
-            failed: 0,
+            resolved: Number(rawAssetJob?.resolved || 0),
+            skippedKnown: Math.max(
+              0,
+              Number(raw.requiredFiles?.length || 0) - Number(rawAssetJob?.planned || 0),
+            ),
+            failed: unresolvedDependencies,
             rawTemplates: 0,
             includesReferenced: Number(raw.templatesDiscovered || 0),
             missingFiles: missingFiles.length,
             missingTemplates: missingTemplates.length,
             missingFileNames: missingFiles.slice(0, 20),
             missingTemplateNames: missingTemplates.slice(0, 20),
-            capturePolicy: "root-raw-only",
+            rawAssetResolver: rawAssetJob
+              ? {
+                  planned: Number(rawAssetJob.planned || 0),
+                  processed: Number(rawAssetJob.processed || 0),
+                  resolved: Number(rawAssetJob.resolved || 0),
+                  failed: Number(rawAssetJob.failed || 0),
+                  remaining: Number(rawAssetJob.remaining || 0),
+                }
+              : null,
+            capturePolicy: "root-raw-plus-missing-media",
           },
         }),
       });
 
       return {
-        ok: true,
+        ok: unresolvedDependencies === 0,
         sourceTitle: raw.sourceTitle,
         rawTemplates: 0,
         includesReferenced: Number(raw.templatesDiscovered || 0),
-        assetsResolved: 0,
+        assetsResolved: Number(rawAssetJob?.resolved || 0),
         missingFiles,
         missingTemplates,
         rendered: true,
-        capturePolicy: "root-raw-only",
+        capturePolicy: "root-raw-plus-missing-media",
       };
     }
 
