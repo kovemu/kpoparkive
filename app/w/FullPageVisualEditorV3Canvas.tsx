@@ -318,6 +318,12 @@ function serializeBlockElement(element: HTMLElement) {
   return editorElementToWikitext(wrapper);
 }
 
+function serializeHeadingElement(element: HTMLElement) {
+  const clone = element.cloneNode(true) as HTMLElement;
+  for (const marker of Array.from(clone.querySelectorAll(".wiki-edit-section"))) marker.remove();
+  return serializeBlockElement(clone);
+}
+
 function selectedCanvasBlock(article: HTMLElement | null) {
   if (!article) return null;
   const selection = window.getSelection();
@@ -638,7 +644,9 @@ export default function FullPageVisualEditorV3Canvas({ title }: { title: string 
       const heading = anchor?.closest<HTMLElement>(".wiki-heading");
       if (!host || !heading) return;
 
-      host.innerHTML = headingEditorHtml(parts.wikitext);
+      const markerHtml = marker.outerHTML;
+      host.innerHTML = `${headingEditorHtml(parts.wikitext)}${markerHtml}`;
+      host.querySelector<HTMLElement>(".wiki-edit-section")?.setAttribute("contenteditable", "false");
       host.classList.add("kpoparkiveAstHeadingSurface", "kpoparkiveVe3CanvasBlock");
       host.dataset.ve3NodeId = block.id;
       host.dataset.ve3NodeType = "heading";
@@ -814,7 +822,7 @@ export default function FullPageVisualEditorV3Canvas({ title }: { title: string 
       }
       const parts = headingParts(record.originalWikitext);
       if (!parts) continue;
-      const inner = serializeBlockElement(record.element).trim();
+      const inner = serializeHeadingElement(record.element).trim();
       const marks = "=".repeat(record.level);
       const wikitext = `${marks} ${inner} ${marks}${parts.eol}`;
       if (wikitext !== record.originalWikitext) {
