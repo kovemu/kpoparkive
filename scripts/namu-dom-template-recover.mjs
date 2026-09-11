@@ -181,6 +181,58 @@ function runRenderer(templateTitle) {
   if (result.status !== 0) throw new Error(`The Tree render exited with ${result.status}`);
 }
 
+function runContentRenderer(title) {
+  const result = spawnSync(
+    process.execPath,
+    ["--no-node-snapshot", "scripts/namumark-thetree-content.mjs", title],
+    { cwd: ROOT_DIR, env: process.env, stdio: "inherit" }
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`English The Tree render exited with ${result.status}`);
+}
+
+async function publishRenderedContent(title) {
+  const rows = await db(
+    "source_documents?source=eq.namu_mirror" +
+    `&source_title=eq.${eq(title)}` +
+    "&select=id,source_title,content_wikitext,content_language,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_engine,content_namumark_engine_version&limit=1"
+  );
+  const row = rows?.[0];
+  if (!row?.id || !row?.content_wikitext || !row?.content_namumark_html) {
+    throw new Error(`Rendered English content missing for ${title}`);
+  }
+  const meta = row.content_namumark_meta || {};
+  if (meta.hasError) throw new Error(`The Tree content render error for ${title}: ${meta.errorCode || "unknown"}`);
+  if (Number(meta.missingFileCount || 0) > 0) throw new Error(`${title} still has ${meta.missingFileCount} missing file(s)`);
+  if (Number(meta.missingTemplateCount || 0) > 0) throw new Error(`${title} still has ${meta.missingTemplateCount} missing template(s)`);
+  if (Array.isArray(meta.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length) {
+    throw new Error(`${title} still has ${meta.missingYouTubeEmbeds.length} missing YouTube embed(s)`);
+  }
+  const now = new Date().toISOString();
+  await db(`source_documents?id=eq.${eq(row.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      content_status: "published",
+      published_content_wikitext: row.content_wikitext,
+      published_content_language: row.content_language || "en",
+      published_revision_no: Number(row.content_revision_no || 0),
+      published_namumark_html: row.content_namumark_html,
+      published_namumark_meta: meta,
+      published_namumark_engine: row.content_namumark_engine,
+      published_namumark_engine_version: row.content_namumark_engine_version,
+      published_at: now,
+      translation_status: "reviewed",
+      updated_at: now,
+    }),
+  });
+  return {
+    id: row.id,
+    revisionNo: Number(row.content_revision_no || 0),
+    htmlLength: String(row.content_namumark_html || "").length,
+  };
+}
+
 async function fetchRendered(documentId) {
   const rows = await db(
     `source_documents?id=eq.${eq(documentId)}` +
@@ -280,7 +332,24 @@ async function main() {
 
   console.log(`\nVerification score=${fidelity.score} threshold=${VERIFY_THRESHOLD} → ${verified ? "VERIFIED" : "NEEDS REVIEW"}`);
   console.log(`text=${fidelity.textTokenSimilarity.toFixed(3)} links=${fidelity.linkSimilarity.toFixed(3)} images=${fidelity.imageSimilarity.toFixed(3)} tables=${fidelity.tableSimilarity.toFixed(3)} rows=${fidelity.rowSimilarity.toFixed(3)} cells=${fidelity.cellSimilarity.toFixed(3)} folding=${fidelity.foldingSimilarity.toFixed(3)}`);
-  if (!verified) process.exitCode = 2;
+
+  if (!verified) {
+    console.log("Synthetic RAW was not promoted. Existing HTML fallback remains active.");
+    process.exitCode = 2;
+    return;
+  }
+
+  if (englishResult) {
+    console.log(`\nRendering English synthetic template: ${templateTitle}`);
+    runContentRenderer(templateTitle);
+    const templatePublished = await publishRenderedContent(templateTitle);
+    console.log(`Synthetic template published: ${templateTitle} r${templatePublished.revisionNo} html=${templatePublished.htmlLength.toLocaleString()}`);
+
+    console.log(`\nRe-rendering owner with synthetic template: ${ownerTitle}`);
+    runContentRenderer(ownerTitle);
+    const ownerPublished = await publishRenderedContent(ownerTitle);
+    console.log(`Owner republished: ${ownerTitle} r${ownerPublished.revisionNo} html=${ownerPublished.htmlLength.toLocaleString()}`);
+  }
 }
 
 main().catch((error) => {
