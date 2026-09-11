@@ -10,6 +10,47 @@ function sourceTitleFromSegments(segments: string[]) {
     .trim();
 }
 
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co")
+  .trim()
+  .replace(/\/$/, "");
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+async function displayTitleFor(sourceTitle: string) {
+  if (!SERVICE_ROLE_KEY) return sourceTitle;
+  try {
+    const response = await fetch(
+      SUPABASE_URL +
+        "/rest/v1/source_documents?source=eq.namu_mirror&source_title=eq." +
+        encodeURIComponent(sourceTitle) +
+        "&select=translated_title,content_language,content_status&limit=1",
+      {
+        headers: {
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: "Bearer " + SERVICE_ROLE_KEY,
+        },
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) return sourceTitle;
+    const rows = await response.json() as Array<{
+      translated_title: string | null;
+      content_language: string | null;
+      content_status: string | null;
+    }>;
+    const row = rows[0];
+    if (
+      row?.content_status === "published" &&
+      row?.content_language === "en" &&
+      row?.translated_title?.trim()
+    ) {
+      return row.translated_title.trim();
+    }
+  } catch {
+    // Fall back to the captured source title if metadata lookup fails.
+  }
+  return sourceTitle;
+}
+
 export default async function WikiTitleLayout({
   children,
   params,
@@ -18,7 +59,8 @@ export default async function WikiTitleLayout({
   params: Promise<{ title: string[] }>;
 }) {
   const { title: segments } = await params;
-  const title = sourceTitleFromSegments(segments);
+  const sourceTitle = sourceTitleFromSegments(segments);
+  const title = await displayTitleFor(sourceTitle);
 
   return (
     <>
@@ -58,7 +100,7 @@ export default async function WikiTitleLayout({
           transform: rotate(-45deg) !important;
         }
       `}</style>
-      <WikiShell title={title}>{children}</WikiShell>
+      <WikiShell title={title} sourceTitle={sourceTitle}>{children}</WikiShell>
     </>
   );
 }
