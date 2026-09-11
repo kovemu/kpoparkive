@@ -124,6 +124,37 @@ async function rawAssetV2ExtractUntilFound(tabId, fileName) {
       throw new Error(`The NamuWiki file tab for ${fileName} was closed before asset capture finished.`);
     }
 
+    // A normal NamuWiki file page can contain dormant security DOM.
+    // Prefer the actual visible/capturable asset over a verification heuristic.
+    try {
+      const media = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-file-media" });
+      if (media?.ok && Array.isArray(media.media) && media.media.length) {
+        const candidate = media.media.find((item) => rawAssetV2Canonical(item?.fileName) === rawAssetV2Canonical(fileName)) || media.media[0];
+        if (candidate?.urls?.length) {
+          if (verificationActive && typeof kpopClearVerification === "function") {
+            try { await kpopClearVerification(); } catch {}
+          }
+          return { kind: "video", extracted: media, asset: candidate };
+        }
+      }
+    } catch {}
+
+    try {
+      const extracted = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-images" });
+      if (extracted?.ok) {
+        lastDebug = extracted.debug || null;
+        const asset = rawAssetV2PickImage(extracted, fileName);
+        if (asset) {
+          if (verificationActive && typeof kpopClearVerification === "function") {
+            try { await kpopClearVerification(); } catch {}
+          }
+          return { kind: "image", extracted, asset };
+        }
+      }
+    } catch {}
+
+    // Only treat the page as verification-blocked when no usable asset is
+    // available from the rendered page.
     let blocked = false;
     try {
       const state = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-detect-namu-verification" });
@@ -149,23 +180,6 @@ async function rawAssetV2ExtractUntilFound(tabId, fileName) {
         try { await kpopClearVerification(); } catch {}
       }
     }
-
-    try {
-      const media = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-file-media" });
-      if (media?.ok && Array.isArray(media.media) && media.media.length) {
-        const candidate = media.media.find((item) => rawAssetV2Canonical(item?.fileName) === rawAssetV2Canonical(fileName)) || media.media[0];
-        if (candidate?.urls?.length) return { kind: "video", extracted: media, asset: candidate };
-      }
-    } catch {}
-
-    try {
-      const extracted = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-images" });
-      if (extracted?.ok) {
-        lastDebug = extracted.debug || null;
-        const asset = rawAssetV2PickImage(extracted, fileName);
-        if (asset) return { kind: "image", extracted, asset };
-      }
-    } catch {}
 
     if (attempt === 2) {
       try { await chrome.tabs.update(tabId, { active: true }); } catch {}
