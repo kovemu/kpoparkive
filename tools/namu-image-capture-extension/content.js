@@ -12,7 +12,7 @@ function normalizeFileName(value) {
 }
 
 function looksLikeFileName(value) {
-  return /\.(?:jpe?g|png|gif|webp|avif|svg)(?:$|[?#])/i.test(String(value || "").trim());
+  return /\.(?:jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)(?:$|[?#])/i.test(String(value || "").trim());
 }
 
 function unique(values) {
@@ -74,7 +74,7 @@ function namuVerificationBlocked() {
 
 function semanticFileNameFromString(value, allowPlain = true) {
   const raw = decodeMaybe(String(value || "").normalize("NFKC"));
-  const prefixed = raw.match(/(?:파일|File):([^?#"'<>\n]+?\.(?:jpe?g|png|gif|webp|avif|svg))(?:$|[?#&\s"'<>])/i);
+  const prefixed = raw.match(/(?:파일|File):([^?#"'<>\n]+?\.(?:jpe?g|png|gif|webp|avif|svg|mp4|webm|mov))(?:$|[?#&\s"'<>])/i);
   if (prefixed) return normalizeFileName(prefixed[1]);
 
   if (!allowPlain) return "";
@@ -202,6 +202,37 @@ function urlsForImage(image) {
   return unique(urls);
 }
 
+function urlsForVideo(video) {
+  const urls = [
+    normalizeUrl(video.currentSrc || ""),
+    normalizeUrl(video.getAttribute("src") || ""),
+    normalizeUrl(video.getAttribute("data-src") || ""),
+    ...cssBackgroundUrls(video),
+  ];
+  for (const source of video.querySelectorAll("source")) {
+    urls.push(normalizeUrl(source.getAttribute("src") || ""));
+    urls.push(normalizeUrl(source.getAttribute("data-src") || ""));
+  }
+  return unique(urls);
+}
+
+function linkedFileNameNearMedia(element) {
+  const direct = fileNameForElement(element);
+  if (direct) return direct;
+
+  let current = element.parentElement;
+  for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+    const names = unique(
+      Array.from(current.querySelectorAll?.("a[href]") || [])
+        .map((anchor) => semanticFileNameFromString(anchor.getAttribute("href") || "", false))
+        .filter(Boolean)
+    );
+    if (names.length === 1) return names[0];
+    if (names.length > 1) return "";
+  }
+  return "";
+}
+
 function nearbyContext(element) {
   const parts = [];
   let current = element;
@@ -231,6 +262,7 @@ function extractAssets() {
   const anonymousByUrl = new Map();
   const roots = collectOpenRoots();
   let imageCount = 0;
+  let videoCount = 0;
   let pictureSourceCount = 0;
   let backgroundCount = 0;
   let fileLinkCount = 0;
@@ -241,7 +273,8 @@ function extractAssets() {
     const clean = normalizeFileName(fileName);
     if (!clean || !urls.length) return;
     const key = clean.toLowerCase();
-    const existing = byFile.get(key) || { fileName: clean, urls: [], width: 0, height: 0, anonymous: false, domIndex: meta.domIndex ?? null, contextText: meta.contextText || "", heading: meta.heading || "", alt: meta.alt || "", title: meta.title || "" };
+    const existing = byFile.get(key) || { fileName: clean, urls: [], width: 0, height: 0, anonymous: false, mediaType: meta.mediaType || "image", domIndex: meta.domIndex ?? null, contextText: meta.contextText || "", heading: meta.heading || "", alt: meta.alt || "", title: meta.title || "" };
+    if (meta.mediaType === "video") existing.mediaType = "video";
     existing.urls = unique([...existing.urls, ...urls]);
     existing.width = Math.max(existing.width, width || 0);
     existing.height = Math.max(existing.height, height || 0);
@@ -295,6 +328,50 @@ function extractAssets() {
       }
     }
 
+    const videos = Array.from(root.querySelectorAll?.("video") || []);
+    videoCount += videos.length;
+    for (const video of videos) {
+      domIndex += 1;
+      const urls = urlsForVideo(video).filter((url) => {
+        try {
+          const parsed = new URL(url);
+          return parsed.hostname === "i.namu.wiki" && parsed.pathname.startsWith("/i/");
+        } catch {
+          return false;
+        }
+      });
+      if (!urls.length) continue;
+
+      const fileName = linkedFileNameNearMedia(video);
+      if (!fileName) {
+        if (unlabeledSamples.length < 12) {
+          unlabeledSamples.push({
+            tag: "video",
+            src: urls[0] || "",
+            parent: video.parentElement?.tagName || "",
+            domIndex,
+          });
+        }
+        continue;
+      }
+
+      const context = nearbyContext(video);
+      addAsset(
+        fileName,
+        urls,
+        Number(video.videoWidth || video.clientWidth || 0),
+        Number(video.videoHeight || video.clientHeight || 0),
+        {
+          mediaType: "video",
+          domIndex,
+          contextText: context.text,
+          heading: context.heading,
+          alt: video.getAttribute("aria-label") || "",
+          title: video.getAttribute("title") || "",
+        },
+      );
+    }
+
     for (const anchor of Array.from(root.querySelectorAll?.("a[href]") || [])) {
       const href = anchor.getAttribute("href") || "";
       const fileName = semanticFileNameFromString(href, false) || fileNameForElement(anchor);
@@ -327,6 +404,7 @@ function extractAssets() {
     debug: {
       roots: roots.length,
       images: imageCount,
+      videos: videoCount,
       pictureSources: pictureSourceCount,
       backgroundSurfaces: backgroundCount,
       fileLinks: fileLinkCount,
