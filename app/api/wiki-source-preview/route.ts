@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     if (source.includes("\u0000")) return json({ ok: false, error: "source contains an unsupported null character" }, 400);
 
     const started = performance.now();
-    const rendered = await renderExactNamuPreview(title, source);
+    const rendered = await renderExactNamuPreview(title, source, "en");
     const html = sanitizeExactPreviewHtml(rendered.html, title);
     const sourceHash = createHash("sha256").update(source).digest("hex");
 
