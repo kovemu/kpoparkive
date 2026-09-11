@@ -176,7 +176,12 @@ export default function PublicSourceEditorPage({
 
   useEffect(() => {
     if (!payload || previewBusy) return;
-    if (content !== lastPreviewSourceRef.current) setPreviewStatus("변경 사항 있음");
+    if (content === lastPreviewSourceRef.current) return;
+    setPreviewStatus((current) =>
+      current.startsWith("실패 ·") || current.startsWith("렌더 오류 ·")
+        ? current
+        : "변경 사항 있음",
+    );
   }, [content, payload, previewBusy]);
 
   function restorePublicPreview() {
