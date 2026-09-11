@@ -268,11 +268,6 @@ async function main() {
   const documentId = await createOrRefreshSynthetic(ownerTitle, templateTitle, sourceResult, fallback);
   console.log(`Synthetic document: ${documentId}`);
 
-  if (englishResult) {
-    const revision = await saveEnglish(documentId, templateTitle, englishResult);
-    console.log(`English revision: r${revision?.revision_no || "?"}`);
-  }
-
   await patchFallback(fallback.id, {
     synthetic_document_id: documentId,
     recovery_status: "converted",
@@ -340,6 +335,9 @@ async function main() {
   }
 
   if (englishResult) {
+    const revision = await saveEnglish(documentId, templateTitle, englishResult);
+    console.log(`English revision saved after verification: r${revision?.revision_no || "?"}`);
+
     console.log(`\nRendering English synthetic template: ${templateTitle}`);
     runContentRenderer(templateTitle);
     const templatePublished = await publishRenderedContent(templateTitle);
