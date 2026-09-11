@@ -1,0 +1,426 @@
+.wikiSiteShell {
+  min-height: 100vh;
+  background: #f5f6f8;
+  color: #202124;
+}
+
+.wikiSiteHeader {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-bottom: 1px solid #e1e3e8;
+  background: rgba(255, 255, 255, .96);
+  backdrop-filter: blur(12px);
+}
+
+.wikiHeaderInner {
+  width: min(1440px, calc(100% - 32px));
+  min-height: 60px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(260px, 660px) auto;
+  align-items: center;
+  gap: 24px;
+}
+
+.wikiBrand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #16171a;
+  text-decoration: none;
+  font-weight: 800;
+  letter-spacing: -.03em;
+}
+
+.wikiBrand:hover {
+  text-decoration: none;
+}
+
+.wikiBrandMark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #5d3fd3, #ea4fc7);
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(93, 63, 211, .18);
+}
+
+.wikiBrandText {
+  font-size: 19px;
+}
+
+.wikiGlobalSearch {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 40px;
+  overflow: hidden;
+  border: 1px solid #cfd3da;
+  border-radius: 8px;
+  background: #fff;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.wikiGlobalSearch:focus-within {
+  border-color: #876ce3;
+  box-shadow: 0 0 0 3px rgba(93, 63, 211, .09);
+}
+
+.wikiSearchIcon {
+  width: 18px;
+  height: 18px;
+  justify-self: center;
+  fill: none;
+  stroke: #838893;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.wikiGlobalSearch input {
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  outline: 0;
+  padding: 0 8px 0 0;
+  background: transparent;
+  color: #202124;
+  font: inherit;
+  font-size: 14px;
+}
+
+.wikiGlobalSearch input::placeholder {
+  color: #969ba4;
+}
+
+.wikiGlobalSearch button {
+  align-self: stretch;
+  border: 0;
+  border-left: 1px solid #e1e3e8;
+  padding: 0 14px;
+  background: #fafafa;
+  color: #4b4f58;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.wikiGlobalSearch button:hover {
+  background: #f2f2f4;
+}
+
+.wikiHeaderNav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  white-space: nowrap;
+}
+
+.wikiHeaderNav a,
+.wikiLanguageButton {
+  color: #555a63;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.wikiHeaderNav a:hover {
+  color: #30217b;
+  text-decoration: none;
+}
+
+.wikiLanguageButton {
+  height: 30px;
+  border: 1px solid #d9dce2;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.wikiWorkspace {
+  width: min(1440px, calc(100% - 32px));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+  padding: 28px 0 80px;
+}
+
+.wikiUtilityRail {
+  position: sticky;
+  top: 88px;
+  display: grid;
+  gap: 26px;
+  padding: 6px 4px 0;
+}
+
+.wikiUtilitySection {
+  display: grid;
+  gap: 3px;
+}
+
+.wikiUtilityLabel {
+  margin-bottom: 6px;
+  color: #9a9ea6;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.wikiUtilitySection a {
+  display: block;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #555b65;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.wikiUtilitySection a:hover,
+.wikiUtilitySection a.is-active {
+  background: #ece9f8;
+  color: #4d35a8;
+  text-decoration: none;
+}
+
+.wikiUtilityMuted a {
+  color: #7c8189;
+}
+
+.wikiDocumentColumn {
+  min-width: 0;
+}
+
+.wikiDocumentHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid #e0e2e7;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  padding: 24px 28px 18px;
+  background: #fff;
+}
+
+.wikiDocumentHeading {
+  min-width: 0;
+}
+
+.wikiDocumentEyebrow {
+  margin-bottom: 4px;
+  color: #8f939b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.wikiDocumentHeading h1 {
+  margin: 0;
+  color: #16171a;
+  font-size: clamp(30px, 4vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -.045em;
+  overflow-wrap: anywhere;
+}
+
+.wikiDocumentHeading p {
+  margin: 8px 0 0;
+  color: #777c85;
+  font-size: 13px;
+}
+
+.wikiDocumentTools {
+  flex: 0 0 auto;
+}
+
+.wikiWatchButton {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d9dce2;
+  border-radius: 8px;
+  background: #fff;
+  color: #666b74;
+  font: inherit;
+  font-size: 19px;
+  cursor: pointer;
+}
+
+.wikiWatchButton:hover {
+  border-color: #b8addf;
+  color: #5d3fd3;
+  background: #faf9ff;
+}
+
+.wikiDocumentTabs {
+  display: flex;
+  align-items: stretch;
+  min-height: 44px;
+  border: 1px solid #e0e2e7;
+  border-bottom: 0;
+  padding: 0 18px;
+  background: #fff;
+}
+
+.wikiDocumentTabs a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  color: #6d727b;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.wikiDocumentTabs a:hover {
+  color: #4e35a9;
+  text-decoration: none;
+}
+
+.wikiDocumentTabs a.is-active {
+  color: #38237e;
+}
+
+.wikiDocumentTabs a.is-active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  background: #6547cf;
+}
+
+.wikiTabsSpacer {
+  flex: 1 1 auto;
+}
+
+.wikiDocumentTabs .wikiEditTab {
+  color: #5d3fd3;
+}
+
+.wikiArticleFrame {
+  border: 1px solid #e0e2e7;
+  border-radius: 0 0 12px 12px;
+  background: #fff;
+  box-shadow: 0 14px 40px rgba(35, 40, 52, .04);
+}
+
+.wikiArticleFrame .kpoparkiveRawWikiPage {
+  width: auto;
+  margin: 0;
+  padding: 28px;
+  background: transparent;
+}
+
+@media (max-width: 1080px) {
+  .wikiHeaderInner {
+    grid-template-columns: auto minmax(200px, 1fr);
+  }
+
+  .wikiHeaderNav {
+    display: none;
+  }
+
+  .wikiWorkspace {
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 18px;
+  }
+}
+
+@media (max-width: 760px) {
+  .wikiSiteHeader {
+    position: static;
+  }
+
+  .wikiHeaderInner {
+    width: 100%;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 11px 14px 13px;
+  }
+
+  .wikiBrand {
+    width: max-content;
+  }
+
+  .wikiBrandMark {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+  }
+
+  .wikiBrandText {
+    font-size: 18px;
+  }
+
+  .wikiGlobalSearch {
+    width: 100%;
+  }
+
+  .wikiGlobalSearch button {
+    display: none;
+  }
+
+  .wikiWorkspace {
+    width: 100%;
+    display: block;
+    padding: 0;
+  }
+
+  .wikiUtilityRail {
+    display: none;
+  }
+
+  .wikiDocumentHeader {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    padding: 22px 16px 15px;
+  }
+
+  .wikiDocumentHeading h1 {
+    font-size: 30px;
+  }
+
+  .wikiDocumentTabs {
+    overflow-x: auto;
+    border-left: 0;
+    border-right: 0;
+    padding: 0 6px;
+  }
+
+  .wikiDocumentTabs a {
+    min-height: 42px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
+  .wikiTabsSpacer {
+    min-width: 8px;
+  }
+
+  .wikiArticleFrame {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .wikiArticleFrame .kpoparkiveRawWikiPage {
+    padding: 18px 14px 60px;
+  }
+}
