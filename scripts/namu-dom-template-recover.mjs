@@ -403,6 +403,7 @@ async function main() {
         verified: false,
         htmlFallbackRequired: true,
         visualPromotionEligible: false,
+        fidelityComparatorVersion: 2,
         promotionGate: promotion,
       },
     });
