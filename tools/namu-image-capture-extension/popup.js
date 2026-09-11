@@ -304,6 +304,7 @@ resetButton.addEventListener("click", async () => {
 
   resetButton.disabled = true;
   cloneButton.disabled = true;
+  rawCrawlButton.disabled = true;
   setStatus("Resetting crawler job...\nStopping workers and clearing the local queue.");
 
   try {
