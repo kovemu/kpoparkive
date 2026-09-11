@@ -116,6 +116,57 @@ function kpopExtractIncludeTitles(rawValue) {
   return output;
 }
 
+
+function kpopResolveRawLinkTitle(currentTitle, rawTarget) {
+  let target = String(rawTarget || "").normalize("NFKC").replace(/\u00a0/g, " ").trim();
+  if (!target) return "";
+  if (/^(?:https?:|ftp:|mailto:|tel:)/i.test(target)) return "";
+  target = target.replace(/^:/, "").trim();
+  if (!target) return "";
+
+  const hashIndex = target.indexOf("#");
+  if (hashIndex >= 0) target = target.slice(0, hashIndex).trim();
+  if (!target) return "";
+
+  if (target.startsWith("/")) {
+    const base = String(currentTitle || "").normalize("NFKC").trim();
+    if (!base) return "";
+    target = base.replace(/\/$/, "") + target;
+  }
+
+  if (/^(?:파일|File|분류|Category|틀|Template|나무위키|사용자|User|토론|특수기능|Special):/i.test(target)) {
+    return "";
+  }
+
+  return target;
+}
+
+function kpopExtractRawDocumentLinks(rawValue, currentTitle) {
+  const raw = String(rawValue || "");
+  const output = [];
+  const seen = new Set();
+  const re = /\[\[([^\[\]]+?)\]\]/g;
+  let match;
+
+  while ((match = re.exec(raw))) {
+    const inside = String(match[1] || "");
+    const pipeIndex = inside.indexOf("|");
+    const rawTarget = pipeIndex >= 0 ? inside.slice(0, pipeIndex) : inside;
+    const display = pipeIndex >= 0 ? inside.slice(pipeIndex + 1) : rawTarget;
+    const title = kpopResolveRawLinkTitle(currentTitle, rawTarget);
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    output.push({
+      title,
+      href: `https://namu.wiki/w/${encodeURIComponent(title)}`,
+      text: String(display || "").replace(/\s+/g, " ").trim().slice(0, 240),
+    });
+    if (output.length >= 2000) break;
+  }
+
+  return output;
+}
+
 function kpopShouldCaptureTemplate(value) {
   const title = String(value || "").normalize("NFKC").replace(/\u00a0/g, " ").trim();
   if (!/^틀:/i.test(title)) return false;
@@ -192,7 +243,13 @@ async function kpopStartHelperClone(options = {}) {
 
   const result = await kpopControllerJson("/clone/start", {
     method: "POST",
-    body: JSON.stringify({ rootTitle, rootUrl: activeTab.url, maxDepth, maxDocs }),
+    body: JSON.stringify({
+      rootTitle,
+      rootUrl: activeTab.url,
+      maxDepth,
+      maxDocs,
+      captureMode: String(options.captureMode || "dom").toLowerCase() === "raw" ? "raw" : "dom",
+    }),
   });
 
   await kpopEnsureRunnerTab({ reloadExisting: true });
@@ -290,6 +347,72 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
   }
 }
 
+
+async function kpopCaptureRawBundle({
+  rootTitle,
+  sourceTitle,
+  maxTemplateDepth = 2,
+  maxTemplates = 40,
+} = {}) {
+  const normalizedRoot = String(rootTitle || sourceTitle || "").normalize("NFKC").trim();
+  const normalizedSource = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!normalizedRoot || !normalizedSource) throw new Error("Raw bundle requires rootTitle/sourceTitle.");
+
+  const rootCapture = await kpopCaptureOneRawTitle({
+    rootTitle: normalizedRoot,
+    sourceTitle: normalizedSource,
+  });
+
+  const queue = kpopExtractIncludeTitles(rootCapture.raw)
+    .filter(kpopShouldCaptureTemplate)
+    .map((title) => ({ title, depth: 1 }));
+  const seen = new Set([normalizedSource]);
+  const capturedTemplates = [];
+  const templateFailures = [];
+  let discoveredTemplates = queue.length;
+
+  while (queue.length && capturedTemplates.length < Math.max(0, Number(maxTemplates || 0))) {
+    const item = queue.shift();
+    const title = String(item?.title || "").normalize("NFKC").trim();
+    const depth = Math.max(1, Number(item?.depth || 1) || 1);
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    if (!kpopShouldCaptureTemplate(title)) continue;
+
+    try {
+      const capture = await kpopCaptureOneRawTitle({
+        rootTitle: normalizedRoot,
+        sourceTitle: title,
+      });
+      capturedTemplates.push({ title, depth, charCount: capture.charCount });
+
+      if (depth < Math.max(0, Number(maxTemplateDepth || 0))) {
+        const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
+        discoveredTemplates += nested.length;
+        for (const nestedTitle of nested) {
+          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
+        }
+      }
+    } catch (error) {
+      templateFailures.push({
+        title,
+        depth,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  return {
+    ...rootCapture,
+    sourceTitle: normalizedSource,
+    internalLinks: kpopExtractRawDocumentLinks(rootCapture.raw, normalizedSource),
+    templatesCaptured: capturedTemplates.length,
+    templatesDiscovered: discoveredTemplates,
+    templateFailures,
+    capturedTemplates,
+  };
+}
+
 async function kpopCaptureEditRawSource(options = {}) {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const sourceTitle = kpopTitleFromDocumentUrl(activeTab?.url || "");
@@ -299,38 +422,12 @@ async function kpopCaptureEditRawSource(options = {}) {
   const maxTemplateDepth = Math.max(0, Math.min(3, Number(options.maxTemplateDepth ?? 2) || 0));
   const maxTemplates = Math.max(0, Math.min(80, Number(options.maxTemplates ?? 40) || 0));
 
-  const rootCapture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle });
-  const queue = kpopExtractIncludeTitles(rootCapture.raw)
-    .filter(kpopShouldCaptureTemplate)
-    .map((title) => ({ title, depth: 1 }));
-  const seen = new Set([sourceTitle]);
-  const capturedTemplates = [];
-  const templateFailures = [];
-  let discoveredTemplates = queue.length;
-
-  while (queue.length && capturedTemplates.length < maxTemplates) {
-    const item = queue.shift();
-    const title = String(item?.title || "").normalize("NFKC").trim();
-    const depth = Math.max(1, Number(item?.depth || 1) || 1);
-    if (!title || seen.has(title)) continue;
-    seen.add(title);
-    if (!kpopShouldCaptureTemplate(title)) continue;
-
-    try {
-      const capture = await kpopCaptureOneRawTitle({ rootTitle, sourceTitle: title });
-      capturedTemplates.push({ title, depth, charCount: capture.charCount });
-
-      if (depth < maxTemplateDepth) {
-        const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
-        discoveredTemplates += nested.length;
-        for (const nestedTitle of nested) {
-          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
-        }
-      }
-    } catch (error) {
-      templateFailures.push({ title, depth, error: error?.message || String(error) });
-    }
-  }
+  const rootCapture = await kpopCaptureRawBundle({
+    rootTitle,
+    sourceTitle,
+    maxTemplateDepth,
+    maxTemplates,
+  });
 
   const previewUrl = `https://kpoparkive.vercel.app/w/${encodeURIComponent(sourceTitle)}`;
   if (options.openPreview) {
@@ -342,10 +439,10 @@ async function kpopCaptureEditRawSource(options = {}) {
     sourceTitle,
     previewUrl,
     templateDepth: maxTemplateDepth,
-    templatesCaptured: capturedTemplates.length,
-    templatesDiscovered: discoveredTemplates,
-    templateFailures,
-    capturedTemplates,
+    templatesCaptured: rootCapture.templatesCaptured,
+    templatesDiscovered: rootCapture.templatesDiscovered,
+    templateFailures: rootCapture.templateFailures,
+    capturedTemplates: rootCapture.capturedTemplates,
   };
 }
 
