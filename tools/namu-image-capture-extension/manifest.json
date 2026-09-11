@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.13.3",
+  "version": "0.13.4",
   "description": "Hybrid NamuWiki capture: one RAW source per document plus reusable rendered DOM, CSS and global assets from normal /w/ pages.",
   "permissions": [
     "activeTab",
