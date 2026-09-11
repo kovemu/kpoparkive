@@ -121,6 +121,41 @@ const stats = {
   proxyErrors: 0,
 };
 
+let aiTranslationSerial = Promise.resolve();
+
+function runAiTranslation(sourceTitle) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [path.resolve("scripts/namu-ai-translate.mjs"), encodeURIComponent(sourceTitle)],
+      { env: { ...process.env }, stdio: "inherit" },
+    );
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`AI translation worker failed for ${sourceTitle} (code=${code ?? "null"}, signal=${signal || "none"})`));
+    });
+  });
+}
+
+function queueAiTranslation(sourceTitle) {
+  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_AI_API_KEY) {
+    console.warn(`AI TRANSLATION NOT QUEUED ${sourceTitle}: GEMINI_API_KEY is missing`);
+    return false;
+  }
+
+  aiTranslationSerial = aiTranslationSerial
+    .catch(() => {})
+    .then(async () => {
+      console.log(`AI TRANSLATION QUEUE START ${sourceTitle}`);
+      await runAiTranslation(sourceTitle);
+    })
+    .catch((error) => {
+      console.error(`AI TRANSLATION QUEUE FAILED ${sourceTitle}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  return true;
+}
+
 async function ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks }) {
   const docs = await db(
     `source_documents?source=eq.namu_mirror` +
@@ -249,13 +284,25 @@ async function saveRawSource(payload) {
       source_format: "namuwiki_raw",
       source_extraction_version: "normal-chrome-edit-source-v1",
       raw_extracted_at: capturedAt,
+      translation_status: "queued",
+      translation_version: "namumark-ai-en-v1",
       updated_at: capturedAt,
     }),
   });
 
   const bytes = Buffer.byteLength(raw, "utf8");
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
-  return { ok: true, sourceTitle, rootTitle, charCount: raw.length, bytes, capturedAt, sourceFormat: "namuwiki_raw" };
+  const translationQueued = queueAiTranslation(sourceTitle);
+  return {
+    ok: true,
+    sourceTitle,
+    rootTitle,
+    charCount: raw.length,
+    bytes,
+    capturedAt,
+    sourceFormat: "namuwiki_raw",
+    translation: translationQueued ? "queued" : "not-configured",
+  };
 }
 
 async function clusterDocuments(rootTitle) {
