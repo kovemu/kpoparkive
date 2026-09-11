@@ -18,6 +18,7 @@ import {
   type V3TableModel,
   type V3TableSurfaceRecord,
 } from "./visualEditorV3TableBridge";
+import { collectV3RegisteredOperations, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
 type AstInlineNode = {
   id: string;
@@ -745,7 +746,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
 
   const save = async () => {
     if (!payload || saving) return;
-    const operations: AstOperation[] = [];
+    const operations: Array<AstOperation | V3RegisteredOperation> = [];
 
     for (const record of surfacesRef.current) {
       const wikitext = editorElementToWikitext(record.surface);
@@ -780,6 +781,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
       });
     }
     operations.push(...templateEdits.standalone);
+    operations.push(...collectV3RegisteredOperations());
 
     if (!operations.length) {
       setStatus("No changes were made");
