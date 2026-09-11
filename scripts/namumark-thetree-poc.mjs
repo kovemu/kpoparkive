@@ -602,20 +602,18 @@ async function main() {
     channel.port2.close();
   }
   const elapsed = Math.round(performance.now() - started);
-  const html = String(result?.html || "");
+  let html = String(result?.html || "");
   if (html.length < 100) throw new Error(`The Tree returned only ${html.length} chars of HTML`);
+
+  const injectedFallbacks = injectTemplateDomFallbacks(html, templateFallbackReplacements);
+  html = injectedFallbacks.html;
 
   const requiredFiles = uniqueNormalizedStrings(Array.isArray(result?.files) ? result.files : []);
   const missingFiles = requiredFiles.filter((file) => !hasRenderableFile(virtualWiki, file));
-  const referencedTemplates = uniqueNormalizedStrings(
-    extractIncludeTitles(target.source_wikitext).filter((item) => /^틀:/i.test(item))
+  const injectedTemplateSet = new Set(injectedFallbacks.injected.map((item) => normalizeTitle(item)));
+  const missingTemplates = missingTemplatesBeforeFallback.filter(
+    (template) => !injectedTemplateSet.has(normalizeTitle(template))
   );
-  const availableRawTitles = new Set(
-    (rawRows || [])
-      .filter((row) => row?.source_wikitext)
-      .map((row) => normalizeTitle(row.source_title))
-  );
-  const missingTemplates = referencedTemplates.filter((template) => !availableRawTitles.has(normalizeTitle(template)));
   const renderedAt = new Date().toISOString();
   const meta = {
     purpose: ENGINE_PATCHSET
@@ -638,6 +636,8 @@ async function main() {
     referencedTemplates,
     missingTemplates,
     missingTemplateCount: missingTemplates.length,
+    domFallbackTemplates: injectedFallbacks.injected,
+    domFallbackTemplateCount: injectedFallbacks.injected.length,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
@@ -666,8 +666,9 @@ async function main() {
   console.log(`THE TREE POC SAVED ${title}`);
   console.log(`raw=${meta.rawChars} html=${meta.htmlChars} render=${meta.renderMs}ms hasError=${meta.hasError}`);
   console.log(`raw-docs=${meta.capturedRawDocuments} asset-rows=${meta.assetRowsLoaded} assets=${meta.capturedAssets} virtual-docs=${meta.virtualDocuments}`);
-  console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} categories=${meta.categories} headings=${meta.headings}`);
+  console.log(`links=${meta.links} files=${meta.files} missing-files=${meta.missingFileCount} templates=${meta.referencedTemplates.length} missing-templates=${meta.missingTemplateCount} dom-fallback-templates=${meta.domFallbackTemplateCount} categories=${meta.categories} headings=${meta.headings}`);
   if (missingTemplates.length) console.log(`missing-templates: ${missingTemplates.slice(0, 30).join(" | ")}${missingTemplates.length > 30 ? ` | +${missingTemplates.length - 30} more` : ""}`);
+  if (injectedFallbacks.injected.length) console.log(`dom-fallback-templates: ${injectedFallbacks.injected.join(" | ")}`);
   if (enginePatches.length) console.log(`engine-patches: ${enginePatches.join(" | ")}`);
   if (missingFiles.length) console.log(`missing: ${missingFiles.slice(0, 30).join(" | ")}${missingFiles.length > 30 ? ` | +${missingFiles.length - 30} more` : ""}`);
   console.log(`Preview: https://kpoparkive.vercel.app/admin/namumark-poc/${encodeURIComponent(title)}`);
