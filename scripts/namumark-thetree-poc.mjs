@@ -877,6 +877,11 @@ async function syncSourceTemplateFallback(target, replacement, sourceBrowserCapt
     en_text_map: {},
     translation_status: "pending_chatgpt",
     translated_at: null,
+    synthetic_document_id: null,
+    recovery_status: "pending",
+    recovery_version: null,
+    recovered_at: null,
+    recovery_meta: {},
   };
   await db("template_dom_fallbacks?on_conflict=source_document_id,template_title,include_hash", {
     method: "POST",
