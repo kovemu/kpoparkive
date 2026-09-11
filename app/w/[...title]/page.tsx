@@ -2,6 +2,7 @@ import { parse } from "node-html-parser";
 import { redirect } from "next/navigation";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
+import { stripNamuOperationalHtml } from "../../../lib/namuOperationalNotices";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import "../wiki.css";
 
@@ -116,6 +117,7 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>, source
   const lookup = createNamuAssetLookup(assets);
 
   for (const script of root.querySelectorAll("script")) script.remove();
+  stripNamuOperationalHtml(root);
 
   for (const node of root.querySelectorAll("*")) {
     for (const name of Object.keys(node.attributes)) {
