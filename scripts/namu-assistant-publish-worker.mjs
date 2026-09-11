@@ -4,6 +4,7 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const POLL_MS = Math.max(3000, Number(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_POLL_MS || 5000) || 5000);
+const DOM_RECOVERY_TARGET_VERSION = "dom-to-namumark-v3.1";
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -158,7 +159,9 @@ async function recoverFreshDomFallbacks(ownerTitle) {
     const templateTitle = String(row?.template_title || "").normalize("NFKC").trim();
     if (!templateTitle) continue;
 
-    let shouldRecover = !row?.synthetic_document_id;
+    let shouldRecover =
+      !row?.synthetic_document_id ||
+      String(row?.recovery_version || "") !== DOM_RECOVERY_TARGET_VERSION;
     if (!shouldRecover) {
       const syntheticRows = await db(
         "source_documents?id=eq." + encodeURIComponent(row.synthetic_document_id) +
@@ -336,6 +339,39 @@ async function resumeRepairableFailedDraft(id) {
     `ASSISTANT SOURCE REPAIR RESUMED ${row.source_title}: source is clean; re-queueing existing English draft r${row.content_revision_no}.`,
   );
   return true;
+}
+
+async function recoverOutdatedDomFallbacks() {
+  const rows = await db(
+    "template_dom_fallbacks?source_html=not.is.null" +
+      "&select=id,source_title,template_title,recovery_version,synthetic_document_id,updated_at" +
+      "&order=updated_at.asc&limit=100",
+  );
+
+  const owners = [...new Set(
+    (rows || [])
+      .filter((row) =>
+        !row?.synthetic_document_id ||
+        String(row?.recovery_version || "") !== DOM_RECOVERY_TARGET_VERSION
+      )
+      .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+      .filter(Boolean)
+  )];
+
+  let attempted = 0;
+  let verified = 0;
+  for (const ownerTitle of owners) {
+    const result = await recoverFreshDomFallbacks(ownerTitle);
+    attempted += Number(result?.attempted || 0);
+    verified += Number(result?.verified || 0);
+  }
+
+  if (attempted > 0) {
+    console.log(
+      `DOM RECOVERY UPGRADE COMPLETE: ${verified}/${attempted} verified with ${DOM_RECOVERY_TARGET_VERSION}.`,
+    );
+  }
+  return { attempted, verified };
 }
 
 async function recoverReviewedSyntheticFallbacks() {
@@ -519,6 +555,7 @@ async function tick() {
       }
     }
 
+    await recoverOutdatedDomFallbacks();
     await recoverReviewedSyntheticFallbacks();
     await resumeReviewedDomFallbackTranslations();
 
