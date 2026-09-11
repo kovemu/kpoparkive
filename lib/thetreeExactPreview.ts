@@ -554,10 +554,15 @@ export async function renderExactNamuPreview(title: string, source: string) {
   };
 }
 
-export async function currentExactSourceHtml(title: string) {
+export async function currentExactSourceSnapshot(title: string) {
   const rows = await getSourceRows();
   const target = rows.find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
-  return target?.source_namumark_html || null;
+  if (!target) return null;
+  return {
+    source: effectiveSource(target),
+    exactHtml: target.source_namumark_html || null,
+    rootTitle: target.root_title || target.source_title,
+  };
 }
 
 export function hashHtml(value: string) {
