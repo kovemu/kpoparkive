@@ -158,8 +158,6 @@ async function runnerProcessTask(task) {
       const raw = await kpopCaptureRawBundle({
         rootTitle: runnerRootTitle,
         sourceTitle,
-        maxTemplateDepth: 2,
-        maxTemplates: 40,
       });
 
       await runnerJson("/clone/complete", {
