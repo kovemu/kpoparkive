@@ -330,6 +330,8 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
         pageUrl: sourcePageUrl,
         editUrl: extracted.editUrl || editUrl,
         raw: extracted.raw,
+        internalLinks: kpopExtractRawDocumentLinks(extracted.raw, normalizedTitle),
+        translate: true,
         extractionMethod: extracted.extractionMethod || "normal-chrome-edit",
         signalScore: Number(extracted.signalScore || 0),
       }),
