@@ -1,5 +1,5 @@
 const HELPER = "http://127.0.0.1:43117";
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = 32 * 1024 * 1024;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -199,10 +199,24 @@ async function captureOneAsset(payload) {
       const response = await fetch(candidate, { credentials: "include", cache: "force-cache", referrer: pageUrl, referrerPolicy: "strict-origin-when-cross-origin" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
-      if (!contentType.startsWith("image/")) throw new Error(`not image: ${contentType || "unknown MIME"}`);
+      const wantsVideo = asset?.mediaType === "video";
+      const supportedVideo = /^video\/(?:mp4|webm|quicktime)$/i.test(contentType);
+      if (wantsVideo ? !supportedVideo : !contentType.startsWith("image/")) {
+        throw new Error(`unexpected media type: ${contentType || "unknown MIME"}`);
+      }
 
       const blob = await response.blob();
-      const visual = await validateBlob(blob, asset.width, asset.height);
+      if (blob.size > MAX_BYTES) throw new Error(`media exceeds ${Math.round(MAX_BYTES / 1024 / 1024)} MB`);
+
+      const visual = wantsVideo
+        ? {
+            valid: true,
+            width: Number(asset.width || 0),
+            height: Number(asset.height || 0),
+            visibleRatio: null,
+            colorRange: null,
+          }
+        : await validateBlob(blob, asset.width, asset.height);
       if (!visual.valid) {
         rejected += 1;
         throw new Error(visual.reason || "visual validation failed");
@@ -223,6 +237,7 @@ async function captureOneAsset(payload) {
         sourceUrl: response.url || candidate,
         pageUrl,
         contentType,
+        mediaType: asset.mediaType || "image",
         width: visual.width || asset.width || 0,
         height: visual.height || asset.height || 0,
         visual,
