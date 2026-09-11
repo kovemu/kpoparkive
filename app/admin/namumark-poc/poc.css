@@ -79,7 +79,7 @@
 }
 
 .namumarkPocDocument {
-  max-width: 1032px;
+  max-width: 1180px;
   margin: 24px auto 0;
   font-size: 14px;
   line-height: 1.65;
@@ -349,6 +349,22 @@
 
 .namumarkPocDocument.wiki-content .toc-indent { padding-left: 1em; }
 .namumarkPocDocument.wiki-content .toc-item { display: block; }
+
+@media (min-width: 761px) {
+  .namumarkPocDocument.wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: calc(100% - 490px);
+    white-space: normal;
+  }
+
+  .namumarkPocDocument.wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc .toc-item,
+  .namumarkPocDocument.wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc .toc-item a {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+}
 
 .namumarkPocDocument.wiki-content details.wiki-folding > summary {
   cursor: pointer;
