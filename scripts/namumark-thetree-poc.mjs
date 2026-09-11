@@ -744,9 +744,16 @@ function hasRenderableFile(virtualWiki, name) {
 async function main() {
   const enginePatches = ensureEngine();
 
-  const rawRows = await dbAll(
-    "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null&select=id,source_title,root_title,source_wikitext&order=id.asc",
+  const loadedRawRows = await dbAll(
+    "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null" +
+      "&select=id,source_title,root_title,source_wikitext,source_format,source_fidelity_meta&order=id.asc",
   );
+  const rawRows = (loadedRawRows || []).filter((row) => {
+    const synthetic = String(row?.source_format || "") === "namumark-synthetic-dom";
+    if (!synthetic) return true;
+    if (normalizeTitle(row?.source_title) === normalizeTitle(title)) return true;
+    return String(row?.source_fidelity_meta?.stage || "") === "verified";
+  });
   const target = (rawRows || []).find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target?.id || !target?.source_wikitext) throw new Error(`No captured source_wikitext for ${title}`);
 
