@@ -83,7 +83,7 @@ function meaningfulBorderColor(table) {
     const styles = styleMap(element);
     for (const key of ["border-color", "border-top-color", "border-left-color"]) {
       const color = cssColor(styles.get(key));
-      if (color && color !== "#dddddd" && color !== "#000000") return color;
+      if (color && !["#dddddd", "#000000", "#212529"].includes(color)) return color;
     }
   }
   return "";
@@ -108,12 +108,20 @@ function cellOptions(cell, tableWidth) {
   if (Number.isFinite(rowspan) && rowspan > 1) opts.push(`<|${Math.round(rowspan)}>`);
 
   const styles = styleMap(cell);
-  const bg = cssColor(styles.get("background-color"));
-  const color = cssColor(styles.get("color"));
-  if (bg) opts.push(`<bgcolor=${bg}>`);
-  if (color && color !== "#212529" && color !== "#000000") opts.push(`<color=${color}>`);
+  const rowStyles = styleMap(cell.parentNode);
+  const ownBg = cssColor(styles.get("background-color"));
+  const rowBg = cssColor(rowStyles.get("background-color"));
+  const bg = ownBg || rowBg;
+  const ownColor = cssColor(styles.get("color"));
+  const rowColor = cssColor(rowStyles.get("color"));
+  const color = ownColor || rowColor;
 
-  const align = String(styles.get("text-align") || "").toLowerCase();
+  if (bg) opts.push(`<bgcolor=${bg}>`);
+  if (color && color !== "#212529" && color !== "#000000" && !(color === "#ffffff" && !bg)) {
+    opts.push(`<color=${color}>`);
+  }
+
+  const align = String(styles.get("text-align") || rowStyles.get("text-align") || "").toLowerCase();
   if (align === "center") opts.push("<:>");
   else if (align === "right" || align === "end") opts.push("<)>");
   else if (align === "left" || align === "start") opts.push("<(>");
@@ -253,6 +261,7 @@ function tableToNamu(table, ctx) {
       const prefix = rowIndex === 0 && cellIndex === 0 ? rootOpts + opts : opts;
       let body = childrenToNamu(cell, { ...ctx, inCell: true }).trim();
       body = body.replace(/^\n+|\n+$/g, "");
+      if (normalizeText(textOf(cell)) === "위") body = "";
       return `${prefix} ${body} `;
     });
     lines.push("||" + rendered.join("||") + "||");
@@ -265,7 +274,6 @@ function cleanupNamu(source) {
   return String(source || "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{4,}/g, "\n\n")
-    .replace(/\|\|\s+\|\|/g, "|| ||")
     .trim() + "\n";
 }
 
