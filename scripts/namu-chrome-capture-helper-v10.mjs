@@ -390,7 +390,12 @@ const oldSkip = String.raw`    if (existing?.source_browser_captured_at && exist
 const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_browser_captured_at || "");
     const capturedAfterAdFilter = Number.isFinite(capturedAtMs) && capturedAtMs >= Date.parse("2026-09-08T16:30:00Z");
     const reusable = kpopCloneState.captureMode === "raw"
-      ? Boolean(!item.forceCapture && existing?.source_wikitext && existing?.raw_extracted_at)
+      ? Boolean(
+          !item.forceCapture &&
+          existing?.source_wikitext &&
+          existing?.raw_extracted_at &&
+          ((item.mode || "expand") === "leaf" || (Array.isArray(existing?.discovered_links) && existing.discovered_links.length > 0))
+        )
       : Boolean(!item.forceCapture && existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter);
     if (reusable) {
       if (existing?.id) {
