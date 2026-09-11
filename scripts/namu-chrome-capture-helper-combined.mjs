@@ -6,7 +6,7 @@ import path from "node:path";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
 const ASSET_WORKER_PORT = PORT + 1;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;
 const MAX_RAW_SOURCE_BYTES = 4 * 1024 * 1024;
 const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
