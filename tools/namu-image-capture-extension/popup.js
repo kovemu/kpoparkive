@@ -18,6 +18,32 @@ function setStatus(text, kind = "") {
   status.className = kind;
 }
 
+function titleFromNamuUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!/(^|\.)namu\.wiki$/i.test(url.hostname)) return "";
+    const match = url.pathname.match(/^\/w\/(.+)$/);
+    if (!match?.[1]) return "";
+    try { return decodeURIComponent(match[1]).normalize("NFKC").trim(); }
+    catch { return match[1].normalize("NFKC").trim(); }
+  } catch {
+    return "";
+  }
+}
+
+async function syncRootFromActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const title = titleFromNamuUrl(tab?.url || "");
+    if (!title) return rootInput.value.trim() || "";
+    rootInput.value = title;
+    await chrome.storage.local.set({ kpoparkiveRootTitle: title });
+    return title;
+  } catch {
+    return rootInput.value.trim() || "";
+  }
+}
+
 async function refreshHealth() {
   try {
     const [response, rawAssets] = await Promise.all([
@@ -130,10 +156,11 @@ async function pollRawAssetStatus(show = true) {
   } catch {}
 }
 
-chrome.storage.local.get(["kpoparkiveRootTitle", "kpoparkiveCloneDepth", "kpoparkiveCloneMaxDocs"]).then((stored) => {
+chrome.storage.local.get(["kpoparkiveRootTitle", "kpoparkiveCloneDepth", "kpoparkiveCloneMaxDocs"]).then(async (stored) => {
   if (stored.kpoparkiveRootTitle) rootInput.value = stored.kpoparkiveRootTitle;
   if (stored.kpoparkiveCloneDepth != null) depthInput.value = String(stored.kpoparkiveCloneDepth);
   if (stored.kpoparkiveCloneMaxDocs != null) maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs);
+  await syncRootFromActiveTab();
 });
 
 rootInput.addEventListener("change", () => {
@@ -146,7 +173,8 @@ depthInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiv
 maxDocsInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 25) }));
 
 rawCrawlButton.addEventListener("click", async () => {
-  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const activeRoot = await syncRootFromActiveTab();
+  const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
   const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
   const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 25) || 25));
 
@@ -206,7 +234,8 @@ cloneButton.addEventListener("click", async () => {
 });
 
 rawButton.addEventListener("click", async () => {
-  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const activeRoot = await syncRootFromActiveTab();
+  const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
   rawButton.disabled = true;
   setStatus(
     "Capturing canonical NamuMark through normal Chrome edit pages...\n" +
