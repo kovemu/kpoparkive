@@ -264,6 +264,11 @@ function applyCompatibility(raw, title, options = {}) {
   lines = joinMultilineDirectiveHeaders(lines, local);
   let result = lines.join("\n");
 
+  // A multiline #!wiki / #!if header can carry NBSP only on continuation
+  // lines. Those lines are not syntax-bearing until they are joined, so run
+  // structural whitespace normalization once more after the join.
+  result = normalizeStructuralNbsp(result, local);
+
   if (options.expandMissingYouTubeIconTemplate) {
     result = expandMissingYouTubeIconIncludes(result, local);
   }
