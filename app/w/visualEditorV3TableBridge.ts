@@ -203,8 +203,9 @@ function makeSurface(host: HTMLElement, model: V3TableModel, field: V3TableField
     const anchor = (event.target as Element | null)?.closest?.("a");
     if (anchor) event.preventDefault();
   });
-  surface.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+  surface.addEventListener("keydown", (event) => {
+    const keyboard = event as KeyboardEvent;
+    if (keyboard.key !== "Enter" || keyboard.shiftKey || keyboard.ctrlKey || keyboard.metaKey || keyboard.altKey) return;
     event.preventDefault();
     document.execCommand("insertHTML", false, "<br>");
     surface.dispatchEvent(new Event("input", { bubbles: true }));
