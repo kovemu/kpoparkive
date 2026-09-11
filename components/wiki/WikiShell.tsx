@@ -1,1 +1,31 @@
-import type { ReactNode } from "react";\nimport SiteHeader from "./SiteHeader";\n\nfunction encodeWikiTitle(title: string) {\n  return title.split("/").map((part) => encodeURIComponent(part)).join("/");\n}\n\nexport default function WikiShell({ title, children }: { title: string; children: ReactNode }) {\n  const encodedTitle = encodeWikiTitle(title);\n  return (\n    <div className="wikiSiteShell">\n      <SiteHeader />\n      <main className="wikiDocumentColumn">\n        <header className="wikiDocumentHeader">\n          <h1>{title}</h1>\n          <a className="wikiEditLink" href={"/edit/" + encodedTitle}>Edit</a>\n        </header>\n        <div className="wikiArticleFrame">{children}</div>\n      </main>\n    </div>\n  );\n}\n
+import type { ReactNode } from "react";
+import SiteHeader from "./SiteHeader";
+
+function encodeWikiTitle(title: string) {
+  return title.split("/").map((part) => encodeURIComponent(part)).join("/");
+}
+
+export default function WikiShell({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  const encodedTitle = encodeWikiTitle(title);
+
+  return (
+    <div className="wikiSiteShell">
+      <SiteHeader />
+      <main className="wikiDocumentColumn">
+        <header className="wikiDocumentHeader">
+          <h1>{title}</h1>
+          <a className="wikiEditLink" href={"/edit/" + encodedTitle}>
+            Edit
+          </a>
+        </header>
+        <div className="wikiArticleFrame">{children}</div>
+      </main>
+    </div>
+  );
+}
