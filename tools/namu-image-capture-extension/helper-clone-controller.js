@@ -280,7 +280,7 @@ async function kpopCaptureEditRawSource(options = {}) {
     }
   }
 
-  const previewUrl = `https://kpoparkive.vercel.app/admin/namu-raw-preview/${encodeURIComponent(sourceTitle)}`;
+  const previewUrl = `https://kpoparkive.vercel.app/w/${encodeURIComponent(sourceTitle)}`;
   if (options.openPreview) {
     try { await chrome.tabs.create({ url: previewUrl, active: true }); } catch {}
   }
