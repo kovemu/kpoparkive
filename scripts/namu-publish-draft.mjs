@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { findVisibleKoreanLinkLabels } from "./namu-english-link-localizer.mjs";
 
 const ROOT = process.cwd();
 
@@ -97,6 +98,30 @@ function validateDraft(row) {
   }
   if (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0) {
     throw new Error(`The Tree render has ${meta.missingYouTubeEmbeds.length} missing YouTube embed(s)`);
+  }
+
+  const unresolvedTemplateLabels = Array.isArray(meta?.englishLinkLocalization?.unresolved)
+    ? meta.englishLinkLocalization.unresolved
+    : [];
+  if (unresolvedTemplateLabels.length > 0) {
+    const preview = unresolvedTemplateLabels
+      .slice(0, 5)
+      .map((item) => `${item?.template || "template"}:${item?.target || "?"}`)
+      .join(" | ");
+    throw new Error(
+      `English link-label QA: ${unresolvedTemplateLabels.length} template-generated label(s) unresolved: ${preview}`,
+    );
+  }
+
+  const visibleKoreanLinks = findVisibleKoreanLinkLabels(row.content_namumark_html, { limit: 20 });
+  if (visibleKoreanLinks.length > 0) {
+    const preview = visibleKoreanLinks
+      .slice(0, 5)
+      .map((item) => `${item.visible} -> ${item.href || "?"}`)
+      .join(" | ");
+    throw new Error(
+      `English link-label QA: ${visibleKoreanLinks.length} visible Korean link label(s) remain: ${preview}`,
+    );
   }
 
   return { revision, meta };
