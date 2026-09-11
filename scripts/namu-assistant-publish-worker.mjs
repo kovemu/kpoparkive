@@ -231,14 +231,27 @@ async function fetchPending() {
       "&translation_status=eq.translated_by_chatgpt" +
       "&content_language=eq.en" +
       "&content_wikitext=not.is.null" +
-      "&select=id,source_title,content_revision_no,translation_version,translated_at,content_namumark_rendered_at,content_namumark_meta" +
+      "&select=id,source_title,content_revision_no,translation_version,translated_at,source_namumark_rendered_at,content_namumark_rendered_at,content_namumark_meta" +
       "&order=translated_at.asc.nullsfirst,updated_at.asc&limit=30",
   );
 
   return (rows || []).filter((row) => {
     const revision = Number(row?.content_revision_no || 0) || 0;
-    const renderedRevision = Number(row?.content_namumark_meta?.editableContent?.revisionNo || 0) || 0;
-    return revision > 0 && renderedRevision !== revision;
+    if (revision <= 0) return false;
+    const meta = row?.content_namumark_meta || {};
+    const renderedRevision = Number(meta?.editableContent?.revisionNo || 0) || 0;
+    const sourceRenderedAt = Date.parse(row?.source_namumark_rendered_at || "");
+    const contentRenderedAt = Date.parse(row?.content_namumark_rendered_at || "");
+    const sourceNewer =
+      Number.isFinite(sourceRenderedAt) &&
+      (!Number.isFinite(contentRenderedAt) || contentRenderedAt < sourceRenderedAt);
+    const renderStillBroken =
+      Boolean(meta?.hasError) ||
+      Number(meta?.missingTemplateCount || 0) > 0 ||
+      Number(meta?.missingFileCount || 0) > 0 ||
+      (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0);
+
+    return renderedRevision !== revision || sourceNewer || renderStillBroken;
   }).slice(0, 10);
 }
 
@@ -300,6 +313,37 @@ async function resumeRepairableFailedDraft(id) {
     `ASSISTANT SOURCE REPAIR RESUMED ${row.source_title}: source is clean; re-queueing existing English draft r${row.content_revision_no}.`,
   );
   return true;
+}
+
+async function recoverReviewedSyntheticFallbacks() {
+  const rows = await db(
+    "template_dom_fallbacks?translation_status=eq.reviewed" +
+      "&source_html=not.is.null" +
+      "&en_html=not.is.null" +
+      "&select=id,source_title,template_title,synthetic_document_id,recovery_status,updated_at" +
+      "&order=updated_at.asc&limit=100",
+  );
+
+  const owners = [...new Set(
+    (rows || [])
+      .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+      .filter(Boolean)
+  )];
+
+  let attempted = 0;
+  let verified = 0;
+  for (const ownerTitle of owners) {
+    const result = await recoverFreshDomFallbacks(ownerTitle);
+    attempted += Number(result?.attempted || 0);
+    verified += Number(result?.verified || 0);
+  }
+
+  if (attempted > 0) {
+    console.log(
+      `DOM ENGLISH SYNTHETIC RECOVERY COMPLETE: ${verified}/${attempted} verified.`,
+    );
+  }
+  return { attempted, verified };
 }
 
 async function resumeReviewedDomFallbackTranslations() {
@@ -452,6 +496,7 @@ async function tick() {
       }
     }
 
+    await recoverReviewedSyntheticFallbacks();
     await resumeReviewedDomFallbackTranslations();
 
     const pending = await fetchPending();
