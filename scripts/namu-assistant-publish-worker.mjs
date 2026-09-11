@@ -188,10 +188,23 @@ async function recoverFreshDomFallbacks(ownerTitle) {
         synthetic.content_wikitext.length > 0 &&
         Number(synthetic?.content_revision_no || 0) > 0 &&
         ["reviewed", "translated_by_chatgpt"].includes(String(synthetic?.translation_status || ""));
+
+      // When DOM -> NamuMark promotion is intentionally blocked for a complex
+      // interactive/tabbed template, the translated captured HTML fallback is
+      // the authoritative English representation. Do not keep retrying merely
+      // because the synthetic document has no English content; it is expected
+      // to remain source-only in html-fallback-only mode.
+      const htmlFallbackAuthoritative =
+        Boolean(row?.recovery_meta?.htmlFallbackRequired) &&
+        row?.recovery_meta?.promotionGate?.eligible === false &&
+        Boolean(row?.en_html) &&
+        row?.translation_status === "reviewed";
+
       const needsEnglishSynthetic =
         row?.translation_status === "reviewed" &&
         Boolean(row?.en_html) &&
-        !hasEnglishSynthetic;
+        !hasEnglishSynthetic &&
+        !htmlFallbackAuthoritative;
 
       shouldRecover = sourceRecoveryStale || needsEnglishSynthetic;
     }
