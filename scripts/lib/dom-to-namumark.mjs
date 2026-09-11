@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 
 const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
-export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v2";
+export const DOM_TO_NAMUMARK_VERSION = "dom-to-namumark-v3";
 
 function normalizeText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/[\t\r\n ]+/g, " ").trim();
@@ -100,14 +100,23 @@ function tableOptions(table) {
   return opts.join("");
 }
 
-function inheritedStyleColor(element, property) {
-  let current = element;
-  for (let depth = 0; current && depth < 5; depth += 1, current = current.parentNode) {
-    const color = cssColor(styleMap(current).get(property));
-    if (color) return color;
-    if (String(current?.tagName || "").toLowerCase() === "table") break;
+function visualCellElement(cell) {
+  const descendants = cell.querySelectorAll("*");
+  for (const node of descendants) {
+    const display = String(styleMap(node).get("display") || "").toLowerCase();
+    if (display === "table-cell") return node;
   }
-  return "";
+  return cell;
+}
+
+function logicalCellStyle(cell, property) {
+  const visual = visualCellElement(cell);
+  const direct = styleMap(visual).get(property);
+  if (direct) return direct;
+  const own = styleMap(cell).get(property);
+  if (own) return own;
+  const row = styleMap(cell.parentNode).get(property);
+  return row || "";
 }
 
 function cellOptions(cell, tableWidth) {
@@ -118,16 +127,22 @@ function cellOptions(cell, tableWidth) {
   if (Number.isFinite(rowspan) && rowspan > 1) opts.push(`<|${Math.round(rowspan)}>`);
 
   const styles = styleMap(cell);
+  const visualStyles = styleMap(visualCellElement(cell));
   const rowStyles = styleMap(cell.parentNode);
-  const bg = inheritedStyleColor(cell, "background-color");
-  const color = inheritedStyleColor(cell, "color");
+  const bg = cssColor(logicalCellStyle(cell, "background-color"));
+  const color = cssColor(logicalCellStyle(cell, "color"));
 
   if (bg) opts.push(`<bgcolor=${bg}>`);
   if (color && color !== "#212529" && color !== "#000000" && !(color === "#ffffff" && !bg)) {
     opts.push(`<color=${color}>`);
   }
 
-  const align = String(styles.get("text-align") || rowStyles.get("text-align") || "").toLowerCase();
+  const align = String(
+    visualStyles.get("text-align") ||
+    styles.get("text-align") ||
+    rowStyles.get("text-align") ||
+    ""
+  ).toLowerCase();
   if (align === "center") opts.push("<:>");
   else if (align === "right" || align === "end") opts.push("<)>");
   else if (align === "left" || align === "start") opts.push("<(>");
@@ -267,7 +282,6 @@ function tableToNamu(table, ctx) {
       const prefix = rowIndex === 0 && cellIndex === 0 ? rootOpts + opts : opts;
       let body = childrenToNamu(cell, { ...ctx, inCell: true }).trim();
       body = body.replace(/^\n+|\n+$/g, "");
-      if (normalizeText(textOf(cell)) === "위") body = "";
       return `${prefix} ${body} `;
     });
     lines.push("||" + rendered.join("||") + "||");
@@ -348,9 +362,28 @@ function setSimilarity(a, b) {
   return hit / union.size;
 }
 
-function textTokenSimilarity(a, b) {
-  const tokenize = (value) => new Set(normalizeText(value).split(/\s+/).filter(Boolean));
-  return setSimilarity([...tokenize(a)], [...tokenize(b)]);
+function compactText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u200b-\u200d\u2060\ufeff\s]+/g, "")
+    .toLowerCase();
+}
+
+function textSequenceSimilarity(a, b) {
+  const left = compactText(a);
+  const right = compactText(b);
+  if (left === right) return 1;
+  if (!left || !right) return 0;
+
+  const n = Math.min(3, left.length, right.length);
+  const grams = (value) => {
+    const out = [];
+    if (value.length <= n) return [value];
+    for (let i = 0; i <= value.length - n; i += 1) out.push(value.slice(i, i + n));
+    return out;
+  };
+
+  return setSimilarity(grams(left), grams(right));
 }
 
 
@@ -369,7 +402,7 @@ export function compareDomFidelity(originalHtml, renderedHtml) {
   const rendered = collectDomMetrics(renderedRoot);
 
   const detail = {
-    textTokenSimilarity: textTokenSimilarity(original.text, rendered.text),
+    textTokenSimilarity: textSequenceSimilarity(original.text, rendered.text),
     linkSimilarity: setSimilarity(original.links, rendered.links),
     imageSimilarity: setSimilarity(original.images, rendered.images),
     youtubeSimilarity: setSimilarity(original.youtube, rendered.youtube),
@@ -403,7 +436,7 @@ export function convertDomToNamuMark(htmlValue, options = {}) {
   const dom = collectDomMetrics(root);
   const generated = collectNamuMetrics(namumark);
   const fidelity = {
-    textTokenSimilarity: textTokenSimilarity(dom.text, generated.text),
+    textTokenSimilarity: textSequenceSimilarity(dom.text, generated.text),
     linkSimilarity: setSimilarity(dom.links, generated.links),
     imageSimilarity: setSimilarity(dom.images, generated.images),
     youtubeSimilarity: setSimilarity(dom.youtube, generated.youtube),
