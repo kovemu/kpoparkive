@@ -392,6 +392,29 @@ function plainTemplateLabel(templateTitle) {
   return normalizeTitle(templateTitle).replace(/^틀:/i, "");
 }
 
+function templateLabelVariants(templateTitle) {
+  const full = plainTemplateLabel(templateTitle);
+  const values = [full];
+  const withoutQualifier = full.replace(/\s*\([^()]{1,80}\)\s*$/u, "").trim();
+  if (withoutQualifier && withoutQualifier !== full) values.push(withoutQualifier);
+  return [...new Set(values.filter((value) => value.length >= 2))];
+}
+
+function internalWikiTitleFromHref(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw, "https://namu.wiki");
+    const match = url.pathname.match(/^\/w\/(.+)$/i);
+    if (!match?.[1]) return "";
+    let decoded = match[1];
+    try { decoded = decodeURIComponent(decoded); } catch {}
+    return normalizeTitle(decoded);
+  } catch {
+    return "";
+  }
+}
+
 function normalizeVisibleText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -408,20 +431,89 @@ function sanitizeDomFallbackElement(element) {
 
 function extractTemplateDomFallback(articleHtml, templateTitle) {
   const label = plainTemplateLabel(templateTitle);
+  const labelVariants = templateLabelVariants(templateTitle);
   if (!label || label.length < 2 || !articleHtml) return null;
+
   let root;
   try { root = parseHtml(String(articleHtml), { comment: false }); }
   catch { return null; }
+
   const candidates = [];
+  const seenHtml = new Set();
+  const pushCandidate = (element, strategy, scoreBoost = 0) => {
+    if (!element) return;
+    const html = element.toString();
+    if (html.length < 80 || html.length > 600000 || seenHtml.has(html)) return;
+    const text = normalizeVisibleText(element.innerText || element.text || "");
+    if (!text) return;
+    seenHtml.add(html);
+    candidates.push({
+      html,
+      size: html.length,
+      textLength: text.length,
+      strategy,
+      scoreBoost,
+      tableCount: element.querySelectorAll?.("table")?.length || 0,
+    });
+  };
+
+  // Original high-precision path: templates whose visible table text contains
+  // the complete template label (e.g. 틀:원이 브랜드 평판).
   for (const table of root.querySelectorAll("table")) {
     const text = normalizeVisibleText(table.innerText || table.text || "");
     if (!text.includes(label)) continue;
-    const html = table.toString();
-    if (html.length < 80 || html.length > 600000) continue;
-    candidates.push({ html, size: html.length, textLength: text.length });
+    pushCandidate(table, "table-full-label", 1000);
   }
+
+  // Navigation/profile templates commonly have a disambiguated title such as
+  // 틀:리브(RESCENE), while the visible header only says "리브". Their outer
+  // wrapper is usually a div containing a self-link plus one or more tab tables.
+  // Find that self-link and climb to the smallest structural wrapper containing
+  // both the link and rendered table content.
+  if (!candidates.length) {
+    const targetTitle = normalizeTitle(label);
+    for (const anchor of root.querySelectorAll("a[href]")) {
+      if (internalWikiTitleFromHref(anchor.getAttribute("href")) !== targetTitle) continue;
+
+      let current = anchor;
+      for (let depth = 0; current && depth < 10; depth += 1, current = current.parentNode) {
+        const tag = String(current?.tagName || "").toLowerCase();
+        if (!["div", "section", "article", "table"].includes(tag)) continue;
+
+        const text = normalizeVisibleText(current.innerText || current.text || "");
+        const hasLabel = labelVariants.some((variant) => text.includes(variant));
+        const tableCount = current.querySelectorAll?.("table")?.length || 0;
+        if (!hasLabel || tableCount < 1) continue;
+
+        // Keep the fallback focused on the include output rather than selecting
+        // the whole captured article around a self-link.
+        if (text.length > 6000) continue;
+        pushCandidate(current, "self-link-wrapper", 800 - depth * 10);
+      }
+    }
+  }
+
+  // Last-resort table path for disambiguated labels: only use the shortened
+  // visible label and prefer compact tables. This is deliberately lower
+  // priority than a self-link wrapper to avoid grabbing the main infobox.
+  if (!candidates.length && labelVariants.length > 1) {
+    const shortLabel = labelVariants[labelVariants.length - 1];
+    for (const table of root.querySelectorAll("table")) {
+      const text = normalizeVisibleText(table.innerText || table.text || "");
+      if (!text.includes(shortLabel)) continue;
+      if (text.length > 3500) continue;
+      pushCandidate(table, "table-short-label", 100);
+    }
+  }
+
   if (!candidates.length) return null;
-  candidates.sort((a, b) => a.size - b.size || a.textLength - b.textLength);
+  candidates.sort((a, b) =>
+    b.scoreBoost - a.scoreBoost ||
+    a.size - b.size ||
+    a.textLength - b.textLength ||
+    b.tableCount - a.tableCount
+  );
+
   const picked = candidates[0];
   const parsed = parseHtml(picked.html, { comment: false });
   const element = parsed.firstChild;
@@ -431,6 +523,7 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
     label,
     html: sanitizeDomFallbackElement(element),
     originalHtmlBytes: Buffer.byteLength(picked.html, "utf8"),
+    extractionStrategy: picked.strategy,
   };
 }
 
