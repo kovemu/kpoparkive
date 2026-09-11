@@ -97,6 +97,27 @@ function runSourceRenderer(title) {
   });
 }
 
+function runDomVideoRecovery(title) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [path.resolve("scripts/namu-dom-video-recover.mjs"), title],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve(true);
+      else if (code === 3) resolve(false);
+      else reject(new Error(`DOM video recovery exited code=${code ?? "null"} signal=${signal || "none"}`));
+    });
+  });
+}
+
 function runDomRecovery(ownerTitle, templateTitle) {
   return new Promise((resolve, reject) => {
     console.log(`DOM RECOVERY: ${ownerTitle} -> ${templateTitle}`);
@@ -310,11 +331,18 @@ async function tick() {
       if (!title) continue;
       try {
         await runSourceRenderer(title);
+
+        const mediaRecovered = await runDomVideoRecovery(title);
         const recovery = await recoverFreshDomFallbacks(title);
-        if (recovery.attempted > 0) {
-          console.log(
-            `DOM RECOVERY COMPLETE ${title}: ${recovery.verified}/${recovery.attempted} verified; refreshing source render.`,
-          );
+        if (mediaRecovered || recovery.attempted > 0) {
+          if (recovery.attempted > 0) {
+            console.log(
+              `DOM RECOVERY COMPLETE ${title}: ${recovery.verified}/${recovery.attempted} verified.`,
+            );
+          }
+          if (mediaRecovered) {
+            console.log(`DOM MEDIA RECOVERY COMPLETE ${title}; refreshing source render.`);
+          }
           await runSourceRenderer(title);
         }
       } catch (error) {
