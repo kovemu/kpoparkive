@@ -6,6 +6,7 @@ const ROOT = process.cwd();
 const POLL_MS = Math.max(3000, Number(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_POLL_MS || 5000) || 5000);
 const DOM_RECOVERY_TARGET_VERSION = "dom-to-namumark-v3.1";
 const FALLBACK_EXTRACTOR_TARGET_VERSION = 3;
+const DOM_FALLBACK_NORMALIZER_TARGET_VERSION = 2;
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -273,7 +274,14 @@ async function fetchPending() {
       Number(meta?.missingFileCount || 0) > 0 ||
       (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0);
 
-    return renderedRevision !== revision || sourceNewer || renderStillBroken;
+    const fallbackNormalizerOutdated =
+      Number(meta?.domFallbackTemplateCount || 0) > 0 &&
+      Number(meta?.domFallbackNormalizerVersion || 0) < DOM_FALLBACK_NORMALIZER_TARGET_VERSION;
+
+    return renderedRevision !== revision ||
+      sourceNewer ||
+      renderStillBroken ||
+      fallbackNormalizerOutdated;
   }).slice(0, 10);
 }
 
