@@ -102,7 +102,7 @@ async function fetchSourceRenderPending() {
     "source_documents?source=eq.namu_mirror" +
       "&translation_status=eq.pending_chatgpt" +
       "&source_wikitext=not.is.null" +
-      "&select=id,source_title,raw_extracted_at,source_namumark_rendered_at" +
+      "&select=id,source_title,raw_extracted_at,source_namumark_rendered_at,source_namumark_meta" +
       "&order=updated_at.desc&limit=30",
   );
 
@@ -111,7 +111,14 @@ async function fetchSourceRenderPending() {
     if (!title || /^틀:/i.test(title)) return false;
     const rawAt = Date.parse(row?.raw_extracted_at || "");
     const renderedAt = Date.parse(row?.source_namumark_rendered_at || "");
-    return !Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt);
+    const staleByTime = !Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt);
+    const needsFallbackExtractorUpgrade =
+      Number(row?.source_namumark_meta?.missingTemplateCount || 0) > 0 &&
+      Number(row?.source_namumark_meta?.fallbackExtractorVersion || 0) < 2;
+    const needsStagingAssetReconcile =
+      Number(row?.source_namumark_meta?.missingFileCount || 0) > 0 &&
+      Number(row?.source_namumark_meta?.fallbackExtractorVersion || 0) < 2;
+    return staleByTime || needsFallbackExtractorUpgrade || needsStagingAssetReconcile;
   });
 }
 
