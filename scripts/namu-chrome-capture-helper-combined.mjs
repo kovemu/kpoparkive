@@ -312,6 +312,24 @@ async function documentStatus(rootTitle, sourceTitle) {
   };
 }
 
+async function rawSourceStatus(sourceTitle) {
+  const title = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!title) throw new Error("sourceTitle is required");
+  const rows = await db(
+    `source_documents?source=eq.namu_mirror` +
+    `&source_title=eq.${encodeURIComponent(title)}` +
+    `&select=id,source_title,source_wikitext,raw_extracted_at,translation_status&limit=1`,
+  );
+  const row = rows?.[0] || null;
+  return {
+    exists: Boolean(row),
+    rawCaptured: Boolean(row?.source_wikitext && row?.raw_extracted_at),
+    rawExtractedAt: row?.raw_extracted_at || null,
+    translationStatus: row?.translation_status || null,
+    raw: row?.source_wikitext || null,
+  };
+}
+
 async function proxyAsset(req, res) {
   const body = await readBody(req, MAX_IMAGE_BYTES);
   let lastError = "asset worker unavailable";
@@ -397,6 +415,13 @@ const server = http.createServer(async (req, res) => {
       const sourceTitle = String(url.searchParams.get("sourceTitle") || "").trim();
       if (!rootTitle || !sourceTitle) throw new Error("rootTitle/sourceTitle are required");
       json(res, 200, { ok: true, ...(await documentStatus(rootTitle, sourceTitle)) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/raw-status") {
+      const sourceTitle = String(url.searchParams.get("sourceTitle") || "").trim();
+      if (!sourceTitle) throw new Error("sourceTitle is required");
+      json(res, 200, { ok: true, ...(await rawSourceStatus(sourceTitle)) });
       return;
     }
 
