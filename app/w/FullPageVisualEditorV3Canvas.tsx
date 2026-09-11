@@ -642,7 +642,7 @@ export default function FullPageVisualEditorV3Canvas({ title }: { title: string 
       const marker = anchor?.closest<HTMLElement>(".wiki-edit-section");
       const host = marker?.parentElement as HTMLElement | null;
       const heading = anchor?.closest<HTMLElement>(".wiki-heading");
-      if (!host || !heading) return;
+      if (!host || !heading || !marker) return;
 
       const markerHtml = marker.outerHTML;
       host.innerHTML = `${headingEditorHtml(parts.wikitext)}${markerHtml}`;
