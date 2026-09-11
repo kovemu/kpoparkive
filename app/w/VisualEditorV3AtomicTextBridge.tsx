@@ -194,7 +194,12 @@ function serializeSurface(surface: HTMLElement) {
   return editorElementToWikitext(clone);
 }
 
-function candidateElements(root: HTMLElement) {
+type CandidateRecord = {
+  element: HTMLElement;
+  text: string;
+};
+
+function candidateElements(root: HTMLElement): CandidateRecord[] {
   return Array.from(root.querySelectorAll<HTMLElement>(".wiki-paragraph,.wiki-list,ul,ol,blockquote,.wiki-indent,.wiki-quote"))
     .filter((element) => {
       const style = window.getComputedStyle(element);
@@ -203,8 +208,10 @@ function candidateElements(root: HTMLElement) {
       if (element.closest("[data-ve3-node-id]")) return false;
       if (element.dataset.ve3Original === "1" || element.dataset.ve3TableOriginal === "1") return false;
       if (element.querySelector("table")) return false;
-      return Boolean(normalize(element.innerText || element.textContent || ""));
-    });
+      return true;
+    })
+    .map((element) => ({ element, text: element.innerText || element.textContent || "" }))
+    .filter((record) => Boolean(normalize(record.text)));
 }
 
 function anchorText(block: Block) {
@@ -230,13 +237,13 @@ function score(expected: string, actual: string) {
   return prefix.length >= 8 && b.includes(prefix) ? .7 : 0;
 }
 
-function bestCandidate(root: HTMLElement, block: Block, claimed: Set<HTMLElement>) {
+function bestCandidate(candidates: CandidateRecord[], block: Block, claimed: Set<HTMLElement>) {
   const expected = anchorText(block);
   if (compact(expected).length < 4) return null;
-  const scored = candidateElements(root).filter((element) => !claimed.has(element))
-    .map((element) => ({ element, score: score(expected, element.innerText || element.textContent || "") }))
+  const scored = candidates.filter(({ element }) => !claimed.has(element))
+    .map(({ element, text }) => ({ element, score: score(expected, text), textLength: text.length }))
     .filter((entry) => entry.score >= .62)
-    .sort((a, b) => b.score - a.score || (a.element.textContent || "").length - (b.element.textContent || "").length);
+    .sort((a, b) => b.score - a.score || a.textLength - b.textLength);
   if (!scored.length) return null;
   if (scored[1] && scored[0].score < .9 && scored[1].score >= scored[0].score - .04) return null;
   return scored[0].element;
@@ -275,11 +282,11 @@ export default function VisualEditorV3AtomicTextBridge({ title }: { title: strin
         const article = document.querySelector<HTMLElement>(".thetreeWikiBaseline"); if(!article)return;
         const roots=sectionRoots(); const grouped=blocksBySection(payload.ast?.blocks||[]); const created:SurfaceRecord[]=[];
         for(const [section,blocks] of grouped.entries()){
-          const root=section===0?article:roots.get(section); if(!root)continue; const claimed=new Set<HTMLElement>();
+          const root=section===0?article:roots.get(section); if(!root)continue; const claimed=new Set<HTMLElement>(); const candidates=candidateElements(root);
           for(const block of blocks){
             if((block.type!=="paragraph"&&block.type!=="list")||!collectAtomic(block).length)continue;
             if(document.querySelector(`[data-ve3-node-id="${CSS.escape(block.id)}"]`))continue;
-            const candidate=bestCandidate(root,block,claimed); if(!candidate)continue; claimed.add(candidate);
+            const candidate=bestCandidate(candidates,block,claimed); if(!candidate)continue; claimed.add(candidate);
             const surface=renderSurface(block); surface.addEventListener("click",event=>{if((event.target as Element|null)?.closest?.("a"))event.preventDefault();});
             const oldDisplay=candidate.style.display; candidate.style.display="none"; candidate.dataset.ve3AtomicOriginal="1"; candidate.parentNode?.insertBefore(surface,candidate);
             created.push({nodeId:block.id,originalWikitext:block.raw,original:candidate,surface,oldDisplay});
