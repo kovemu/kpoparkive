@@ -237,10 +237,16 @@ async function saveRawSource(payload) {
     /\{\{\{#!/,
   ].filter((pattern) => pattern.test(raw)).length;
   const isTemplate = /^틀:/i.test(sourceTitle);
-  const minChars = isTemplate ? 1 : 200;
-  const minSignals = isTemplate ? 0 : 2;
-  if (raw.length < minChars || signals < minSignals) {
-    throw new Error(`captured edit source does not look like complete NamuMark (${raw.length} chars, ${signals} signals)`);
+  const trustedEditor = Boolean(payload?.trustedEditor);
+  const validTemplate = isTemplate && (
+    (trustedEditor && raw.length >= 1) ||
+    (raw.length >= 20 && signals >= 1)
+  );
+  const validDocument = !isTemplate && raw.length >= 200 && signals >= 2;
+  if (!validTemplate && !validDocument) {
+    throw new Error(
+      `captured edit source does not look like complete NamuMark (${raw.length} chars, ${signals} signals, trustedEditor=${trustedEditor})`
+    );
   }
 
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth: 0, internalLinks: [] });
