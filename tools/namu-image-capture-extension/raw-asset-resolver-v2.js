@@ -54,6 +54,20 @@ async function rawAssetV2Plan(rootTitle, sourceTitle = rootTitle, requiredFiles 
   return body;
 }
 
+async function rawAssetV2InvalidateRender(rootTitle, sourceTitle = rootTitle) {
+  const response = await fetch(`${RAW_ASSET_HELPER_V2}/invalidate-render`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rootTitle, sourceTitle }),
+  });
+  const text = await response.text();
+  let body;
+  try { body = text ? JSON.parse(text) : {}; }
+  catch { body = { error: text }; }
+  if (!response.ok || !body?.ok) throw new Error(body?.error || `raw asset helper HTTP ${response.status}`);
+  return body;
+}
+
 function rawAssetV2TargetFromTabUrl(url) {
   try {
     const parsed = new URL(url);
@@ -321,6 +335,7 @@ async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [
   } catch (error) {
     rawAssetV2Job.errors = [...rawAssetV2Job.errors, `Verification: ${error?.message || error}`].slice(-20);
   }
+  await rawAssetV2InvalidateRender(rootTitle, sourceTitle);
   rawAssetV2Job.current = "";
   rawAssetV2Job.running = false;
   rawAssetV2Job.done = true;
