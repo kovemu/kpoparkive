@@ -479,7 +479,17 @@ export async function renderExactNamuPreview(title: string, source: string) {
   const require = createRequire(import.meta.url);
   (globalThis as typeof globalThis & { config?: typeof config }).config = config;
   const parser = require("thetree/utils/namumark/parser") as (source: string) => unknown;
-  const Piscina = require("piscina") as typeof import("piscina");
+  type PiscinaPool = {
+    run: (task: unknown, options?: { transferList?: Transferable[] }) => Promise<unknown>;
+    destroy: () => Promise<void>;
+  };
+  type PiscinaConstructor = new (options: {
+    filename: string;
+    workerData: unknown;
+    minThreads: number;
+    maxThreads: number;
+  }) => PiscinaPool;
+  const Piscina = require("piscina") as PiscinaConstructor;
   const workerPath = require.resolve("thetree/utils/namumark/toHtmlWorker");
 
   process.env.S3_PUBLIC_HOST = process.env.S3_PUBLIC_HOST || "https://invalid.local/";
