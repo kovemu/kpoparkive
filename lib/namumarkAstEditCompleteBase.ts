@@ -13,7 +13,16 @@ export type NamuAstCompleteEditOperation =
   | { op: "delete-inline-node"; nodeId: string }
   | { op: "insert-block"; anchorNodeId: string; position: "before" | "after"; wikitext: string };
 
-type StructuralPatch = NamuAstAppliedChange & { sequence: number };
+type StructuralPatch = {
+  op: "delete-node" | "insert-block";
+  nodeId: string;
+  nodeType: string;
+  sourceStart: number;
+  sourceEnd: number;
+  before: string;
+  after: string;
+  sequence: number;
+};
 type TableStructureOperation = Extract<NamuAstEditOperation, { op: "table-structure" }>;
 
 const DELETABLE_BLOCKS = new Set(["paragraph", "list", "table", "template", "media", "divider", "styled-block", "raw-block"]);
