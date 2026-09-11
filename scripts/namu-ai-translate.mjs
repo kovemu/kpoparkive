@@ -321,7 +321,7 @@ async function main() {
   const sourceHash = crypto.createHash("sha256").update(row.source_wikitext).digest("hex");
   await patchDocument(row.id, {
     source_hash: sourceHash,
-    translation_status: "translating",
+    translation_status: "ready",
     translation_version: TRANSLATION_VERSION,
   });
 
