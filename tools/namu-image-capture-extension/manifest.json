@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.11.1",
-  "description": "RAW-view-first NamuWiki capture with edit fallback, complete template graph, required assets, The Tree render, and verification-safe resumable crawl.",
+  "version": "0.11.2",
+  "description": "RAW-view-first NamuWiki capture with structural verification detection, edit fallback, complete template graph, required assets, and The Tree render.",
   "permissions": [
     "activeTab",
     "storage",
