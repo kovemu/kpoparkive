@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { MessageChannel } from "node:worker_threads";
+import { parse as parseHtml } from "node-html-parser";
 
 const ROOT_DIR = process.cwd();
 const THETREE_REPO = "https://github.com/wjdgustn/thetree.git";
@@ -350,6 +351,118 @@ function extractIncludeTitles(rawValue) {
   return output;
 }
 
+function findIncludeRanges(rawValue) {
+  const raw = String(rawValue || "");
+  const lines = raw.split(/\r?\n/);
+  const output = [];
+  let absolute = 0;
+  for (const line of lines) {
+    if (!/^\s*##/.test(line)) {
+      const lower = line.toLowerCase();
+      let cursor = 0;
+      while (cursor < line.length) {
+        const start = lower.indexOf("[include(", cursor);
+        if (start < 0) break;
+        let depth = 0;
+        let comma = -1;
+        let end = -1;
+        for (let i = start + 9; i < line.length; i += 1) {
+          const ch = line[i];
+          if (ch === "(") { depth += 1; continue; }
+          if (ch === ")") {
+            if (depth > 0) { depth -= 1; continue; }
+            if (line[i + 1] === "]") { end = i + 2; break; }
+          }
+          if (ch === "," && depth === 0 && comma < 0) comma = i;
+        }
+        if (end < 0) break;
+        const nameEnd = comma >= 0 ? comma : end - 2;
+        const title = normalizeTitle(line.slice(start + 9, nameEnd));
+        output.push({ title, start: absolute + start, end: absolute + end, source: line.slice(start, end) });
+        cursor = end;
+      }
+    }
+    absolute += line.length + 1;
+  }
+  return output;
+}
+
+function plainTemplateLabel(templateTitle) {
+  return normalizeTitle(templateTitle).replace(/^틀:/i, "");
+}
+
+function normalizeVisibleText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeDomFallbackElement(element) {
+  const clone = parseHtml(element.toString(), { comment: false });
+  for (const node of clone.querySelectorAll("*")) {
+    for (const name of Object.keys(node.attributes || {})) {
+      if (/^data-kpop-/i.test(name) || /^data-v-/i.test(name)) node.removeAttribute(name);
+    }
+  }
+  return clone.toString();
+}
+
+function extractTemplateDomFallback(articleHtml, templateTitle) {
+  const label = plainTemplateLabel(templateTitle);
+  if (!label || label.length < 2 || !articleHtml) return null;
+  let root;
+  try { root = parseHtml(String(articleHtml), { comment: false }); }
+  catch { return null; }
+  const candidates = [];
+  for (const table of root.querySelectorAll("table")) {
+    const text = normalizeVisibleText(table.innerText || table.text || "");
+    if (!text.includes(label)) continue;
+    const html = table.toString();
+    if (html.length < 80 || html.length > 600000) continue;
+    candidates.push({ html, size: html.length, textLength: text.length });
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.size - b.size || a.textLength - b.textLength);
+  const picked = candidates[0];
+  const parsed = parseHtml(picked.html, { comment: false });
+  const element = parsed.firstChild;
+  if (!element) return null;
+  return {
+    templateTitle,
+    label,
+    html: sanitizeDomFallbackElement(element),
+    originalHtmlBytes: Buffer.byteLength(picked.html, "utf8"),
+  };
+}
+
+function applyTemplateDomFallbackMarkers(rawValue, fallbackByTitle) {
+  const raw = String(rawValue || "");
+  const ranges = findIncludeRanges(raw);
+  const counts = new Map();
+  for (const range of ranges) counts.set(range.title, (counts.get(range.title) || 0) + 1);
+  const replacements = [];
+  for (const range of ranges) {
+    const fallback = fallbackByTitle.get(range.title);
+    if (!fallback) continue;
+    if ((counts.get(range.title) || 0) !== 1) continue;
+    const marker = "KPOPARKIVE_TEMPLATE_FALLBACK_" + crypto.createHash("sha1").update(range.title).digest("hex").slice(0, 16);
+    replacements.push({ ...range, marker, fallback });
+  }
+  let renderedSource = raw;
+  for (const item of replacements.sort((a, b) => b.start - a.start)) {
+    renderedSource = renderedSource.slice(0, item.start) + item.marker + renderedSource.slice(item.end);
+  }
+  return { renderedSource, replacements };
+}
+
+function injectTemplateDomFallbacks(htmlValue, replacements) {
+  let html = String(htmlValue || "");
+  const injected = [];
+  for (const item of replacements || []) {
+    if (!html.includes(item.marker)) continue;
+    html = html.split(item.marker).join(item.fallback.html);
+    injected.push(item.fallback.templateTitle);
+  }
+  return { html, injected };
+}
 function uniqueNormalizedStrings(values) {
   const output = [];
   const seen = new Set();
