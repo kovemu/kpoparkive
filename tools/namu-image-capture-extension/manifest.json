@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.10.0",
-  "description": "Raw-first NamuWiki capture: one-page-complete mode, full template graph, required assets, The Tree render, and verification-safe resumable crawl.",
+  "version": "0.11.0",
+  "description": "RAW-view-first NamuWiki capture with edit fallback, complete template graph, required assets, The Tree render, and verification-safe resumable crawl.",
   "permissions": [
     "activeTab",
     "storage",
@@ -58,6 +58,16 @@
       ],
       "js": [
         "edit-source.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://namu.wiki/raw/*",
+        "https://www.namu.wiki/raw/*"
+      ],
+      "js": [
+        "raw-source-page.js"
       ],
       "run_at": "document_idle"
     }
