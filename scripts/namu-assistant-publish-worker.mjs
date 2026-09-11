@@ -148,9 +148,8 @@ async function recoverFreshDomFallbacks(ownerTitle) {
   const rows = await db(
     "template_dom_fallbacks?source_title=eq." + encodeURIComponent(ownerTitle) +
       "&source_html=not.is.null" +
-      "&synthetic_document_id=is.null" +
-      "&select=id,template_title,recovery_status,synthetic_document_id" +
-      "&order=updated_at.asc&limit=20",
+      "&select=id,template_title,recovery_status,recovery_version,translation_status,synthetic_document_id,en_html" +
+      "&order=updated_at.asc&limit=50",
   );
 
   let attempted = 0;
@@ -158,6 +157,24 @@ async function recoverFreshDomFallbacks(ownerTitle) {
   for (const row of rows || []) {
     const templateTitle = String(row?.template_title || "").normalize("NFKC").trim();
     if (!templateTitle) continue;
+
+    let shouldRecover = !row?.synthetic_document_id;
+    if (!shouldRecover && row?.translation_status === "reviewed" && row?.en_html) {
+      const syntheticRows = await db(
+        "source_documents?id=eq." + encodeURIComponent(row.synthetic_document_id) +
+          "&select=id,content_language,content_wikitext,content_revision_no,translation_status,content_status&limit=1",
+      );
+      const synthetic = syntheticRows?.[0] || null;
+      const hasEnglishSynthetic =
+        synthetic?.content_language === "en" &&
+        typeof synthetic?.content_wikitext === "string" &&
+        synthetic.content_wikitext.length > 0 &&
+        Number(synthetic?.content_revision_no || 0) > 0 &&
+        ["reviewed", "translated_by_chatgpt"].includes(String(synthetic?.translation_status || ""));
+      shouldRecover = !hasEnglishSynthetic;
+    }
+
+    if (!shouldRecover) continue;
     attempted += 1;
     if (await runDomRecovery(ownerTitle, templateTitle)) verified += 1;
   }
@@ -167,9 +184,9 @@ async function recoverFreshDomFallbacks(ownerTitle) {
 async function fetchSourceRenderPending() {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
-      "&translation_status=eq.pending_chatgpt" +
+      "&translation_status=in.(pending_chatgpt,failed)" +
       "&source_wikitext=not.is.null" +
-      "&select=id,source_title,raw_extracted_at,source_namumark_rendered_at,source_namumark_meta" +
+      "&select=id,source_title,translation_status,raw_extracted_at,source_namumark_rendered_at,source_namumark_meta,content_language,content_revision_no,content_wikitext" +
       "&order=updated_at.desc&limit=30",
   );
 
@@ -179,13 +196,32 @@ async function fetchSourceRenderPending() {
     const rawAt = Date.parse(row?.raw_extracted_at || "");
     const renderedAt = Date.parse(row?.source_namumark_rendered_at || "");
     const staleByTime = !Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt);
+    const meta = row?.source_namumark_meta || {};
+    const missingTemplates = Number(meta?.missingTemplateCount || 0) > 0;
+    const missingFiles = Number(meta?.missingFileCount || 0) > 0;
     const needsFallbackExtractorUpgrade =
-      Number(row?.source_namumark_meta?.missingTemplateCount || 0) > 0 &&
-      Number(row?.source_namumark_meta?.fallbackExtractorVersion || 0) < 2;
+      missingTemplates && Number(meta?.fallbackExtractorVersion || 0) < 2;
     const needsStagingAssetReconcile =
-      Number(row?.source_namumark_meta?.missingFileCount || 0) > 0 &&
-      Number(row?.source_namumark_meta?.fallbackExtractorVersion || 0) < 2;
-    return staleByTime || needsFallbackExtractorUpgrade || needsStagingAssetReconcile;
+      missingFiles && Number(meta?.assetReconcilerVersion || 0) < 2;
+    const needsDomVideoRecovery =
+      missingFiles && Number(meta?.domVideoRecoveryVersion || 0) < 1;
+
+    // A failed English draft is repairable when the captured Korean source is
+    // still known to have missing templates/media. Keep it in the source-repair
+    // loop instead of stranding it permanently in translation_status=failed.
+    const repairableFailedDraft =
+      row?.translation_status === "failed" &&
+      row?.content_language === "en" &&
+      Number(row?.content_revision_no || 0) > 0 &&
+      typeof row?.content_wikitext === "string" &&
+      row.content_wikitext.length > 0 &&
+      (missingTemplates || missingFiles);
+
+    return staleByTime ||
+      needsFallbackExtractorUpgrade ||
+      needsStagingAssetReconcile ||
+      needsDomVideoRecovery ||
+      repairableFailedDraft;
   });
 }
 
@@ -204,6 +240,66 @@ async function fetchPending() {
     const renderedRevision = Number(row?.content_namumark_meta?.editableContent?.revisionNo || 0) || 0;
     return revision > 0 && renderedRevision !== revision;
   }).slice(0, 10);
+}
+
+async function markSourceRepairVersions(id, { videoAttempted = false } = {}) {
+  if (!id) return;
+  const rows = await db(
+    `source_documents?id=eq.${encodeURIComponent(id)}&select=source_namumark_meta&limit=1`,
+  );
+  const meta = rows?.[0]?.source_namumark_meta || {};
+  await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      source_namumark_meta: {
+        ...meta,
+        fallbackExtractorVersion: Math.max(2, Number(meta?.fallbackExtractorVersion || 0)),
+        assetReconcilerVersion: Math.max(2, Number(meta?.assetReconcilerVersion || 0)),
+        domVideoRecoveryVersion: videoAttempted
+          ? Math.max(1, Number(meta?.domVideoRecoveryVersion || 0))
+          : Number(meta?.domVideoRecoveryVersion || 0),
+      },
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
+async function resumeRepairableFailedDraft(id) {
+  if (!id) return false;
+  const rows = await db(
+    `source_documents?id=eq.${encodeURIComponent(id)}` +
+      "&select=id,source_title,translation_status,content_language,content_revision_no,content_wikitext,source_namumark_meta&limit=1",
+  );
+  const row = rows?.[0] || null;
+  if (!row || row.translation_status !== "failed") return false;
+
+  const meta = row.source_namumark_meta || {};
+  const sourceClean =
+    !meta?.hasError &&
+    Number(meta?.missingTemplateCount || 0) === 0 &&
+    Number(meta?.missingFileCount || 0) === 0 &&
+    (!Array.isArray(meta?.missingYouTubeEmbeds) || meta.missingYouTubeEmbeds.length === 0);
+  const hasEnglishDraft =
+    row.content_language === "en" &&
+    Number(row.content_revision_no || 0) > 0 &&
+    typeof row.content_wikitext === "string" &&
+    row.content_wikitext.length > 0;
+
+  if (!sourceClean || !hasEnglishDraft) return false;
+
+  await db(`source_documents?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      translation_status: "translated_by_chatgpt",
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  console.log(
+    `ASSISTANT SOURCE REPAIR RESUMED ${row.source_title}: source is clean; re-queueing existing English draft r${row.content_revision_no}.`,
+  );
+  return true;
 }
 
 async function resumeReviewedDomFallbackTranslations() {
@@ -345,6 +441,9 @@ async function tick() {
           }
           await runSourceRenderer(title);
         }
+
+        await markSourceRepairVersions(item.id, { videoAttempted: true });
+        await resumeRepairableFailedDraft(item.id);
       } catch (error) {
         console.error(
           `SOURCE RENDER FAILED ${title}:`,
