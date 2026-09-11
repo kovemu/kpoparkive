@@ -374,11 +374,11 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
 }
 
 
+const KPOP_RAW_TEMPLATE_SAFETY_CAP = 1000;
+
 async function kpopCaptureRawBundle({
   rootTitle,
   sourceTitle,
-  maxTemplateDepth = 2,
-  maxTemplates = 40,
 } = {}) {
   const normalizedRoot = String(rootTitle || sourceTitle || "").normalize("NFKC").trim();
   const normalizedSource = String(sourceTitle || "").normalize("NFKC").trim();
@@ -397,7 +397,12 @@ async function kpopCaptureRawBundle({
   const templateFailures = [];
   let discoveredTemplates = queue.length;
 
-  while (queue.length && capturedTemplates.length < Math.max(0, Number(maxTemplates || 0))) {
+  while (queue.length) {
+    if (seen.size > KPOP_RAW_TEMPLATE_SAFETY_CAP) {
+      throw new Error(
+        `Template dependency graph exceeded safety cap (${KPOP_RAW_TEMPLATE_SAFETY_CAP}) for ${normalizedSource}. Capture stopped instead of publishing an incomplete page.`
+      );
+    }
     const item = queue.shift();
     const title = String(item?.title || "").normalize("NFKC").trim();
     const depth = Math.max(1, Number(item?.depth || 1) || 1);
@@ -415,12 +420,10 @@ async function kpopCaptureRawBundle({
           reused: true,
         });
 
-        if (depth < Math.max(0, Number(maxTemplateDepth || 0))) {
-          const nested = kpopExtractIncludeTitles(known.raw).filter(kpopShouldCaptureTemplate);
-          discoveredTemplates += nested.length;
-          for (const nestedTitle of nested) {
-            if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
-          }
+        const nested = kpopExtractIncludeTitles(known.raw).filter(kpopShouldCaptureTemplate);
+        discoveredTemplates += nested.length;
+        for (const nestedTitle of nested) {
+          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
         }
         continue;
       }
@@ -431,12 +434,10 @@ async function kpopCaptureRawBundle({
       });
       capturedTemplates.push({ title, depth, charCount: capture.charCount, reused: false });
 
-      if (depth < Math.max(0, Number(maxTemplateDepth || 0))) {
-        const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
-        discoveredTemplates += nested.length;
-        for (const nestedTitle of nested) {
-          if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
-        }
+      const nested = kpopExtractIncludeTitles(capture.raw).filter(kpopShouldCaptureTemplate);
+      discoveredTemplates += nested.length;
+      for (const nestedTitle of nested) {
+        if (!seen.has(nestedTitle)) queue.push({ title: nestedTitle, depth: depth + 1 });
       }
     } catch (error) {
       templateFailures.push({
@@ -464,14 +465,10 @@ async function kpopCaptureEditRawSource(options = {}) {
   if (!activeTab?.url || !sourceTitle) throw new Error("Open the NamuWiki document (/w/...) you want to test first.");
 
   const rootTitle = String(options.rootTitle || "").normalize("NFKC").trim() || sourceTitle;
-  const maxTemplateDepth = Math.max(0, Math.min(3, Number(options.maxTemplateDepth ?? 2) || 0));
-  const maxTemplates = Math.max(0, Math.min(80, Number(options.maxTemplates ?? 40) || 0));
 
   const rootCapture = await kpopCaptureRawBundle({
     rootTitle,
     sourceTitle,
-    maxTemplateDepth,
-    maxTemplates,
   });
 
   const previewUrl = `https://kpoparkive.vercel.app/w/${encodeURIComponent(sourceTitle)}`;
@@ -483,7 +480,7 @@ async function kpopCaptureEditRawSource(options = {}) {
     ...rootCapture,
     sourceTitle,
     previewUrl,
-    templateDepth: maxTemplateDepth,
+    templateDepth: "complete",
     templatesCaptured: rootCapture.templatesCaptured,
     templatesDiscovered: rootCapture.templatesDiscovered,
     templateFailures: rootCapture.templateFailures,
