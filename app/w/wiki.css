@@ -1,5 +1,5 @@
 .kpoparkiveRawWikiPage {
-  width: min(1032px, calc(100% - 32px));
+  width: min(1180px, calc(100% - 32px));
   box-sizing: border-box;
   margin: 24px auto 80px;
   padding: 24px;
@@ -11,6 +11,25 @@
 
 .kpoparkiveRawWikiPage .wiki-content {
   overflow: hidden;
+}
+
+@media (min-width: 761px) {
+  /* English headings can make the TOC intrinsically wider than the space left
+     beside a right-floated 450px profile table. Keep both in the same desktop
+     row and wrap only the long TOC labels inside the remaining column. */
+  .kpoparkiveRawWikiPage .wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: calc(100% - 490px);
+    white-space: normal;
+  }
+
+  .kpoparkiveRawWikiPage .wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc .toc-item,
+  .kpoparkiveRawWikiPage .wiki-content:has(.wiki-table-wrap.table-right) .wiki-macro-toc .toc-item a {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
 }
 
 .kpoparkiveRawWikiPage .wiki-edit-section > a {
