@@ -278,6 +278,10 @@ export default function VisualEditorV3MediaBridge({ title }: { title: string }) 
             ? applyNamuMediaChanges(originalRaw, mediaChanges(item, draft)).proposed
             : originalRaw;
           chip.dataset.ve3AtomicRaw = proposed;
+          if (proposed !== originalRaw) {
+            const surface = chip.closest<HTMLElement>(".kpoparkiveVe3AtomicSurface");
+            if (surface) surface.dataset.ve3Dirty = "1";
+          }
           delete chip.dataset.ve3AtomicMediaSyncError;
         } catch (error) {
           chip.dataset.ve3AtomicMediaSyncError = error instanceof Error ? error.message : "Could not synchronize inline media";

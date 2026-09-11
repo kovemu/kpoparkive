@@ -162,7 +162,9 @@ function renderSurface(block: Block) {
   surface.spellcheck = true;
   surface.dataset.ve3NodeId = block.id;
   surface.dataset.ve3NodeType = block.type;
+  surface.dataset.ve3Dirty = "0";
   surface.innerHTML = wikiBlockToEditorHtml(raw);
+  surface.addEventListener("input", () => { surface.dataset.ve3Dirty = "1"; });
   for (const item of atomic) {
     const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
     const texts: Text[] = [];
@@ -293,6 +295,7 @@ export default function VisualEditorV3AtomicTextBridge({ title }: { title: strin
   useEffect(()=>{
     if(!editing)return;
     return registerV3OperationProvider("atomic-text",()=>records.flatMap(record=>{
+      if (record.surface.dataset.ve3Dirty !== "1") return [];
       const proposed=serializeSurface(record.surface);
       return normalize(proposed)===normalize(record.originalWikitext)?[]:[{op:"replace-node",nodeId:record.nodeId,wikitext:proposed} satisfies V3RegisteredOperation];
     }));

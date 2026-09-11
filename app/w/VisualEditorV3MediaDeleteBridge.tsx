@@ -119,6 +119,8 @@ export default function VisualEditorV3MediaDeleteBridge({ title }: { title: stri
           }
           chip.dataset.ve3AtomicDeleted = "1";
           chip.dataset.ve3AtomicRaw = "";
+          const surface = chip.closest<HTMLElement>(".kpoparkiveVe3AtomicSurface");
+          if (surface) surface.dataset.ve3Dirty = "1";
           chip.classList.add("kpoparkiveVe3PendingMediaDelete");
         } else if (chip.dataset.ve3AtomicDeleted === "1") {
           chip.dataset.ve3AtomicRaw = chip.dataset.ve3AtomicDeleteBackup || chip.dataset.ve3AtomicOriginalRaw || "";
