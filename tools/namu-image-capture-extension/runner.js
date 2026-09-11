@@ -164,7 +164,7 @@ async function runnerProcessTask(task) {
       const sourceTitle = kpopTitleFromDocumentUrl(task.url);
       if (!sourceTitle) throw new Error("Could not resolve raw document title from task URL.");
 
-      runnerSetStatus(`RAW · ${sourceTitle}\nDepth ${task.depth || 0}\nWaiting for edit source / verification if required…`);
+      runnerSetStatus(`RAW · ${sourceTitle}\nDepth ${task.depth || 0}\nTrying read-only /raw/ first · /edit/ only as fallback…`);
       const raw = await kpopCaptureRawBundle({
         rootTitle: runnerRootTitle,
         sourceTitle,
