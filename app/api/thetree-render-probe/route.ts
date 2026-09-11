@@ -8,7 +8,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-// Runtime verification endpoint for exact editor preview integration.
+// Runtime verification endpoint for exact editor preview integration.\n// Fresh branch trigger for the final renderer probe.
 
 export async function GET(request: Request) {
   try {
