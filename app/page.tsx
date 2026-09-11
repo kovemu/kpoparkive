@@ -45,11 +45,6 @@ export default async function Home() {
     <>
       <SiteHeader />
       <main className="homePage">
-        <div className="homeIntro">
-          <h1>Kpoparkive</h1>
-          <p>A community-edited K-pop wiki.</p>
-        </div>
-
         <div className="homeGrid">
           <section className="homeCard" aria-labelledby="recent-edits-title">
             <header className="homeCardHeader">
