@@ -334,14 +334,33 @@ async function kpopStartHelperClone(options = {}) {
 }
 
 async function kpopResetHelperClone() {
+  let storedVerification = null;
+  try {
+    const stored = await chrome.storage.local.get(["kpoparkiveRawVerification"]);
+    storedVerification = stored.kpoparkiveRawVerification || null;
+  } catch {}
+
+  // Reset helper state first so a disappearing runner context cannot interrupt
+  // the actual queue reset.
+  let result;
+  try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
+  result = await kpopControllerJson("/clone/reset", { method: "POST", body: "{}" });
+
   await kpopClearVerification();
   await kpopCloseRawEditTab();
-  try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
-  await kpopCloseRunnerTabs();
-  await new Promise((resolve) => setTimeout(resolve, 500));
 
-  const result = await kpopControllerJson("/clone/reset", { method: "POST", body: "{}" });
+  const verificationTabId = Number(storedVerification?.tabId || 0) || null;
+  if (verificationTabId) {
+    try { await chrome.tabs.remove(verificationTabId); } catch {}
+  }
+
+  await kpopCloseRunnerTabs();
   kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
+  try {
+    await chrome.storage.local.set({
+      kpoparkiveRawVerification: { active: false, sourceTitle: "", tabId: null, since: 0 },
+    });
+  } catch {}
   try { await chrome.action.setBadgeText({ text: "" }); } catch {}
   return result.job || null;
 }
@@ -589,6 +608,10 @@ async function kpopRecoverRunner() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // runner.html also loads this file for shared capture helpers. Control
+  // messages must be answered only by the background service worker.
+  if (typeof document !== "undefined") return;
+
   if (message?.type === "kpoparkive-verification-detected") {
     kpopShowVerification(sender?.tab || null, message.sourceTitle || "")
       .then(() => sendResponse({ ok: true }))
