@@ -14,8 +14,11 @@ type SourceDocument = {
   source_title: string;
   source_wikitext: string | null;
   content_wikitext: string | null;
+  content_language: string | null;
+  translation_status: string | null;
   content_status: string;
   content_revision_no: number;
+  published_revision_no: number | null;
   source_format: string | null;
   source_fidelity_meta: Record<string, unknown> | null;
 };
@@ -58,21 +61,82 @@ function normalizeTitle(value: string | null | undefined) {
 async function findDocument(title: string) {
   const rows = await db<SourceDocument[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}` +
-      "&select=id,source_title,source_wikitext,content_wikitext,content_status,content_revision_no,source_format,source_fidelity_meta&limit=1",
+      "&select=id,source_title,source_wikitext,content_wikitext,content_language,translation_status,content_status,content_revision_no,published_revision_no,source_format,source_fidelity_meta&limit=1",
   );
   return rows[0] || null;
 }
 
-function publicSource(document: SourceDocument) {
-  const synthetic = document.source_format === "namumark-synthetic-dom";
-  const verified = String(document.source_fidelity_meta?.stage || "") === "verified";
-  if (synthetic && !verified) return "";
-  if (document.content_status === "published" && document.content_wikitext) return document.content_wikitext;
-  return document.source_wikitext || "";
+type EditableEnglishSource = {
+  source: string;
+  revisionNo: number;
+  mode: "translated-draft" | "published";
+};
+
+async function revisionSource(documentId: string, revisionNo: number) {
+  if (!revisionNo) return "";
+  const rows = await db<Array<{ content_wikitext: string | null; content_language: string | null }>>(
+    `source_document_revisions?source_document_id=eq.${encodeURIComponent(documentId)}` +
+      `&revision_no=eq.${revisionNo}` +
+      "&select=content_wikitext,content_language&limit=1",
+  );
+  const revision = rows[0] || null;
+  return revision?.content_language === "en" ? revision.content_wikitext || "" : "";
 }
 
-function publicRevisionNo(document: SourceDocument) {
-  return document.content_status === "published" ? Number(document.content_revision_no || 0) : 0;
+async function editableEnglishSource(document: SourceDocument): Promise<EditableEnglishSource | null> {
+  const synthetic = document.source_format === "namumark-synthetic-dom";
+  const verified = String(document.source_fidelity_meta?.stage || "") === "verified";
+  if (synthetic && !verified) return null;
+
+  const currentRevision = Number(document.content_revision_no || 0) || 0;
+  const publishedRevision = Number(document.published_revision_no || 0) || 0;
+  const currentEnglish =
+    document.content_language === "en" &&
+    typeof document.content_wikitext === "string" &&
+    document.content_wikitext.length > 0;
+
+  // Local development is the review/edit surface. It must edit the same
+  // translated English NamuMark that the local /w/ page is rendering.
+  if (process.env.NODE_ENV !== "production") {
+    if (currentEnglish && currentRevision > 0) {
+      return {
+        source: document.content_wikitext as string,
+        revisionNo: currentRevision,
+        mode: publishedRevision === currentRevision ? "published" : "translated-draft",
+      };
+    }
+    if (publishedRevision > 0) {
+      const source = await revisionSource(document.id, publishedRevision);
+      if (source) return { source, revisionNo: publishedRevision, mode: "published" };
+    }
+    return null;
+  }
+
+  // Production source editing must be based on the English revision actually
+  // published to readers. Never expose the immutable Korean capture as the
+  // editable public source.
+  if (publishedRevision > 0) {
+    if (currentEnglish && currentRevision === publishedRevision) {
+      return {
+        source: document.content_wikitext as string,
+        revisionNo: publishedRevision,
+        mode: "published",
+      };
+    }
+    const source = await revisionSource(document.id, publishedRevision);
+    if (source) return { source, revisionNo: publishedRevision, mode: "published" };
+  }
+
+  // Legacy published rows may predate published_revision_no.
+  if (document.content_status === "published" && currentEnglish && currentRevision > 0) {
+    return {
+      source: document.content_wikitext as string,
+      revisionNo: currentRevision,
+      mode: "published",
+    };
+  }
+
+  return null;
 }
 
 function sourceHash(source: string) {
@@ -104,18 +168,25 @@ export async function GET(request: Request) {
     const document = await findDocument(title);
     if (!document) return json({ error: "Document not found" }, 404);
 
-    const source = publicSource(document);
-    if (!source) return json({ error: "Public source is unavailable" }, 404);
-    if (source.length > MAX_SOURCE_CHARS) return json({ error: "Document is too large for public source editing" }, 413);
+    const editable = await editableEnglishSource(document);
+    if (!editable) {
+      return json({
+        error: "The English translated source is not available yet. This editor never falls back to the Korean capture.",
+      }, 409);
+    }
+    if (editable.source.length > MAX_SOURCE_CHARS) {
+      return json({ error: "Document is too large for public source editing" }, 413);
+    }
 
     return json({
       ok: true,
       document: {
         title: document.source_title,
-        publicRevisionNo: publicRevisionNo(document),
-        sourceMode: document.content_status === "published" ? "published" : "captured",
-        sourceHash: sourceHash(source),
-        source,
+        publicRevisionNo: editable.revisionNo,
+        sourceMode: editable.mode,
+        sourceLanguage: "en",
+        sourceHash: sourceHash(editable.source),
+        source: editable.source,
       },
     });
   } catch (error) {
@@ -146,15 +217,20 @@ export async function POST(request: Request) {
     const document = await findDocument(title);
     if (!document) return json({ error: "Document not found" }, 404);
 
-    const revision = publicRevisionNo(document);
+    const editable = await editableEnglishSource(document);
+    if (!editable) {
+      return json({
+        error: "The English translated source is not available yet. Reload after translation is complete.",
+      }, 409);
+    }
+    const revision = editable.revisionNo;
     if (Number(body.baseRevisionNo || 0) !== revision) {
-      return json({ error: "This page changed while you were editing. Reload and try again." }, 409);
+      return json({ error: "This English revision changed while you were editing. Reload and try again." }, 409);
     }
 
-    const original = publicSource(document);
-    if (!original) return json({ error: "Public source is unavailable" }, 404);
+    const original = editable.source;
     if (String(body.baseSourceHash || "") !== sourceHash(original)) {
-      return json({ error: "The underlying source changed while you were editing. Reload and try again." }, 409);
+      return json({ error: "The English source changed while you were editing. Reload and try again." }, 409);
     }
 
     const proposed = typeof body.content === "string" ? body.content : "";
@@ -166,7 +242,7 @@ export async function POST(request: Request) {
     const hash = submitterHash(request);
     await enforceRateLimit(hash);
 
-    const summary = String(body.summary || "").trim().slice(0, 500) || "Public full-source edit";
+    const summary = String(body.summary || "").trim().slice(0, 500) || "Public English full-source edit";
     const displayName = String(body.displayName || "").trim().slice(0, 80) || null;
 
     const inserted = await db<Array<{ id: string; created_at: string }>>("source_edit_proposals", {
@@ -176,11 +252,11 @@ export async function POST(request: Request) {
         source_document_id: document.id,
         source_title: document.source_title,
         section_key: "document:source",
-        section_heading: "Full page source",
+        section_heading: "Full English page source",
         block_index: -4,
         base_revision_no: revision,
         original_wikitext: original,
-        original_plain_text: `Full-source edit ${document.source_title}`,
+        original_plain_text: `Full English-source edit ${document.source_title}`,
         proposed_plain_text: `Full source: ${original.length.toLocaleString()} → ${proposed.length.toLocaleString()} chars`,
         proposed_wikitext: proposed,
         summary,
