@@ -372,6 +372,120 @@ function kpopWithTimeout(promise, timeoutMs, label = "operation") {
   ]);
 }
 
+async function kpopExtractRawDirectlyFromTab(tabId, normalizedTitle) {
+  if (!chrome.scripting?.executeScript) {
+    return { ok: false, error: "chrome.scripting is unavailable" };
+  }
+
+  try {
+    const results = await kpopWithTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: "ISOLATED",
+        func: () => {
+          const normalize = (value) => String(value || "")
+            .replace(/\r\n?/g, "\n")
+            .replace(/^\uFEFF/, "")
+            .trim();
+
+          const score = (value) => {
+            const text = normalize(value);
+            let total = 0;
+            if (/\[\[[^\]]+\]\]/.test(text)) total += 2;
+            if (/^={1,6}[^=\n].*={1,6}$/m.test(text)) total += 2;
+            if (/^\|\|/m.test(text)) total += 2;
+            if (/\[include\(/i.test(text)) total += 2;
+            if (/\{\{\{#!/.test(text)) total += 2;
+            if (/\[\[(?:파일|File):/i.test(text)) total += 1;
+            if (/@[ㄱ-힣A-Za-z0-9_]+@/.test(text)) total += 1;
+            return total;
+          };
+
+          const candidates = [];
+          const push = (source, value, trusted = false, priority = 0) => {
+            const raw = normalize(value);
+            if (!raw) return;
+            candidates.push({ source, raw, trusted, priority, score: score(raw) });
+          };
+
+          for (const textarea of document.querySelectorAll("textarea")) {
+            push(
+              `direct:textarea${textarea.name ? `[name=${textarea.name}]` : ""}`,
+              textarea.value || textarea.textContent || "",
+              true,
+              200,
+            );
+          }
+
+          for (const node of document.querySelectorAll("pre, pre code, code")) {
+            push(`direct:${node.tagName.toLowerCase()}`, node.innerText || node.textContent || "", true, 150);
+          }
+
+          const titleMatch = location.pathname.match(/^\/raw\/(.+?)\/?$/i);
+          let pageTitle = "";
+          if (titleMatch?.[1]) {
+            try { pageTitle = decodeURIComponent(titleMatch[1]); }
+            catch { pageTitle = titleMatch[1]; }
+          }
+
+          candidates.sort((a, b) =>
+            b.priority - a.priority ||
+            b.score - a.score ||
+            b.raw.length - a.raw.length
+          );
+
+          const best = candidates[0] || null;
+          return {
+            pageTitle: String(pageTitle || "").normalize("NFKC").trim(),
+            href: location.href,
+            documentTitle: document.title,
+            candidateCount: candidates.length,
+            best,
+          };
+        },
+      }),
+      2000,
+      "direct RAW tab extraction"
+    );
+
+    const payload = Array.isArray(results) ? results[0]?.result : null;
+    const best = payload?.best || null;
+    const isTemplate = /^틀:/i.test(normalizedTitle);
+    const valid = Boolean(
+      best?.raw &&
+      (
+        (isTemplate && ((best.trusted && best.raw.length >= 1) || (best.raw.length >= 20 && best.score >= 1))) ||
+        (!isTemplate && best.raw.length >= 200 && best.score >= 2)
+      )
+    );
+
+    if (!valid) {
+      return {
+        ok: false,
+        error: `Direct RAW extraction found no valid NamuMark (candidates=${payload?.candidateCount || 0})`,
+        debug: payload || null,
+      };
+    }
+
+    return {
+      ok: true,
+      sourceTitle: payload?.pageTitle || normalizedTitle,
+      rawUrl: payload?.href || null,
+      extractionMethod: best.source || "direct:raw-tab",
+      charCount: best.raw.length,
+      signalScore: Number(best.score || 0),
+      trustedSource: Boolean(best.trusted),
+      trustedEditor: Boolean(best.trusted),
+      raw: best.raw,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || String(error),
+    };
+  }
+}
+
 async function kpopTryReadOnlyRawTitle(normalizedTitle) {
   if (kpopRawVerification.active) {
     await kpopClearVerification();
@@ -415,6 +529,15 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           continue;
         }
+      } catch {}
+
+      try {
+        const direct = await kpopExtractRawDirectlyFromTab(tab.id, normalizedTitle);
+        if (direct?.ok && direct.raw) {
+          await kpopClearVerification();
+          return direct;
+        }
+        if (!lastResult && direct?.error) lastResult = direct;
       } catch {}
     }
 
