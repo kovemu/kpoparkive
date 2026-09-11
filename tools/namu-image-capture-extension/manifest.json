@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.9.0",
-  "description": "Raw-first NamuWiki capture with resumable Raw Crawl, verification pause/resume, template reuse, asset recovery, and fidelity debugging.",
+  "version": "0.10.0",
+  "description": "Raw-first NamuWiki capture: one-page-complete mode, full template graph, required assets, The Tree render, and verification-safe resumable crawl.",
   "permissions": [
     "activeTab",
     "storage",
