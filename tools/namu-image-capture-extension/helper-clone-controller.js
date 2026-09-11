@@ -404,6 +404,11 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
       } catch {}
     }
 
+    if (!verificationShown && Date.now() - started > 2000) {
+      verificationShown = true;
+      try { await chrome.tabs.update(tab.id, { active: true }); } catch {}
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
