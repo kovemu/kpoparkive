@@ -2,16 +2,7 @@ import { parse } from "node-html-parser";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
-import FullPageVisualEditorV2 from "../FullPageVisualEditorV2";
-import FullPageVisualEditorV3Canvas from "../FullPageVisualEditorV3Canvas";
-import VisualEditorV3CanvasExtras from "../VisualEditorV3CanvasExtras";
-import VisualEditorV3MediaBridge from "../VisualEditorV3MediaBridge";
-import VisualEditorV3StructureBridge from "../VisualEditorV3StructureBridge";
-import VisualEditorV3TableLayoutBridge from "../VisualEditorV3TableLayoutBridge";
-import VisualEditorInteractionGuard from "../VisualEditorInteractionGuard";
 import "../wiki.css";
-import "../table-editor.css";
-import "../visual-editor.css";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -38,8 +29,6 @@ type AssetRow = {
   storage_path: string | null;
   metadata: Record<string, unknown> | null;
 };
-
-type SearchParams = Record<string, string | string[] | undefined>;
 
 async function db<T>(path: string): Promise<T> {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -107,12 +96,21 @@ function hydrateResolvedMedia(image: any, resolved: string) {
   else image.removeAttribute("class");
 }
 
-function rewriteInternalHref(href: string) {
+function adminEditorPath(title: string) {
+  const encoded = title
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `/admin/editor/${encoded}`;
+}
+
+function rewriteInternalHref(href: string, sourceTitle: string) {
+  if (/^\/edit\//i.test(href)) return adminEditorPath(sourceTitle);
   if (/^https:\/\/namu\.wiki\/w\//i.test(href)) return href.replace(/^https:\/\/namu\.wiki/i, "");
   return href;
 }
 
-function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
+function sanitizeAndHydrate(html: string, assets: Record<string, string>, sourceTitle: string) {
   const root = parse(`<div id="kpop-raw-wiki-root">${html}</div>`);
   const lookup = createNamuAssetLookup(assets);
 
@@ -125,7 +123,7 @@ function sanitizeAndHydrate(html: string, assets: Record<string, string>) {
 
     const href = node.getAttribute("href") || "";
     if (/^javascript:/i.test(href)) node.removeAttribute("href");
-    else if (href) node.setAttribute("href", rewriteInternalHref(href));
+    else if (href) node.setAttribute("href", rewriteInternalHref(href, sourceTitle));
   }
 
   for (const image of root.querySelectorAll("img")) {
@@ -162,22 +160,12 @@ function sourceTitleFromSegments(segments: string[]) {
   return segments.map((segment) => decodeURIComponent(segment)).join("/").normalize("NFKC").trim();
 }
 
-function visualEditorVersion(searchParams: SearchParams) {
-  const raw = searchParams.ve;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === "2" ? 2 : 3;
-}
-
 export default async function RawWikiPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ title: string[] }>;
-  searchParams?: Promise<SearchParams>;
 }) {
   const { title: segments } = await params;
-  const query = searchParams ? await searchParams : {};
-  const editorVersion = visualEditorVersion(query);
   const sourceTitle = sourceTitleFromSegments(segments);
 
   const docs = await db<DocRow[]>(
@@ -221,27 +209,13 @@ export default async function RawWikiPage({
   }
 
   const assets = buildNamuResolvedAssetMap(resolvedRows, hints);
-  const renderedHtml = sanitizeAndHydrate(exactHtml, assets);
+  const renderedHtml = sanitizeAndHydrate(exactHtml, assets, source.source_title);
 
   return (
     <>
       <link rel="stylesheet" href={THETREE_FRONTEND_CSS} />
-      <main className="kpoparkiveRawWikiPage" data-visual-editor-version={editorVersion}>
+      <main className="kpoparkiveRawWikiPage" data-editor-mode="admin-source">
         <TheTreeRuntimeBridge />
-        {editorVersion === 3 ? (
-          <>
-            <FullPageVisualEditorV3Canvas title={source.source_title} />
-            <VisualEditorV3CanvasExtras title={source.source_title} />
-            <VisualEditorV3MediaBridge title={source.source_title} />
-            <VisualEditorV3StructureBridge title={source.source_title} />
-            <VisualEditorV3TableLayoutBridge title={source.source_title} />
-          </>
-        ) : (
-          <>
-            <FullPageVisualEditorV2 title={source.source_title} />
-            <VisualEditorInteractionGuard />
-          </>
-        )}
         <article className="thetreeWikiBaseline wiki-content" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       </main>
     </>
