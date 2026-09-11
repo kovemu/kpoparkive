@@ -222,14 +222,14 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0,',
-  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
+  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", paused: false, pauseReason: "", pausedAt: null, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
   "crawl policy state",
 );
 
 v8 = mustReplace(
   v8,
   "    maxDocs: kpopCloneState.maxDocs,",
-  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
+  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    paused: Boolean(kpopCloneState.paused),\n    pauseReason: kpopCloneState.pauseReason || \"\",\n    pausedAt: kpopCloneState.pausedAt || null,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
   "public crawl policy state",
 );
 
@@ -386,7 +386,10 @@ const oldSkip = String.raw`    const reusable =
       kpopCloneState.processed += 1;`;
 const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_browser_captured_at || "");
     const capturedAfterAdFilter = Number.isFinite(capturedAtMs) && capturedAtMs >= Date.parse("2026-09-08T16:30:00Z");
-    if (!item.forceCapture && existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter) {
+    const reusable = kpopCloneState.captureMode === "raw"
+      ? Boolean(!item.forceCapture && existing?.source_wikitext && existing?.raw_extracted_at)
+      : Boolean(!item.forceCapture && existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter);
+    if (reusable) {
       if (existing?.id) {
         const membership = await db(
           "source_document_clusters?root_title=eq." + encodeURIComponent(kpopCloneState.rootTitle) +
@@ -414,6 +417,53 @@ v8 = mustReplace(
   "      if ((item.mode || \"expand\") !== \"leaf\" && item.depth < kpopCloneState.maxDepth) kpopEnqueueLinks(existing.discovered_links || [], item.depth + 1);",
   "leaf documents stop on reuse",
 );
+
+v8 = mustReplace(
+  v8,
+  "async function kpopClaimCloneTaskUnsafe() {\n  kpopReleaseExpiredLeases();",
+  "async function kpopClaimCloneTaskUnsafe() {\n  kpopReleaseExpiredLeases();\n  if (kpopCloneState.paused) return { status: \"paused\", job: kpopPublicCloneState() };",
+  "pause claim guard",
+);
+
+const pauseMarker = "function kpopTakeLease(leaseId) {";
+const pauseFunctions = String.raw`function kpopPauseCloneJob(payload = {}) {
+  if (kpopCloneState.status !== "running") return kpopPublicCloneState();
+  kpopCloneState.paused = true;
+  kpopCloneState.pauseReason = String(payload?.reason || "human_verification").slice(0, 200);
+  kpopCloneState.pausedAt = new Date().toISOString();
+  kpopSaveCloneState();
+  console.log("CLONE JOB PAUSED " + kpopCloneState.rootTitle + " reason=" + kpopCloneState.pauseReason);
+  return kpopPublicCloneState();
+}
+
+function kpopResumeCloneJob() {
+  if (kpopCloneState.status !== "running") return kpopPublicCloneState();
+  kpopCloneState.paused = false;
+  kpopCloneState.pauseReason = "";
+  kpopCloneState.pausedAt = null;
+  const renewedUntil = new Date(Date.now() + KPOP_CLONE_LEASE_MS).toISOString();
+  kpopCloneState.leases = kpopCloneState.leases.map((lease) => ({ ...lease, leaseUntil: renewedUntil }));
+  kpopSaveCloneState();
+  console.log("CLONE JOB RESUMED " + kpopCloneState.rootTitle);
+  return kpopPublicCloneState();
+}
+
+`;
+v8 = mustReplace(v8, pauseMarker, pauseFunctions + pauseMarker, "pause resume clone functions");
+
+const cancelRouteMarkerForPause = String.raw`    if (req.method === "POST" && url.pathname === "/clone/cancel") {`;
+const pauseRoutes = String.raw`    if (req.method === "POST" && url.pathname === "/clone/pause") {
+      json(res, 200, { ok: true, job: kpopPauseCloneJob(await kpopReadJson(req)) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/clone/resume") {
+      json(res, 200, { ok: true, job: kpopResumeCloneJob() });
+      return;
+    }
+
+`;
+v8 = mustReplace(v8, cancelRouteMarkerForPause, pauseRoutes + cancelRouteMarkerForPause, "pause resume clone routes");
 
 v8 = v8
   .replace('service: "kpoparkive-namu-chrome-capture-helper-v8"', 'service: "kpoparkive-namu-chrome-capture-helper-v10"')
