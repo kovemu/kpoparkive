@@ -18,6 +18,10 @@
     button.assets { background: #b45309; }
     button.compare { background: #0f766e; }
     button.reset { background: #fff; color: #b00020; border: 1px solid #d7a4ad; }
+    details.advanced { margin-top: 10px; border: 1px solid #ddd; border-radius: 7px; padding: 0 10px 10px; background: #fafafa; }
+    details.advanced summary { cursor: pointer; padding: 9px 0; font-size: 12px; font-weight: 700; color: #555; }
+    .verification { display: none; margin-top: 10px; padding: 9px 10px; border-radius: 7px; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; font-size: 11px; line-height: 1.4; font-weight: 700; }
+    .verification.show { display: block; }
     #health { margin-top: 9px; font-size: 11px; }
     #status { margin-top: 10px; padding: 9px; border-radius: 6px; background: #f4f4f4; white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 300px; overflow: auto; }
     .ok { color: #0a7a2f; }
@@ -45,11 +49,15 @@
         <input id="maxDocs" type="number" min="1" max="200" value="25" />
       </div>
     </div>
-    <button id="clone">Import to Kpoparkive</button>
-    <button id="raw" class="raw">Capture Raw + Templates (POC)</button>
-    <button id="assets" class="assets">Resolve Missing Raw Assets</button>
-    <button id="compare" class="compare">Compare Live NamuWiki vs The Tree</button>
-    <button id="reset" class="reset">Reset Job / Clear Queue</button>
+    <button id="raw" class="raw">Capture Raw + Templates</button>
+    <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
+    <details class="advanced">
+      <summary>Advanced / Debug</summary>
+      <button id="clone">Legacy DOM Import</button>
+      <button id="assets" class="assets">Resolve Missing Raw Assets</button>
+      <button id="compare" class="compare">Compare Live NamuWiki vs The Tree</button>
+      <button id="reset" class="reset">Reset Job / Clear Queue</button>
+    </details>
     <div id="health">Checking local helper...</div>
     <div id="status">Ready.</div>
   </main>
