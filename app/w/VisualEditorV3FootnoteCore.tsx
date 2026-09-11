@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchVisualEditorV3Payload } from "./visualEditorV3PayloadClient";
 import { applyVisualCommand } from "../../lib/wikiVisualEdit";
 import { registerV3OperationProvider, type V3RegisteredOperation } from "./visualEditorV3OperationRegistry";
 
@@ -166,7 +167,7 @@ export default function VisualEditorV3FootnoteBridge({ title }: { title: string 
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store", signal: controller.signal });
+        const response = await fetchVisualEditorV3Payload(title, controller.signal);
         const payload = await response.json() as FootnotePayload;
         if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load footnotes");
         const items = extractFootnotes(payload);
