@@ -21,6 +21,7 @@ type DocRow = {
   content_status: string;
   content_namumark_html: string | null;
   content_namumark_rendered_at: string | null;
+  published_namumark_html: string | null;
 };
 
 type AssetRow = {
@@ -173,7 +174,7 @@ export default async function RawWikiPage({
 
   let docs = await db<DocRow[]>(
     `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at&limit=1`,
+      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_namumark_html,content_namumark_rendered_at,published_namumark_html&limit=1`,
   );
 
   if (!docs[0]) {
@@ -206,7 +207,9 @@ export default async function RawWikiPage({
       .join("/")}`);
   }
 
-  const publishedContentHtml = source.content_status === "published" ? source.content_namumark_html : null;
+  const publishedContentHtml =
+    source.published_namumark_html ||
+    (source.content_status === "published" ? source.content_namumark_html : null);
   const exactHtml = publishedContentHtml || source.source_namumark_html;
   if (!exactHtml) {
     return (
