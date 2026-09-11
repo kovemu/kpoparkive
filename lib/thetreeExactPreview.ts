@@ -21,7 +21,9 @@ type SourceRow = {
   root_title: string | null;
   source_wikitext: string | null;
   content_wikitext: string | null;
+  content_language: string | null;
   content_status: string | null;
+  translation_status: string | null;
   source_namumark_html?: string | null;
 };
 
@@ -71,7 +73,15 @@ function normalizeTitle(value: unknown) {
     .trim();
 }
 
-function effectiveSource(row: SourceRow) {
+function effectiveSource(row: SourceRow, language: "ko" | "en" = "ko") {
+  const hasEnglish =
+    language === "en" &&
+    row.content_language === "en" &&
+    typeof row.content_wikitext === "string" &&
+    row.content_wikitext.length > 0 &&
+    ["translated_by_chatgpt", "reviewed"].includes(String(row.translation_status || ""));
+
+  if (hasEnglish) return row.content_wikitext || "";
   if (row.content_status === "published" && row.content_wikitext) return row.content_wikitext;
   return row.source_wikitext || "";
 }
@@ -357,7 +367,13 @@ function applyCompatibility(raw: string, expandYouTubeIcon: boolean) {
   return result;
 }
 
-function makeVirtualWiki(rawRows: SourceRow[], assetRows: AssetRow[], targetTitle: string, targetSource: string): VirtualWiki {
+function makeVirtualWiki(
+  rawRows: SourceRow[],
+  assetRows: AssetRow[],
+  targetTitle: string,
+  targetSource: string,
+  language: "ko" | "en" = "ko",
+): VirtualWiki {
   const docs: VirtualDocument[] = [];
   const histories: VirtualRevision[] = [];
   const byFullTitle = new Map<string, VirtualDocument>();
@@ -384,7 +400,7 @@ function makeVirtualWiki(rawRows: SourceRow[], assetRows: AssetRow[], targetTitl
 
   for (const row of rawRows) {
     if (!row.source_title) continue;
-    let source = normalizeTitle(row.source_title) === normalizeTitle(targetTitle) ? targetSource : effectiveSource(row);
+    let source = normalizeTitle(row.source_title) === normalizeTitle(targetTitle) ? targetSource : effectiveSource(row, language);
     if (!source) continue;
     source = applyCompatibility(source, !hasYouTubeIconTemplate);
     const doc = ensureDoc(row.source_title);
@@ -451,18 +467,18 @@ async function getSourceRows() {
   if (sourceCache && sourceCache.expiresAt > Date.now()) return sourceCache.rows;
   const rows = await dbAll<SourceRow>(
     "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null" +
-      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_status,source_namumark_html&order=id.asc",
+      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,source_namumark_html&order=id.asc",
   );
   sourceCache = { expiresAt: Date.now() + 60_000, rows };
   return rows;
 }
 
-async function getAssetRows(rootTitle: string) {
-  const key = normalizeTitle(rootTitle);
+async function getAssetRows(_rootTitle: string) {
+  const key = "__global__";
   const cached = assetCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.rows;
   const rows = await dbAll<AssetRow>(
-    `source_asset_queue?root_title=eq.${encodeURIComponent(rootTitle)}&asset_type=eq.image` +
+    "source_asset_queue?asset_type=eq.image&status=eq.resolved" +
       "&select=source_ref,label,status,resolved_url,metadata&order=id.asc",
   );
   assetCache.set(key, { expiresAt: Date.now() + 60_000, rows });
@@ -479,7 +495,7 @@ export async function renderExactNamuPreview(title: string, source: string, lang
   if (!target) throw new Error(`No source document for ${title}`);
 
   const assetRows = await getAssetRows(target.root_title || normalizedTitle);
-  const virtualWiki = makeVirtualWiki(rawRows, assetRows, normalizedTitle, source);
+  const virtualWiki = makeVirtualWiki(rawRows, assetRows, normalizedTitle, source, language);
   const targetDoc = virtualWiki.byFullTitle.get(fullTitle(parseDocumentName(normalizedTitle)));
   const targetRev = virtualWiki.histories.find((item) => item.document === targetDoc?.uuid);
   if (!targetDoc || !targetRev) throw new Error(`Virtual The Tree document was not built for ${title}`);
@@ -585,7 +601,7 @@ export async function currentExactSourceSnapshot(title: string) {
   const target = rows.find((row) => normalizeTitle(row.source_title) === normalizeTitle(title));
   if (!target) return null;
   return {
-    source: effectiveSource(target),
+    source: effectiveSource(target, "ko"),
     exactHtml: target.source_namumark_html || null,
     rootTitle: target.root_title || target.source_title,
   };
