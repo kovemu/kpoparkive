@@ -100,7 +100,7 @@ async function publishDocument(document: SourceDocument) {
   const source = String(document.source_wikitext || "");
   const translated = String(document.content_wikitext || "");
 
-  if (document.translation_status === "published" && document.content_status === "published") {
+  if (document.translation_status === "reviewed" && document.content_status === "published") {
     return {
       status: "already-published",
       title: document.source_title,
@@ -163,7 +163,7 @@ async function publishDocument(document: SourceDocument) {
       published_namumark_engine: RENDER_ENGINE,
       published_namumark_engine_version: RENDER_VERSION,
       published_at: now,
-      translation_status: "published",
+      translation_status: "reviewed",
       translated_at: now,
       updated_at: now,
     }),
