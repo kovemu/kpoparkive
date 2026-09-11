@@ -230,7 +230,12 @@ function kpopExtractIncludeTitles(rawValue) {
 
     if (end < 0) break;
     const nameEnd = comma >= 0 && comma < end ? comma : end;
-    const title = raw.slice(start + 9, nameEnd).normalize("NFKC").trim();
+    const title = raw.slice(start + 9, nameEnd)
+      .normalize("NFKC")
+      .replace(/\u00a0/g, " ")
+      .replace(/^(틀|Template)\s*:\s*/i, "$1:")
+      .replace(/[ \t]+/g, " ")
+      .trim();
     if (title && !seen.has(title)) {
       seen.add(title);
       output.push(title);
@@ -315,7 +320,12 @@ function kpopExtractRawFileRefs(rawValue) {
 }
 
 function kpopShouldCaptureTemplate(value) {
-  const title = String(value || "").normalize("NFKC").replace(/\u00a0/g, " ").trim();
+  const title = String(value || "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/^(틀|Template)\s*:\s*/i, "$1:")
+    .replace(/[ \t]+/g, " ")
+    .trim();
   if (!/^틀:/i.test(title)) return false;
   if (/\/설명문서(?:$|\/)/i.test(title)) return false;
 
