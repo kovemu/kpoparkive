@@ -25,6 +25,11 @@ function sourceTitleFromLocation() {
   return decodeMaybe(match[1]);
 }
 
+function namuVerificationBlocked() {
+  const text = document.body?.innerText || "";
+  return /captcha|cloudflare|cf-chl|challenge-platform|비정상적인 접근|자동화된 접근|사람인지 확인/i.test(text);
+}
+
 function semanticFileNameFromString(value, allowPlain = true) {
   const raw = decodeMaybe(String(value || "").normalize("NFKC"));
   const prefixed = raw.match(/(?:파일|File):([^?#"'<>\n]+?\.(?:jpe?g|png|gif|webp|avif|svg))(?:$|[?#&\s"'<>])/i);
@@ -275,6 +280,7 @@ function extractAssets() {
     pageUrl: location.href,
     pageTitle: document.title,
     sourceTitle: sourceTitleFromLocation(),
+    blocked: namuVerificationBlocked(),
     assets,
     debug: {
       roots: roots.length,
