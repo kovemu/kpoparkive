@@ -222,14 +222,14 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0,',
-  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", paused: false, pauseReason: "", pausedAt: null, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
+  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", refreshExisting: false, paused: false, pauseReason: "", pausedAt: null, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
   "crawl policy state",
 );
 
 v8 = mustReplace(
   v8,
   "    maxDocs: kpopCloneState.maxDocs,",
-  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    paused: Boolean(kpopCloneState.paused),\n    pauseReason: kpopCloneState.pauseReason || \"\",\n    pausedAt: kpopCloneState.pausedAt || null,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
+  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    refreshExisting: Boolean(kpopCloneState.refreshExisting),\n    paused: Boolean(kpopCloneState.paused),\n    pauseReason: kpopCloneState.pauseReason || \"\",\n    pausedAt: kpopCloneState.pausedAt || null,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
   "public crawl policy state",
 );
 
@@ -280,7 +280,7 @@ function kpopEnqueueLinks(links, depth) {
       depth,
       attempts: 0,
       mode,
-      forceCapture: Boolean(kpopCloneState.policyRefresh && mode === "expand"),
+      forceCapture: Boolean(kpopCloneState.refreshExisting || (kpopCloneState.policyRefresh && mode === "expand")),
     });
     added += 1;
   }
@@ -291,7 +291,7 @@ v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue
 v8 = mustReplace(
   v8,
   "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
-  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  const captureMode = String(payload?.captureMode || \"dom\").toLowerCase() === \"raw\" ? \"raw\" : \"dom\";\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
+  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  const captureMode = String(payload?.captureMode || \"dom\").toLowerCase() === \"raw\" ? \"raw\" : \"dom\";\n  const refreshExisting = Boolean(payload?.refreshExisting);\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
   "capture mode on new job",
 );
 
@@ -305,7 +305,7 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   "    maxDepth, maxDocs, queue: [{ url: rootUrl, depth: 0, attempts: 0 }], seenUrls: [rootUrl],",
-  "    maxDepth, maxDocs, captureMode, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: captureMode === \"raw\" ? true : policyRefresh }], seenUrls: [rootUrl],",
+  "    maxDepth, maxDocs, captureMode, refreshExisting, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: captureMode === \"raw\" || refreshExisting || policyRefresh }], seenUrls: [rootUrl],",
   "root queue policy",
 );
 
