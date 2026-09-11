@@ -27,6 +27,8 @@ const AUTO_PUBLISH = process.env.KPOPARKIVE_AUTO_PUBLISH_TRANSLATION !== "0";
 const TRANSLATION_VERSION = "namumark-ai-en-v1";
 const MAX_CHUNK_CHARS = Math.max(8000, Number(process.env.KPOPARKIVE_TRANSLATION_CHUNK_CHARS || 24000) || 24000);
 const sourceTitle = decodeURIComponent(process.argv[2] || "").normalize("NFKC").trim();
+const dependencyMode = process.argv.includes("--dependency");
+const FORCE_TRANSLATE = process.env.KPOPARKIVE_FORCE_TRANSLATE === "1";
 
 if (!sourceTitle) throw new Error("Usage: node scripts/namu-ai-translate.mjs <source-title>");
 if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing");
@@ -154,6 +156,91 @@ function validateStructure(source, translated) {
   const beforeHeadings = source.split("\n").filter((line) => heading.test(line)).length;
   const afterHeadings = translated.split("\n").filter((line) => heading.test(line)).length;
   if (beforeHeadings !== afterHeadings) throw new Error("heading count changed " + beforeHeadings + " -> " + afterHeadings);
+}
+
+function extractIncludeTitles(source) {
+  const text = String(source || "");
+  const lower = text.toLowerCase();
+  const output = [];
+  const seen = new Set();
+  let from = 0;
+
+  while (from < text.length) {
+    const start = lower.indexOf("[include(", from);
+    if (start < 0) break;
+    let depth = 1;
+    let comma = -1;
+    let end = -1;
+
+    for (let i = start + 9; i < text.length; i += 1) {
+      const ch = text[i];
+      if (ch === "(") depth += 1;
+      else if (ch === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      } else if (ch === "," && depth === 1 && comma < 0) {
+        comma = i;
+      }
+    }
+
+    if (end < 0) break;
+    const titleEnd = comma >= 0 ? comma : end;
+    const title = text.slice(start + 9, titleEnd).normalize("NFKC").trim();
+    if (title && !seen.has(title) && !/^틀\s*:\s*접근\s*제한$/i.test(title)) {
+      seen.add(title);
+      output.push(title);
+    }
+    from = end + 1;
+  }
+
+  return output;
+}
+
+function runDependencyTranslator(title) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [path.resolve("scripts/namu-ai-translate.mjs"), encodeURIComponent(title), "--dependency"],
+      { env: { ...process.env }, stdio: "inherit" },
+    );
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error("Dependency translation failed for " + title + " code=" + String(code) + " signal=" + String(signal || "none")));
+    });
+  });
+}
+
+async function translateDirectTemplates(source) {
+  const titles = extractIncludeTitles(source).slice(0, 40);
+  if (!titles.length) return;
+
+  const family = sourceTitle.split("/")[0];
+  const requiredPrefix = "틀:" + family;
+  console.log("AI TEMPLATE DEPENDENCIES " + sourceTitle + ": " + titles.length);
+
+  for (const title of titles) {
+    const rows = await db(
+      "source_documents?source=eq.namu_mirror&source_title=eq." + encodeURIComponent(title) +
+      "&select=id,source_title,source_wikitext,source_hash,translation_status,translation_version,content_language,content_wikitext&limit=1"
+    );
+    const row = rows?.[0];
+    if (!row?.source_wikitext) {
+      console.warn("  template source unavailable, keeping renderer fallback: " + title);
+      continue;
+    }
+
+    try {
+      await runDependencyTranslator(title);
+    } catch (error) {
+      const required = title === requiredPrefix || title.startsWith(requiredPrefix + "/");
+      console.error("  template translation failed: " + title + " -> " + (error instanceof Error ? error.message : String(error)));
+      if (required) throw error;
+    }
+  }
 }
 
 function splitSource(source) {
@@ -325,12 +412,30 @@ async function publish(documentId) {
 async function main() {
   const rows = await db(
     "source_documents?source=eq.namu_mirror&source_title=eq." + encodeURIComponent(sourceTitle) +
-    "&select=id,source_title,source_wikitext,source_hash&limit=1"
+    "&select=id,source_title,source_wikitext,source_hash,translation_status,translation_version,content_language,content_wikitext&limit=1"
   );
   const row = rows?.[0];
   if (!row?.id || !row?.source_wikitext) throw new Error("No captured raw source found for " + sourceTitle);
 
   const sourceHash = crypto.createHash("sha256").update(row.source_wikitext).digest("hex");
+
+  if (
+    dependencyMode &&
+    !FORCE_TRANSLATE &&
+    row.source_hash === sourceHash &&
+    row.translation_status === "translated" &&
+    row.translation_version === TRANSLATION_VERSION &&
+    row.content_language === "en" &&
+    row.content_wikitext
+  ) {
+    console.log("AI TRANSLATION CACHE HIT " + sourceTitle);
+    return;
+  }
+
+  if (!dependencyMode) {
+    await translateDirectTemplates(row.source_wikitext);
+  }
+
   await patchDocument(row.id, {
     source_hash: sourceHash,
     translation_status: "ready",
@@ -363,6 +468,12 @@ async function main() {
     });
 
     console.log("AI TRANSLATION SAVED " + sourceTitle + " -> " + translatedTitle + " r" + revisionNo);
+
+    if (dependencyMode) {
+      console.log("AI TEMPLATE TRANSLATION READY " + sourceTitle);
+      return;
+    }
+
     await runRenderer(sourceTitle);
 
     if (AUTO_PUBLISH) {
