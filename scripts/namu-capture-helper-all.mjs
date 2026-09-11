@@ -47,8 +47,9 @@ if (occupied.length) {
 
 const capture = start("scripts/namu-chrome-capture-helper-v11.mjs");
 const rawAssets = start("scripts/namu-raw-asset-helper-v2.mjs", { NAMU_RAW_ASSET_PORT: "43120" });
+const assistantPublish = start("scripts/namu-assistant-publish-worker.mjs");
 
-for (const child of [capture, rawAssets]) {
+for (const child of [capture, rawAssets, assistantPublish]) {
   child.on("exit", (code, signal) => {
     if (shuttingDown) return;
     const normalSignal = signal === "SIGTERM" || signal === "SIGINT";
@@ -69,4 +70,4 @@ process.on("SIGTERM", () => {
   setTimeout(() => process.exit(0), 100).unref();
 });
 
-console.log("Kpoparkive capture helper bundle: main=43117, media=43118, fidelity=43119, raw-assets=43120");
+console.log("Kpoparkive capture helper bundle: main=43117, media=43118, fidelity=43119, raw-assets=43120, assistant-publish=watcher");
