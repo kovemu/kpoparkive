@@ -633,7 +633,31 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
           tableCount <= 8 ? 12 :
           -Math.min(80, (tableCount - 8) * 5);
         const selfLinkScore = selfLinkCount === 1 ? 12 : Math.max(-30, 12 - (selfLinkCount - 1) * 12);
-        const score = 760 + frontScore + compactScore + tableScore + selfLinkScore - depth * 6;
+
+        const style = String(current.getAttribute?.("style") || "").toLowerCase();
+        const backgroundMatch = style.match(/(?:^|;)background-color:([^;]+)/);
+        const background = String(backgroundMatch?.[1] || "").trim();
+        const hasVisualBackground =
+          Boolean(background) &&
+          background !== "transparent" &&
+          !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(background);
+        const radiusValues = [...style.matchAll(/border-(?:top-left|top-right|bottom-right|bottom-left)-radius:([\d.]+)px/g)]
+          .map((match) => Number(match[1] || 0) || 0);
+        const maxRadius = radiusValues.length ? Math.max(...radiusValues) : 0;
+        const paddingValues = [...style.matchAll(/padding-(?:top|right|bottom|left):([\d.]+)px/g)]
+          .map((match) => Number(match[1] || 0) || 0);
+        const paddingTotal = paddingValues.reduce((sum, value) => sum + value, 0);
+        const width = Number(current.getAttribute?.("data-kpop-layout-width") || 0) ||
+          Number(style.match(/(?:^|;)width:([\d.]+)px/)?.[1] || 0) || 0;
+        const frameScore =
+          (hasVisualBackground ? 110 : 0) +
+          (maxRadius >= 4 ? 55 : maxRadius > 0 ? 20 : 0) +
+          (paddingTotal >= 16 ? 35 : paddingTotal > 0 ? 15 : 0) +
+          (width >= 300 && width <= 850 ? 20 : 0) +
+          (/text-align:center/.test(style) ? 10 : 0) +
+          (/word-break:keep-all/.test(style) ? 10 : 0);
+
+        const score = 760 + frontScore + compactScore + tableScore + selfLinkScore + frameScore - depth * 6;
 
         pushCandidate(current, "self-link-wrapper", score, {
           // Computed-style captures are verbose. Complex navigation templates
