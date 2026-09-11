@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchVisualEditorV3Payload } from "./visualEditorV3PayloadClient";
 import { applyVisualCommand, editorElementToWikitext, wikiBlockToEditorHtml } from "../../lib/wikiVisualEdit";
 import VisualEditorV3TemplateInspector, {
   collectV3TemplateEdits,
@@ -668,7 +669,7 @@ export default function FullPageVisualEditorV3({ title }: { title: string }) {
     setLoading(true);
     setStatus("Loading lossless NamuMark AST…");
     try {
-      const response = await fetch(`/api/wiki-edit-document-v3?title=${encodeURIComponent(title)}`, { cache: "no-store" });
+      const response = await fetchVisualEditorV3Payload(title);
       const data = await response.json() as AstPayload & { error?: string };
       if (!response.ok || !data.ok) throw new Error(data.error || "Could not load AST editor");
       setPayload(data);
