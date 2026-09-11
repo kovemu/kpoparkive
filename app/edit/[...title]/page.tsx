@@ -166,13 +166,13 @@ export default function PublicSourceEditorPage({
   }, [payload]);
 
   useEffect(() => {
-    if (!autoRefresh || !payload || submitted) return;
+    if (!autoRefresh || !payload || submitted || previewBusy) return;
     if (content === lastPreviewSourceRef.current) return;
     const timer = window.setTimeout(() => {
       void refreshExactPreview(content, "auto");
-    }, 2500);
+    }, 1200);
     return () => window.clearTimeout(timer);
-  }, [autoRefresh, content, payload, submitted, refreshExactPreview]);
+  }, [autoRefresh, content, payload, submitted, previewBusy, refreshExactPreview]);
 
   useEffect(() => {
     if (!payload || previewBusy) return;
