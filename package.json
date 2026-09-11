@@ -19,7 +19,8 @@
     "next": "15.5.24",
     "node-html-parser": "^7.0.1",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "thetree": "github:wjdgustn/thetree#7435e93e4d695e666aee5eddbabf68533f7b7b21"
   },
   "devDependencies": {
     "@types/node": "^22",
