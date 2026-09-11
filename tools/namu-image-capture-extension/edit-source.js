@@ -81,7 +81,7 @@ function kpopEditorCandidates() {
 
   const push = (source, value) => {
     const raw = kpopNormalizeEditRaw(value);
-    if (raw.length < 20 || seenRaw.has(raw)) return;
+    if (!raw.length || seenRaw.has(raw)) return;
     seenRaw.add(raw);
     const score = kpopRawSignalScore(raw);
     const ratio = expected.chars > 0 ? raw.length / expected.chars : null;
@@ -194,8 +194,8 @@ function kpopExtractEditSource() {
   }
 
   const isTemplate = /^틀:/i.test(sourceTitle);
-  const minChars = isTemplate ? 20 : 200;
-  const minScore = isTemplate ? 1 : 2;
+  const minChars = isTemplate ? 1 : 200;
+  const minScore = isTemplate ? 0 : 2;
   const ratio = best?.ratio;
   const looksTruncated = Boolean(best && expected.chars > 1000 && Number.isFinite(ratio) && ratio < 0.7);
   if (!best || best.raw.length < minChars || best.score < minScore || looksTruncated) {
