@@ -269,6 +269,7 @@ async function kpopStartHelperClone(options = {}) {
 }
 
 async function kpopResetHelperClone() {
+  await kpopClearVerification();
   try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
   await kpopCloseRunnerTabs();
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -491,7 +492,14 @@ async function kpopRecoverRunner() {
   } catch {}
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "kpoparkive-verification-detected") {
+    kpopShowVerification(sender?.tab || null, message.sourceTitle || "")
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
   if (message?.type === "kpoparkive-raw-verification-status") {
     sendResponse({ ok: true, verification: { ...kpopRawVerification } });
     return;
