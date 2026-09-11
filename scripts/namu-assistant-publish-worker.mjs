@@ -103,7 +103,7 @@ async function fetchSourceRenderPending() {
       "&translation_status=eq.pending_chatgpt" +
       "&source_wikitext=not.is.null" +
       "&select=id,source_title,raw_extracted_at,source_namumark_rendered_at" +
-      "&order=updated_at.asc&limit=30",
+      "&order=updated_at.desc&limit=30",
   );
 
   return (rows || []).filter((row) => {
