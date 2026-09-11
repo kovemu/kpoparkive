@@ -1,6 +1,7 @@
 const KPOP_HELPER_CONTROLLER = "http://127.0.0.1:43117";
 const KPOP_RUNNER_URL = chrome.runtime.getURL("runner.html");
 let kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
+let kpopRawEditTabId = null;
 let kpopRawVerification = {
   active: false,
   sourceTitle: "",
@@ -69,6 +70,39 @@ async function kpopControllerJson(path, init = {}) {
   return body;
 }
 
+async function kpopOpenOrReuseRawEditTab(editUrl) {
+  if (kpopRawEditTabId) {
+    try {
+      const existing = await chrome.tabs.get(kpopRawEditTabId);
+      if (existing?.id) {
+        await chrome.tabs.update(existing.id, { url: editUrl, active: false });
+        return await chrome.tabs.get(existing.id);
+      }
+    } catch {
+      kpopRawEditTabId = null;
+    }
+  }
+
+  const created = await chrome.tabs.create({ url: editUrl, active: false });
+  if (!created?.id) throw new Error("Could not open the NamuWiki edit page.");
+  kpopRawEditTabId = created.id;
+  return created;
+}
+
+async function kpopCloseRawEditTab() {
+  const id = kpopRawEditTabId;
+  kpopRawEditTabId = null;
+  if (!id) return;
+  try { await chrome.tabs.remove(id); } catch {}
+}
+
+function kpopActiveNamuRaw(rawValue) {
+  return String(rawValue || "")
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*##/.test(line))
+    .join("\n");
+}
+
 async function kpopRawStatus(sourceTitle) {
   const title = String(sourceTitle || "").normalize("NFKC").trim();
   if (!title) return { exists: false, rawCaptured: false, raw: null };
@@ -91,7 +125,7 @@ function kpopTitleFromDocumentUrl(value) {
 }
 
 function kpopExtractIncludeTitles(rawValue) {
-  const raw = String(rawValue || "");
+  const raw = kpopActiveNamuRaw(rawValue);
   const lower = raw.toLowerCase();
   const output = [];
   const seen = new Set();
@@ -162,7 +196,7 @@ function kpopResolveRawLinkTitle(currentTitle, rawTarget) {
 }
 
 function kpopExtractRawDocumentLinks(rawValue, currentTitle) {
-  const raw = String(rawValue || "");
+  const raw = kpopActiveNamuRaw(rawValue);
   const output = [];
   const seen = new Set();
   const re = /\[\[([^\[\]]+?)\]\]/g;
@@ -188,7 +222,7 @@ function kpopExtractRawDocumentLinks(rawValue, currentTitle) {
 }
 
 function kpopExtractRawFileRefs(rawValue) {
-  const raw = String(rawValue || "");
+  const raw = kpopActiveNamuRaw(rawValue);
   const output = [];
   const seen = new Set();
   const re = /\[\[(?:파일|File):([^\]|]+)(?=[\]|])/gi;
@@ -301,6 +335,7 @@ async function kpopStartHelperClone(options = {}) {
 
 async function kpopResetHelperClone() {
   await kpopClearVerification();
+  await kpopCloseRawEditTab();
   try { await kpopControllerJson("/clone/cancel", { method: "POST", body: "{}" }); } catch {}
   await kpopCloseRunnerTabs();
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -317,7 +352,7 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
 
   const sourcePageUrl = `https://namu.wiki/w/${encodeURIComponent(normalizedTitle)}`;
   const editUrl = `https://namu.wiki/edit/${encodeURIComponent(normalizedTitle)}`;
-  const editTab = await chrome.tabs.create({ url: editUrl, active: false });
+  const editTab = await kpopOpenOrReuseRawEditTab(editUrl);
   if (!editTab?.id) throw new Error(`Could not open the NamuWiki edit page for ${normalizedTitle}.`);
 
   let extracted = null;
@@ -389,9 +424,12 @@ async function kpopCaptureOneRawTitle({ rootTitle, sourceTitle }) {
     };
   } catch (error) {
     await kpopClearVerification();
+    try {
+      await chrome.tabs.get(editTab.id);
+    } catch {
+      if (kpopRawEditTabId === editTab.id) kpopRawEditTabId = null;
+    }
     throw error;
-  } finally {
-    try { await chrome.tabs.remove(editTab.id); } catch {}
   }
 }
 
