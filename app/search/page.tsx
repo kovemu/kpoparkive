@@ -7,6 +7,9 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 type SearchRow = {
   source_title: string;
+  translated_title: string | null;
+  content_language: string | null;
+  content_status: string | null;
 };
 
 async function searchDocuments(query: string): Promise<SearchRow[]> {
@@ -16,7 +19,7 @@ async function searchDocuments(query: string): Promise<SearchRow[]> {
 
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(pattern)}&select=source_title&order=source_title.asc&limit=50`,
+      `${SUPABASE_URL}/rest/v1/source_documents?source=eq.namu_mirror&or=(source_title.ilike.${encodeURIComponent(pattern)},translated_title.ilike.${encodeURIComponent(pattern)})&select=source_title,translated_title,content_language,content_status&order=source_title.asc&limit=50`,
       {
         headers: {
           apikey: SERVICE_ROLE_KEY,
@@ -67,7 +70,9 @@ export default async function SearchPage({
                 const encoded = row.source_title.split("/").map(encodeURIComponent).join("/");
                 return (
                   <a className="searchResult" key={row.source_title} href={`/w/${encoded}`}>
-                    {row.source_title}
+                    {row.content_status === "published" && row.content_language === "en" && row.translated_title
+                      ? row.translated_title
+                      : row.source_title}
                   </a>
                 );
               })}
