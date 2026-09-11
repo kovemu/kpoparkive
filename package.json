@@ -17,7 +17,8 @@
     "postinstall": "node scripts/patch-thetree-runtime.mjs",
     "namu:dom-fallbacks": "node scripts/namu-dom-fallback-queue.mjs",
     "namu:recover-template": "node scripts/namu-dom-template-recover.mjs",
-    "namu:publish": "node scripts/namu-publish-draft.mjs"
+    "namu:publish": "node scripts/namu-publish-draft.mjs",
+    "local": "node scripts/kpoparkive-local.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
