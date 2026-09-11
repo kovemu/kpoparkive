@@ -14,8 +14,7 @@
     "namu:engine-thetree": "node --no-node-snapshot scripts/namumark-thetree-poc.mjs",
     "namu:engine-thetree-compat": "node --no-node-snapshot scripts/namumark-thetree-compat-poc.mjs",
     "namu:engine-thetree-content": "node --no-node-snapshot scripts/namumark-thetree-content.mjs",
-    "postinstall": "node scripts/patch-thetree-runtime.mjs",
-    "namu:translate": "node scripts/namu-ai-translate.mjs"
+    "postinstall": "node scripts/patch-thetree-runtime.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
