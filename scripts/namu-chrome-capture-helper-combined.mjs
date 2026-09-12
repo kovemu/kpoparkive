@@ -721,7 +721,11 @@ async function kpopListRawRequirements(rootTitle) {
     "&order=priority.desc,source_title.asc&limit=500"
   );
 
-  const items = Array.isArray(rows) ? rows : [];
+  const allItems = Array.isArray(rows) ? rows : [];
+  const items = allItems.filter(
+    (item) => String(item?.detector_version || "") === RAW_REQUIREMENT_DETECTOR_VERSION
+  );
+  const staleCount = Math.max(0, allItems.length - items.length);
   const counts = { captured: 0, needs_raw: 0, review: 0, ready: 0, ignored: 0 };
   for (const item of items) {
     if (Object.prototype.hasOwnProperty.call(counts, item.status)) counts[item.status] += 1;
@@ -734,6 +738,8 @@ async function kpopListRawRequirements(rootTitle) {
     detectorVersion: RAW_REQUIREMENT_DETECTOR_VERSION,
     counts,
     total: items.length,
+    staleCount,
+    requiresDomRefresh: staleCount > 0 && items.length === 0,
     next,
     items,
   };
