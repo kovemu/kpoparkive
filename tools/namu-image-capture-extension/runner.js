@@ -8,6 +8,7 @@ const runnerStatusNode = document.getElementById("status");
 let runnerKnownAssetUrls = new Set();
 let runnerRootTitle = "";
 let runnerCaptureMode = "dom";
+let runnerRefreshExisting = false;
 let runnerStopped = false;
 
 function runnerSetStatus(text) {
@@ -97,6 +98,7 @@ async function runnerCaptureOneAssetWithRetry(prep, asset) {
         sourceTitle: prep.sourceTitle,
         pageUrl: prep.pageUrl,
         asset,
+        refreshExisting: runnerRefreshExisting,
       });
     } catch (error) {
       lastError = error;
@@ -455,10 +457,14 @@ async function runnerMain() {
 
     runnerRootTitle = job.rootTitle;
     runnerCaptureMode = job.captureMode === "raw" ? "raw" : "dom";
+    runnerRefreshExisting = Boolean(job.refreshExisting);
 
-    if (runnerCaptureMode === "dom") {
+    if (runnerCaptureMode === "dom" && !runnerRefreshExisting) {
       await runnerLoadKnownAssets(runnerRootTitle);
       runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nKnown media cached: ${runnerKnownAssetUrls.size}`);
+    } else if (runnerCaptureMode === "dom") {
+      runnerKnownAssetUrls = new Set();
+      runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nRefresh existing: ON · media reuse bypassed`);
     } else {
       runnerSetStatus(`Running RAW crawl · ${runnerRootTitle}\nRoot RAW only · templates/assets come from cache and DOM captures`);
     }
