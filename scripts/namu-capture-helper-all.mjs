@@ -4,6 +4,9 @@ import path from "node:path";
 
 const children = [];
 let shuttingDown = false;
+const assistantPublishEnabled =
+  process.argv.includes("--assistant-publish") ||
+  /^(?:1|true|yes)$/i.test(String(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_WATCHER || ""));
 
 function portInUse(port) {
   return new Promise((resolve) => {
@@ -47,9 +50,11 @@ if (occupied.length) {
 
 const capture = start("scripts/namu-chrome-capture-helper-v11.mjs");
 const rawAssets = start("scripts/namu-raw-asset-helper-v2.mjs", { NAMU_RAW_ASSET_PORT: "43120" });
-const assistantPublish = start("scripts/namu-assistant-publish-worker.mjs");
+const assistantPublish = assistantPublishEnabled
+  ? start("scripts/namu-assistant-publish-worker.mjs")
+  : null;
 
-for (const child of [capture, rawAssets, assistantPublish]) {
+for (const child of [capture, rawAssets, assistantPublish].filter(Boolean)) {
   child.on("exit", (code, signal) => {
     if (shuttingDown) return;
     const normalSignal = signal === "SIGTERM" || signal === "SIGINT";
@@ -70,4 +75,7 @@ process.on("SIGTERM", () => {
   setTimeout(() => process.exit(0), 100).unref();
 });
 
-console.log("Kpoparkive capture helper bundle: main=43117, media=43118, fidelity=43119, raw-assets=43120, assistant-publish=watcher");
+console.log(
+  "Kpoparkive capture helper bundle: main=43117, media=43118, fidelity=43119, raw-assets=43120, assistant-publish=" +
+  (assistantPublishEnabled ? "watcher" : "off")
+);
