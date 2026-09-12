@@ -216,7 +216,7 @@ v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache")
 v8 = mustReplace(
   v8,
   "const KPOP_CLONE_MAX_RETRIES = 2;",
-  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 3;",
+  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 4;",
   "crawl policy version",
 );
 
