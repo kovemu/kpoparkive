@@ -357,6 +357,60 @@ function kpopSanitizeRenderedClone(sourceRoot) {
   return { clone, pseudoCss: pseudoRules.join("\n"), styledNodes, layoutNodes, pseudoRuleCount: pseudoRules.length };
 }
 
+let kpopRenderedTransferCache = null;
+const KPOP_RENDERED_TRANSFER_CHUNK_CHARS = 2 * 1024 * 1024;
+
+function kpopPrepareRenderedTransfer() {
+  const capture = kpopExtractRenderedDocument();
+  const transferId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  kpopRenderedTransferCache = { transferId, capture };
+  return {
+    ok: true,
+    transferId,
+    pageUrl: capture.pageUrl,
+    pageTitle: capture.pageTitle,
+    sourceTitle: capture.sourceTitle,
+    captureVersion: capture.captureVersion,
+    meta: capture.meta,
+    articleLength: capture.articleHtml.length,
+    styleLength: capture.styleCss.length,
+  };
+}
+
+function kpopReadRenderedTransferChunk(message) {
+  const transferId = String(message?.transferId || "");
+  const field = message?.field === "styleCss" ? "styleCss" : "articleHtml";
+  const offset = Math.max(0, Number(message?.offset || 0) || 0);
+  const requested = Math.max(1, Number(message?.limit || KPOP_RENDERED_TRANSFER_CHUNK_CHARS) || KPOP_RENDERED_TRANSFER_CHUNK_CHARS);
+  const limit = Math.min(KPOP_RENDERED_TRANSFER_CHUNK_CHARS, requested);
+
+  if (!kpopRenderedTransferCache || kpopRenderedTransferCache.transferId !== transferId) {
+    throw new Error("Rendered DOM transfer is missing or expired.");
+  }
+
+  const value = String(kpopRenderedTransferCache.capture?.[field] || "");
+  const chunk = value.slice(offset, offset + limit);
+  const nextOffset = offset + chunk.length;
+  return {
+    ok: true,
+    transferId,
+    field,
+    offset,
+    chunk,
+    nextOffset,
+    done: nextOffset >= value.length,
+    totalLength: value.length,
+  };
+}
+
+function kpopReleaseRenderedTransfer(message) {
+  const transferId = String(message?.transferId || "");
+  if (kpopRenderedTransferCache?.transferId === transferId) {
+    kpopRenderedTransferCache = null;
+  }
+  return { ok: true };
+}
+
 function kpopExtractRenderedDocument() {
   const found = kpopFindPresentationRoot();
   if (!found) throw new Error("Could not locate any content-rich NamuWiki document root.");
@@ -406,8 +460,29 @@ function kpopExtractRenderedDocument() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "kpoparkive-extract-namu-rendered-document") return;
+  const type = String(message?.type || "");
+  if (![
+    "kpoparkive-extract-namu-rendered-document",
+    "kpoparkive-prepare-namu-rendered-document",
+    "kpoparkive-read-namu-rendered-chunk",
+    "kpoparkive-release-namu-rendered-document",
+  ].includes(type)) return;
+
   try {
+    if (type === "kpoparkive-prepare-namu-rendered-document") {
+      sendResponse(kpopPrepareRenderedTransfer());
+      return;
+    }
+    if (type === "kpoparkive-read-namu-rendered-chunk") {
+      sendResponse(kpopReadRenderedTransferChunk(message));
+      return;
+    }
+    if (type === "kpoparkive-release-namu-rendered-document") {
+      sendResponse(kpopReleaseRenderedTransfer(message));
+      return;
+    }
+
+    // Legacy single-message path retained for compatibility with older callers.
     sendResponse({ ok: true, ...kpopExtractRenderedDocument() });
   } catch (error) {
     sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
