@@ -7,7 +7,8 @@ const BUCKET = "wiki-media";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
-const CACHE_TTL_MS = 15000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const FORCE_REFRESH_COOLDOWN_MS = 5000;
 const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|avif|svg)$/i;
 
 function loadEnvFile(filePath) {
@@ -196,19 +197,26 @@ function dimensionsFromBytes(bytes, contentType) {
 }
 
 const queueCache = new Map();
-async function loadQueue(_rootTitle, force = false) {
-  const cacheKey = "__global__";
+async function loadQueue(rootTitle, force = false) {
+  const cacheKey = String(rootTitle || "").normalize("NFKC").trim();
+  if (!cacheKey) throw new Error("rootTitle is required for asset queue lookup");
+
   const cached = queueCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) return cached;
+  const age = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (cached && (!force && age < CACHE_TTL_MS)) return cached;
+  if (cached && force && age < FORCE_REFRESH_COOLDOWN_MS) return cached;
+
   const rows = [];
   for (let offset = 0; offset < 20000; offset += 1000) {
     const batch = await db(
-      `source_asset_queue?asset_type=eq.image&select=id,root_title,source_title,source_ref,label,status,metadata` +
+      `source_asset_queue?root_title=eq.${encodeURIComponent(cacheKey)}&asset_type=eq.image` +
+      `&select=id,root_title,source_title,source_ref,label,status,metadata` +
       `&order=id.asc&limit=1000&offset=${offset}`,
     );
     rows.push(...batch);
     if (batch.length < 1000) break;
   }
+
   const byKey = new Map();
   for (const row of rows) {
     for (const raw of [row.label, row.source_ref, row.metadata?.filename]) {
@@ -219,6 +227,7 @@ async function loadQueue(_rootTitle, force = false) {
       byKey.set(key, group);
     }
   }
+
   const value = { loadedAt: Date.now(), rows, byKey };
   queueCache.set(cacheKey, value);
   return value;
