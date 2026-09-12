@@ -89,7 +89,7 @@ function applyModernNamuEnginePatches() {
   applied.push(patchEngineFile(
     "utils/namumark/syntax/table.js",
     "const tagStr = paramStr.slice(1, closeIndex);",
-    `const tagStr = paramStr.slice(1, closeIndex)\n                    .replace(/\\u00a0/g, ' ')\n                    .replace(/=\\s+/g, '=')\n                    .replace(/,\\s+/g, ',')\n                    .trim();`,
+    `const tagStr = paramStr.slice(1, closeIndex)\n                    .replace(/\\u00a0/g, ' ')\n                    .replace(/\\s*=\\s*/g, '=')\n                    .replace(/\\s*,\\s*/g, ',')\n                    .trim();`,
     "treat NBSP as whitespace inside table parameter tokens",
   ));
 
