@@ -164,9 +164,21 @@ async function createOrRefreshSynthetic(ownerTitle, templateTitle, sourceResult,
 
   const existing = await getDocument(templateTitle);
   if (existing) {
-    if (!String(existing.source_format || "").startsWith("namumark-synthetic-dom")) {
-      throw new Error(`Refusing to overwrite non-synthetic document: ${templateTitle}`);
+    const existingFormat = String(existing.source_format || "");
+    const existingRaw = String(existing.source_wikitext || "").trim();
+    const isSynthetic = existingFormat.startsWith("namumark-synthetic-dom");
+    const hasCanonicalRaw = existingRaw.length > 0 && !isSynthetic;
+
+    if (hasCanonicalRaw) {
+      throw new Error(`Refusing to overwrite canonical RAW document: ${templateTitle}`);
     }
+
+    if (!isSynthetic) {
+      console.log(
+        `PLACEHOLDER PROMOTION: ${templateTitle} has no canonical RAW; upgrading existing ${existingFormat || "unknown"} row to DOM-synthetic recovery.`,
+      );
+    }
+
     await db(`source_documents?id=eq.${eq(existing.id)}`, {
       method: "PATCH",
       headers: { Prefer: "return=minimal" },
