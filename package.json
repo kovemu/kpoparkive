@@ -21,7 +21,8 @@
     "local": "node scripts/kpoparkive-local.mjs",
     "namu:migrate-browser-artifacts": "node scripts/namu-migrate-browser-artifacts-to-storage.mjs",
     "namu:engine-thetree-matrix": "node scripts/namumark-thetree-failure-matrix.mjs",
-    "namu:integration-qa": "node scripts/namu-integration-qa.mjs"
+    "namu:integration-qa": "node scripts/namu-integration-qa.mjs",
+    "namu:repair-assets": "node scripts/namu-browser-image-worker-safe.mjs --renderer-missing"
   },
   "dependencies": {
     "next": "15.5.24",
