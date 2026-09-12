@@ -366,14 +366,15 @@ async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [
   } catch (error) {
     rawAssetV2Job.errors = [...rawAssetV2Job.errors, `Verification: ${error?.message || error}`].slice(-20);
   }
+  const planAffectedTitles = Array.isArray(plan.affectedTitles) ? plan.affectedTitles.filter(Boolean) : [];
   const affectedTitles = new Set(
-    (plan.missingFiles || []).flatMap((item) =>
+    (planAffectedTitles.length ? planAffectedTitles : (plan.missingFiles || []).flatMap((item) =>
       Array.isArray(item?.requiredBy) && item.requiredBy.length
         ? item.requiredBy
         : [item?.sourceTitle || sourceTitle]
-    ).filter(Boolean)
+    )).filter(Boolean)
   );
-  if (!affectedTitles.size) affectedTitles.add(sourceTitle);
+  if (!affectedTitles.size && !currentRenderOnly) affectedTitles.add(sourceTitle);
   for (const affectedTitle of affectedTitles) {
     try {
       await rawAssetV2InvalidateRender(rootTitle, affectedTitle);
