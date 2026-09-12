@@ -6,7 +6,7 @@ import { findVisibleKoreanLinkLabels, findVisibleKoreanText } from "./namu-engli
 const ROOT = process.cwd();
 const POLL_MS = Math.max(3000, Number(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_POLL_MS || 5000) || 5000);
 const DOM_RECOVERY_TARGET_VERSION = "dom-to-namumark-v3.1";
-const FALLBACK_EXTRACTOR_TARGET_VERSION = 3;
+const FALLBACK_EXTRACTOR_TARGET_VERSION = 4;
 const DOM_FALLBACK_NORMALIZER_TARGET_VERSION = 2;
 
 function loadEnv(filePath) {
@@ -251,7 +251,7 @@ async function recoverFreshDomFallbacks(ownerTitle) {
 async function fetchSourceRenderPending() {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
-      "&translation_status=in.(pending_chatgpt,failed)" +
+      "&translation_status=in.(pending_chatgpt,failed,translated_by_chatgpt,reviewed)" +
       "&source_wikitext=not.is.null" +
       "&select=id,source_title,translation_status,raw_extracted_at,source_namumark_rendered_at,source_namumark_meta,content_language,content_revision_no,content_wikitext" +
       "&order=updated_at.desc&limit=30",
@@ -263,13 +263,13 @@ async function fetchSourceRenderPending() {
     const rawAt = Date.parse(row?.raw_extracted_at || "");
     const renderedAt = Date.parse(row?.source_namumark_rendered_at || "");
     const staleByTime =
-      row?.translation_status === "pending_chatgpt" &&
-      (!Number.isFinite(renderedAt) || (Number.isFinite(rawAt) && renderedAt < rawAt));
+      !Number.isFinite(renderedAt) ||
+      (Number.isFinite(rawAt) && renderedAt < rawAt);
     const meta = row?.source_namumark_meta || {};
     const missingTemplates = Number(meta?.missingTemplateCount || 0) > 0;
     const missingFiles = Number(meta?.missingFileCount || 0) > 0;
     const needsFallbackExtractorUpgrade =
-      missingTemplates && Number(meta?.fallbackExtractorVersion || 0) < 2;
+      missingTemplates && Number(meta?.fallbackExtractorVersion || 0) < FALLBACK_EXTRACTOR_TARGET_VERSION;
     const needsStagingAssetReconcile =
       missingFiles && Number(meta?.assetReconcilerVersion || 0) < 2;
     const needsDomVideoRecovery =
@@ -308,7 +308,7 @@ async function fetchSourceRenderPending() {
 async function fetchPending() {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
-      "&translation_status=eq.translated_by_chatgpt" +
+      "&translation_status=in.(translated_by_chatgpt,reviewed)" +
       "&content_language=eq.en" +
       "&content_wikitext=not.is.null" +
       "&select=id,source_title,content_revision_no,translation_version,translated_at,source_namumark_rendered_at,content_namumark_rendered_at,content_namumark_meta" +
@@ -586,7 +586,7 @@ function renderedDependencyGaps(row) {
 
 async function validateRenderedDraft(row, expectedRevision) {
   if (!row) throw new Error("Rendered document disappeared");
-  if (row.translation_status !== "translated_by_chatgpt") {
+  if (!["translated_by_chatgpt", "reviewed"].includes(String(row.translation_status || ""))) {
     console.log(`ASSISTANT RENDER: ${row.source_title} status changed to ${row.translation_status}; skipping.`);
     return false;
   }
