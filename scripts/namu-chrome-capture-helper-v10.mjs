@@ -208,6 +208,7 @@ const newKnownAssets = String.raw`async function kpopKnownAssetState(rootTitle) 
   const resolved = await db(
     "source_asset_queue?root_title=eq." + encodeURIComponent(root) +
     "&asset_type=eq.image&status=eq.resolved" +
+    "&storage_path=not.is.null&resolved_url=not.is.null" +
     "&select=source_ref,label,resolved_url,storage_path&limit=10000"
   );
 
