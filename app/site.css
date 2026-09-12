@@ -314,6 +314,18 @@
   line-height: 1.35;
 }
 
+.searchResultSnippet {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: #6f737c;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+
 .searchResult:hover {
   border-color: #cabef1;
   text-decoration: none;
