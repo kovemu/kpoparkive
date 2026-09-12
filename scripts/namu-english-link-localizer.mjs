@@ -22,6 +22,15 @@ function hasHangul(value) {
   return /[가-힣]/.test(String(value || ""));
 }
 
+
+function visibleTextOnly(node) {
+  const fragment = parse(`<div>${String(node?.innerHTML || "")}</div>`);
+  for (const selector of ["img", "picture", "source", "svg", "video", "audio", "canvas"]) {
+    for (const media of fragment.querySelectorAll(selector)) media.remove();
+  }
+  return normalize(fragment.innerText || fragment.text || "");
+}
+
 function cleanEnglishLabel(value) {
   const label = normalize(value)
     .replace(/^'''|'''$/g, "")
@@ -276,7 +285,7 @@ export function findVisibleKoreanLinkLabels(html, { limit = 30 } = {}) {
   const seen = new Set();
 
   for (const anchor of root.querySelectorAll("a[href]")) {
-    const visible = normalize(anchor.text || anchor.innerText || "");
+    const visible = visibleTextOnly(anchor);
     if (!visible || !hasHangul(visible)) continue;
     const href = normalize(anchor.getAttribute("href") || "");
     const key = `${href}\n${visible}`;
@@ -293,11 +302,14 @@ export function findVisibleKoreanLinkLabels(html, { limit = 30 } = {}) {
 export function findVisibleKoreanText(html, { limit = 30, context = 56 } = {}) {
   const root = parse(String(html || ""));
 
-  for (const selector of ["script", "style", "noscript", "template"]) {
+  for (const selector of [
+    "script", "style", "noscript", "template",
+    "img", "picture", "source", "svg", "video", "audio", "canvas",
+  ]) {
     for (const node of root.querySelectorAll(selector)) node.remove();
   }
 
-  const text = String(root.text || root.innerText || "")
+  const text = String(root.innerText || root.text || "")
     .normalize("NFKC")
     .replace(/\u00a0/g, " ")
     .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
