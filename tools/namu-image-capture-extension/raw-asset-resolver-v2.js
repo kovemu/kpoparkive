@@ -303,8 +303,13 @@ function rawAssetV2DefaultJob() {
     rootTitle: "",
     sourceTitle: "",
     cluster: false,
+    currentRenderOnly: false,
     maxDepth: 1,
+    clusterDepth: 1,
+    expectedCoreDocuments: null,
     coreDocuments: 0,
+    renderReadiness: null,
+    currentMissingMediaCount: 0,
     required: 0,
     planned: 0,
     processed: 0,
@@ -328,8 +333,13 @@ async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [
 
   const plan = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments);
   rawAssetV2Job.cluster = Boolean(plan.cluster || cluster);
+  rawAssetV2Job.currentRenderOnly = Boolean(plan.currentRenderOnly || currentRenderOnly);
   rawAssetV2Job.maxDepth = Number(plan.maxDepth || maxDepth || 1);
+  rawAssetV2Job.clusterDepth = Number(plan.clusterDepth ?? clusterDepth ?? maxDepth ?? 1);
+  rawAssetV2Job.expectedCoreDocuments = plan.expectedCoreDocuments ?? expectedCoreDocuments ?? null;
   rawAssetV2Job.coreDocuments = Number(plan.coreDocuments || 0);
+  rawAssetV2Job.renderReadiness = plan.renderReadiness || null;
+  rawAssetV2Job.currentMissingMediaCount = Number(plan.currentMissingMediaCount || 0);
   rawAssetV2Job.required = Number(plan.requiredCount || 0);
   rawAssetV2Job.planned = Number(plan.missingCount || 0);
   rawAssetV2Job.remaining = rawAssetV2Job.planned;
