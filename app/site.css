@@ -290,14 +290,28 @@
 .searchResults { display: grid; gap: 8px; }
 
 .searchResult {
-  display: block;
+  display: grid;
+  gap: 3px;
   border: 1px solid #e4e5e9;
   border-radius: 9px;
   padding: 12px 14px;
   background: #fff;
   color: #202124;
   text-decoration: none;
-  font-weight: 700;
+}
+
+.searchResultTitle {
+  min-width: 0;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.searchResultMeta {
+  min-width: 0;
+  color: #7b7f88;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .searchResult:hover {
