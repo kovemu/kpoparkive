@@ -385,10 +385,9 @@ function kpopEnqueueLinks(links, depth) {
       tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
       relation: relation.slice(0, 80),
       queueOrder: kpopCloneState.seenUrls.length,
-      forceCapture: Boolean(
-        kpopCloneState.refreshExisting ||
-        (kpopCloneState.policyRefresh && coreRelation)
-      ),
+      // Policy changes only require the root to be refreshed. First-hop
+      // documents can reuse their existing DOM because v6 never recurses them.
+      forceCapture: Boolean(kpopCloneState.refreshExisting),
     });
     added += 1;
   }
