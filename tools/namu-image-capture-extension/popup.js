@@ -20,11 +20,11 @@ let pollTimer = null;
 let rawAssetPollTimer = null;
 let lastAutoPlannedCloneId = "";
 
-const ACTIVE_SCOPE_POLICY_VERSION = 5;
+const ACTIVE_SCOPE_POLICY_VERSION = 6;
 
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
-  "smart-core": { depth: 2, maxDocs: 80, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
+  "smart-core": { depth: 1, maxDocs: 80, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
   archive: { depth: 3, maxDocs: 150, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
 };
 
@@ -42,7 +42,7 @@ function applyCrawlProfile(name, { persist = true } = {}) {
   if (persist) {
     chrome.storage.local.set({
       kpoparkiveCrawlProfile: profileInput.value,
-      kpoparkiveCloneDepth: Number(depthInput.value || 2),
+      kpoparkiveCloneDepth: Number(depthInput.value || 1),
       kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 80),
       kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
       kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
@@ -55,7 +55,7 @@ function markCustomProfile() {
   if (profileInput.value !== "custom") profileInput.value = "custom";
   chrome.storage.local.set({
     kpoparkiveCrawlProfile: "custom",
-    kpoparkiveCloneDepth: Number(depthInput.value || 2),
+    kpoparkiveCloneDepth: Number(depthInput.value || 1),
     kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 80),
     kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
     kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
@@ -484,7 +484,7 @@ rawCrawlButton.addEventListener("click", async () => {
 cloneButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   const crawlProfile = profileInput.value || "smart-core";
-  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 2) || 0));
+  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
   const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 80) || 40));
   const crawlOrder = crawlOrderInput.value === "toc" ? "toc" : "smart";
   const includeLeaf = Boolean(includeLeafInput.checked);
