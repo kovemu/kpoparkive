@@ -441,12 +441,18 @@ async function kpopStartHelperClone(options = {}) {
 
   const rootTitle = String(options.rootTitle || "").trim() || "RESCENE";
   const captureMode = String(options.captureMode || "dom").toLowerCase() === "raw" ? "raw" : "dom";
+  const profileName = String(options.crawlProfile || "smart-core").toLowerCase();
+  const profileDefaults = profileName === "essential"
+    ? { depth: 1, maxDocs: 20 }
+    : profileName === "archive"
+      ? { depth: 3, maxDocs: 150 }
+      : { depth: 2, maxDocs: 40 };
   const maxDepth = captureMode === "raw"
     ? 0
-    : Math.max(0, Math.min(3, Number(options.maxDepth || 0) || 0));
+    : Math.max(0, Math.min(3, Number(options.maxDepth ?? profileDefaults.depth) || 0));
   const maxDocs = captureMode === "raw"
     ? 1
-    : Math.max(1, Math.min(200, Number(options.maxDocs || 25) || 25));
+    : Math.max(1, Math.min(200, Number(options.maxDocs ?? profileDefaults.maxDocs) || profileDefaults.maxDocs));
 
   const result = await kpopControllerJson("/clone/start", {
     method: "POST",
