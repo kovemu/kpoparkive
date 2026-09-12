@@ -241,6 +241,7 @@ async function captureOneAsset(payload) {
         width: visual.width || asset.width || 0,
         height: visual.height || asset.height || 0,
         visual,
+        refreshExisting: Boolean(payload?.refreshExisting),
       });
 
       return {
