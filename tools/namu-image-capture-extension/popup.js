@@ -264,7 +264,14 @@ rawCrawlButton.addEventListener("click", async () => {
 
   rawCrawlButton.disabled = true;
   setStatus(
-    `Capturing root RAW only...\nDocument: ${rootTitle}\n\nExactly one /raw/ page is read. No linked documents, templates, or file pages are opened.`
+    [
+      "Capturing canonical root RAW...",
+      `Document: ${rootTitle}`,
+      "",
+      "One persistent NamuWiki RAW session tab is reused.",
+      "The root RAW is captured first; only renderer-required missing template RAW dependencies are opened afterward.",
+      "Unrelated linked documents are not followed in RAW mode.",
+    ].join("\n")
   );
 
   try {
@@ -342,9 +349,9 @@ rawButton.addEventListener("click", async () => {
   const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
   rawButton.disabled = true;
   setStatus(
-    "Capturing canonical NamuMark from the visible /raw/ page...\n" +
-    "Only this document RAW is captured. Included templates and assets are not opened recursively.\n" +
-    "The Tree will reuse cached template/DOM/asset data already collected by the normal-page crawler."
+    "Capturing canonical NamuMark through the persistent RAW session tab...\n" +
+    "The requested document is captured first. Only renderer-required missing template RAW dependencies may be opened afterward in the same tab.\n" +
+    "The Tree reuses cached DOM/media whenever possible."
   );
 
   try {
