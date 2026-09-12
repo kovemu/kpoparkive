@@ -14,7 +14,7 @@ function wikiUrl(sourceTitle: string) {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  let rows = [];
+  let rows: Awaited<ReturnType<typeof getPublicWikiIndex>> = [];
   try {
     rows = await getPublicWikiIndex();
   } catch {
