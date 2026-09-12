@@ -22,7 +22,7 @@ async function displayTitleFor(sourceTitle: string) {
       SUPABASE_URL +
         "/rest/v1/source_documents?source=eq.namu_mirror&source_title=eq." +
         encodeURIComponent(sourceTitle) +
-        "&select=translated_title,content_language,content_status&limit=1",
+        "&select=translated_title,content_language,content_status,published_revision_no&limit=1",
       {
         headers: {
           apikey: SERVICE_ROLE_KEY,
@@ -36,14 +36,16 @@ async function displayTitleFor(sourceTitle: string) {
       translated_title: string | null;
       content_language: string | null;
       content_status: string | null;
+      published_revision_no: number | null;
     }>;
     const row = rows[0];
-    if (
-      row?.content_status === "published" &&
-      row?.content_language === "en" &&
-      row?.translated_title?.trim()
-    ) {
-      return row.translated_title.trim();
+    const translated = row?.translated_title?.normalize("NFKC").trim() || "";
+
+    // translated_title is display metadata, not publication state. Local draft
+    // previews and already-published revisions must not fall back to the Korean
+    // canonical source title merely because a newer English revision is draft.
+    if (translated && !/[가-힣]/.test(translated)) {
+      return translated;
     }
   } catch {
     // Fall back to the captured source title if metadata lookup fails.
