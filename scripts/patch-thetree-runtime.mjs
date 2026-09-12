@@ -9,11 +9,17 @@ if (!fs.existsSync(treeRoot)) {
   process.exit(0);
 }
 
-function patch(relativePath, before, after, label) {
+function patch(relativePath, before, after, label, previous = []) {
   const target = path.join(treeRoot, relativePath);
   const source = fs.readFileSync(target, "utf8");
   if (source.includes(after)) {
     console.log(`The Tree patch already applied: ${label}`);
+    return;
+  }
+  for (const prior of previous) {
+    if (!source.includes(prior)) continue;
+    fs.writeFileSync(target, source.replace(prior, after), "utf8");
+    console.log(`Upgraded The Tree patch: ${label}`);
     return;
   }
   if (!source.includes(before)) {
@@ -60,10 +66,15 @@ patch(
   "const tagStr = paramStr.slice(1, closeIndex);",
   `const tagStr = paramStr.slice(1, closeIndex)
                     .replace(/\\u00a0/g, ' ')
+                    .replace(/\\s*=\\s*/g, '=')
+                    .replace(/\\s*,\\s*/g, ',')
+                    .trim();`,
+  "normalize modern whitespace inside table parameter tokens",
+  [`const tagStr = paramStr.slice(1, closeIndex)
+                    .replace(/\\u00a0/g, ' ')
                     .replace(/=\\s+/g, '=')
                     .replace(/,\\s+/g, ',')
-                    .trim();`,
-  "treat NBSP as whitespace inside table parameter tokens",
+                    .trim();`],
 );
 
 
