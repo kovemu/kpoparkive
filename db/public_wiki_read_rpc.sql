@@ -196,3 +196,37 @@ $function$;
 
 revoke all on function public.search_public_wiki(text) from public;
 grant execute on function public.search_public_wiki(text) to anon, authenticated;
+
+create or replace function public.get_public_recent_activity()
+returns table (
+  id uuid,
+  source_title text,
+  summary text,
+  display_name text,
+  status text,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $function$
+  select
+    p.id,
+    p.source_title,
+    p.summary,
+    p.display_name,
+    p.status,
+    p.created_at
+  from public.source_edit_proposals p
+  join public.source_documents d on d.id = p.source_document_id
+  where p.status = 'accepted'
+    and d.source = 'namu_mirror'
+    and coalesce(d.published_revision_no, 0) > 0
+    and d.published_namumark_html is not null
+  order by p.created_at desc
+  limit 30;
+$function$;
+
+revoke all on function public.get_public_recent_activity() from public;
+grant execute on function public.get_public_recent_activity() to anon, authenticated;
