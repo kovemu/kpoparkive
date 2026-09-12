@@ -139,3 +139,60 @@ $function$;
 
 revoke all on function public.get_public_wiki_index() from public;
 grant execute on function public.get_public_wiki_index() to anon, authenticated;
+
+create or replace function public.search_public_wiki(p_query text)
+returns table (
+  source_title text,
+  translated_title text,
+  root_title text,
+  content_language text,
+  published_revision_no integer,
+  content_wikitext text
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $function$
+  with q as (
+    select lower(left(btrim(coalesce(p_query, '')), 120)) as value
+  )
+  select
+    d.source_title,
+    d.translated_title,
+    d.root_title,
+    d.published_content_language as content_language,
+    d.published_revision_no,
+    d.published_content_wikitext as content_wikitext
+  from public.source_documents d
+  cross join q
+  where q.value <> ''
+    and d.source = 'namu_mirror'
+    and coalesce(d.published_revision_no, 0) > 0
+    and d.published_namumark_html is not null
+    and length(d.published_namumark_html) > 0
+    and d.source_title not like '틀:%'
+    and d.source_title not like '파일:%'
+    and (
+      position(q.value in lower(coalesce(d.translated_title, ''))) > 0
+      or position(q.value in lower(coalesce(d.source_title, ''))) > 0
+      or position(q.value in lower(coalesce(d.root_title, ''))) > 0
+      or position(q.value in lower(coalesce(d.published_content_wikitext, ''))) > 0
+    )
+  order by
+    case
+      when lower(coalesce(d.translated_title, '')) = q.value then 0
+      when lower(coalesce(d.translated_title, '')) like q.value || '%' then 1
+      when position(q.value in lower(coalesce(d.translated_title, ''))) > 0 then 2
+      when lower(coalesce(d.root_title, '')) like q.value || '%' then 3
+      when position(q.value in lower(coalesce(d.root_title, ''))) > 0 then 4
+      when position(q.value in lower(coalesce(d.source_title, ''))) > 0 then 5
+      else 6
+    end,
+    length(coalesce(d.translated_title, d.source_title)),
+    d.source_title
+  limit 80;
+$function$;
+
+revoke all on function public.search_public_wiki(text) from public;
+grant execute on function public.search_public_wiki(text) to anon, authenticated;
