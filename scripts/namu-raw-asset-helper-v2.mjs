@@ -351,6 +351,7 @@ async function buildClusterPlan(payload) {
     missingCount: missingFiles.length,
     currentMissingMediaCount: Number(audit?.totals?.currentMissingMediaReferences || 0),
     missingMedia: Array.isArray(audit?.missingMedia) ? audit.missingMedia : [],
+    affectedTitles: Array.isArray(audit?.affectedTitles) ? audit.affectedTitles : [],
     queueRowsCreated: Number(audit?.enqueue?.created || 0),
     queueRowsRequeued: Number(audit?.enqueue?.requeued || 0),
     alreadyQueued: Number(audit?.enqueue?.alreadyQueued || 0),
@@ -468,6 +469,7 @@ async function invalidateSourceRender(payload) {
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify({
         source_namumark_rendered_at: null,
+        content_namumark_rendered_at: null,
         updated_at: new Date().toISOString(),
       }),
     },
