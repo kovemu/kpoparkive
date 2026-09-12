@@ -2,7 +2,7 @@ function kpopDecodeLinkTitle(value) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
-const KPOP_CRAWL_POLICY_VERSION = 3;
+const KPOP_CRAWL_POLICY_VERSION = 4;
 
 const KPOP_SKIP_NAMESPACES = [
   "파일:", "File:", "틀:", "Template:", "분류:", "Category:", "사용자:", "User:",
@@ -19,7 +19,7 @@ const KPOP_SKIP_EXACT_TITLES = new Set([
   "Spotify", "스포티파이", "X", "Twitter", "트위터", "Weverse", "위버스", "네이버", "Naver",
 ]);
 
-const KPOP_MEMBER_SECTION_RE = /(멤버|프로필)/i;
+const KPOP_MEMBER_SECTION_RE = /^(?:멤버|members?)$/i;
 const KPOP_EXPAND_SECTION_RE = /(음반|앨범|디스코그래피|활동|콘텐츠|공연|콘서트|팬미팅|투어|행사|음악\s*방송|직캠|수상|팬덤|응원법|굿즈|유튜브\s*라이브|youtube\s*live|멤버\s*간\s*케미)/i;
 const KPOP_LEAF_RELATION_RE = /(소속사|레이블|기획사|대표(?:이사)?|ceo|프로듀서|작곡|작사|편곡|안무|감독|제작사|유통사|방송사|방송국|시상식|공연장|협업|피처링|feat\.?|featuring)/i;
 const KPOP_SKIP_CONTEXT_RE = /(출생지|출신지|고향|국적|본관|신체|혈액형|별자리|학력|학교|대학교|고등학교|중학교|초등학교|언어)/i;
