@@ -64,6 +64,25 @@ async function fetchDocuments(ids) {
   return rows;
 }
 
+function internalWikiTargets(html) {
+  const targets = new Set();
+  const pattern = /href=["']\/w\/([^"'#?]+)/gi;
+  for (const match of String(html || "").matchAll(pattern)) {
+    try {
+      const target = String(match[1] || "")
+        .split("/")
+        .map((part) => decodeURIComponent(part))
+        .join("/")
+        .normalize("NFKC")
+        .trim();
+      if (target) targets.add(target);
+    } catch {
+      // Malformed links are caught separately by syntax/route checks.
+    }
+  }
+  return [...targets];
+}
+
 function inspectHtml(html) {
   const leaks = [];
   const checks = [
@@ -124,6 +143,12 @@ const scope = (await db(
 const ids = [...new Set(scope.map((row) => row.source_document_id).filter(Boolean))];
 const docs = await fetchDocuments(ids);
 const byId = new Map(docs.map((row) => [row.id, row]));
+const coreTitles = new Set(scope.map((row) => String(row.source_title || "").normalize("NFKC").trim()));
+const publishedCoreTitles = new Set(
+  docs
+    .filter((row) => Number(row.published_revision_no || 0) > 0 && textPresent(row.published_namumark_html))
+    .map((row) => String(row.source_title || "").normalize("NFKC").trim())
+);
 const results = [];
 
 for (const requirement of scope) {
@@ -148,6 +173,12 @@ for (const requirement of scope) {
   if (!textPresent(doc.content_namumark_html)) blockers.push("missing_current_render");
 
   if (textPresent(doc.content_namumark_html)) {
+    const currentTargets = internalWikiTargets(doc.content_namumark_html);
+    const missingCoreTargets = currentTargets.filter((target) => coreTitles.has(target) && !publishedCoreTitles.has(target));
+    const outsideCoreTargets = currentTargets.filter((target) => !coreTitles.has(target));
+    if (missingCoreTargets.length > 0) blockers.push("core_links_unpublished:" + missingCoreTargets.length);
+    if (outsideCoreTargets.length > 0) warnings.push("outside_core_links:" + outsideCoreTargets.length);
+
     const meta = doc.content_namumark_meta;
     if (!meta || typeof meta !== "object") blockers.push("missing_render_meta");
     else {
@@ -206,6 +237,12 @@ const summary = {
   canonicalRaw: results.filter((row) => !row.blockers.includes("missing_canonical_raw")).length,
   englishRevision: results.filter((row) => !row.blockers.includes("missing_english_revision")).length,
   currentRender: results.filter((row) => !row.blockers.includes("missing_current_render")).length,
+  coreLinkFailures: results.filter((row) =>
+    row.blockers.some((value) => value.startsWith("core_links_unpublished:"))
+  ).length,
+  outsideCoreLinkDocs: results.filter((row) =>
+    row.warnings.some((value) => value.startsWith("outside_core_links:"))
+  ).length,
   integrationFailures: results.filter((row) =>
     row.blockers.some((value) => value === "public_route_failed" || value === "unpublished_route_not_404")
   ).length,
