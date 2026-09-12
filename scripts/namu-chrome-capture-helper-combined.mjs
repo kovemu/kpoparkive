@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_CAPTURE_PORT || 43117) || 43117;
@@ -10,6 +12,8 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;
 const MAX_RAW_SOURCE_BYTES = 4 * 1024 * 1024;
 const DOCUMENT_CAPTURE_VERSION = "chrome-rendered-artifact-v3";
+const BROWSER_ARTIFACT_BUCKET = String(process.env.KPOPARKIVE_BROWSER_ARTIFACT_BUCKET || "wiki-browser-artifacts").trim();
+const BROWSER_ARTIFACT_STORAGE_VERSION = "browser-artifact-storage-v1";
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -55,6 +59,39 @@ async function db(pathname, init = {}) {
   if (!response.ok) throw new Error(`Supabase ${response.status}: ${await response.text()}`);
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+
+function storageObjectPath(pathname) {
+  return String(pathname || "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+async function uploadBrowserArtifact(storagePath, bytes) {
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(BROWSER_ARTIFACT_BUCKET)}/${storageObjectPath(storagePath)}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/gzip",
+        "Cache-Control": "31536000, immutable",
+        "x-upsert": "true",
+      },
+      body: bytes,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`browser artifact upload ${response.status}: ${await response.text()}`);
+  }
+}
+
+function browserArtifactStoragePath(docId, kind, hash) {
+  return `browser-artifacts/${docId}/${hash}.${kind}.gz`;
 }
 
 function json(res, status, body) {
@@ -171,8 +208,28 @@ async function saveRenderedDocument(payload) {
   const doc = await ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks });
 
   const capturedAt = new Date().toISOString();
-  const articleBytes = Buffer.byteLength(articleHtml, "utf8");
-  const styleBytes = Buffer.byteLength(styleCss, "utf8");
+  const articleBuffer = Buffer.from(articleHtml, "utf8");
+  const styleBuffer = Buffer.from(styleCss, "utf8");
+  const articleBytes = articleBuffer.length;
+  const styleBytes = styleBuffer.length;
+  const articleHash = crypto.createHash("sha256").update(articleBuffer).digest("hex");
+  const styleHash = styleBytes
+    ? crypto.createHash("sha256").update(styleBuffer).digest("hex")
+    : null;
+  const articleGzip = gzipSync(articleBuffer, { level: 6 });
+  const styleGzip = styleBytes ? gzipSync(styleBuffer, { level: 6 }) : null;
+  const articleStoragePath = browserArtifactStoragePath(doc.id, "html", articleHash);
+  const styleStoragePath = styleHash
+    ? browserArtifactStoragePath(doc.id, "css", styleHash)
+    : null;
+
+  await Promise.all([
+    uploadBrowserArtifact(articleStoragePath, articleGzip),
+    styleGzip && styleStoragePath
+      ? uploadBrowserArtifact(styleStoragePath, styleGzip)
+      : Promise.resolve(),
+  ]);
+
   const meta = {
     ...(payload?.meta && typeof payload.meta === "object" ? payload.meta : {}),
     page_url: pageUrl,
@@ -183,8 +240,21 @@ async function saveRenderedDocument(payload) {
     internalLinkCount: internalLinks.length,
     captured_by: "normal-chrome-extension",
     presentation_mode: "final-dom-plus-computed-layout",
+    artifact_storage: {
+      version: BROWSER_ARTIFACT_STORAGE_VERSION,
+      bucket: BROWSER_ARTIFACT_BUCKET,
+      encoding: "gzip",
+      article_path: articleStoragePath,
+      article_sha256: articleHash,
+      article_stored_bytes: articleGzip.length,
+      style_path: styleStoragePath,
+      style_sha256: styleHash,
+      style_stored_bytes: styleGzip?.length || 0,
+    },
   };
 
+  // Keep the hot source_documents row lightweight. Full Chrome artifacts live
+  // in Storage; the DB row only carries graph/meta pointers and timestamps.
   await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
@@ -192,8 +262,8 @@ async function saveRenderedDocument(payload) {
       source_url: pageUrl,
       crawl_depth: crawlDepth,
       discovered_links: internalLinks,
-      source_browser_article_html: articleHtml,
-      source_browser_style_css: styleCss || null,
+      source_browser_article_html: null,
+      source_browser_style_css: null,
       source_browser_capture_meta: meta,
       source_browser_capture_version: captureVersion,
       source_browser_captured_at: capturedAt,
@@ -202,7 +272,10 @@ async function saveRenderedDocument(payload) {
   });
 
   stats.documentsSaved += 1;
-  console.log(`BROWSER ARTIFACT SAVED ${sourceTitle} -> HTML ${(articleBytes / 1024).toFixed(1)} KB + CSS ${(styleBytes / 1024).toFixed(1)} KB + ${internalLinks.length} links`);
+  console.log(
+    `BROWSER ARTIFACT SAVED ${sourceTitle} -> Storage HTML ${(articleBytes / 1024).toFixed(1)} KB -> ${(articleGzip.length / 1024).toFixed(1)} KB gzip` +
+    ` + CSS ${(styleBytes / 1024).toFixed(1)} KB -> ${((styleGzip?.length || 0) / 1024).toFixed(1)} KB gzip + ${internalLinks.length} links`
+  );
   return {
     ok: true,
     status: "saved",
