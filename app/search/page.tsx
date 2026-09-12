@@ -31,6 +31,21 @@ function hasHangul(value: string) {
 function englishDisplayTitle(row: SearchRow) {
   const title = String(row.translated_title || "").normalize("NFKC").trim();
   if (!title || hasHangul(title)) return "";
+
+  const root = String(row.root_title || "").normalize("NFKC").trim();
+  const isTopLevelRelatedDocument =
+    Boolean(root) &&
+    root !== row.source_title &&
+    !row.source_title.includes("/") &&
+    normalizeSearchKey(title) !== normalizeSearchKey(root);
+
+  if (
+    isTopLevelRelatedDocument &&
+    !normalizeSearchKey(title).includes(normalizeSearchKey(root))
+  ) {
+    return `${title} (${root})`;
+  }
+
   return title;
 }
 
@@ -51,6 +66,7 @@ function stripNamuMarkup(value: string) {
     .replace(/'''|''/g, "")
     .replace(/\[\*[^\]]*\]/g, " ")
     .replace(/[#*]+/g, " ")
+    .replace(/[가-힣]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -99,7 +115,11 @@ async function searchDocuments(query: string): Promise<SearchRow[]> {
     if (!response.ok) return [];
     const rows = await response.json() as SearchRow[];
     return rows
-      .filter((row) => Boolean(englishDisplayTitle(row)))
+      .filter((row) =>
+        Boolean(englishDisplayTitle(row)) &&
+        row.content_language === "en" &&
+        Boolean(row.content_wikitext)
+      )
       .sort((a, b) => {
         const rankDiff = searchRank(a, query) - searchRank(b, query);
         if (rankDiff) return rankDiff;
