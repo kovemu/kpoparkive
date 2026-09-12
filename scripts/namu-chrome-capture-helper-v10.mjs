@@ -234,7 +234,7 @@ v8 = mustReplace(
   "public crawl policy state",
 );
 
-const oldEnqueueLinks = String.raw\`function kpopEnqueueLinks(links, depth) {
+const oldEnqueueLinks = String.raw`function kpopEnqueueLinks(links, depth) {
   if (depth > kpopCloneState.maxDepth) return 0;
   const seen = new Set(kpopCloneState.seenUrls);
   let added = 0;
@@ -248,8 +248,8 @@ const oldEnqueueLinks = String.raw\`function kpopEnqueueLinks(links, depth) {
     added += 1;
   }
   return added;
-}\`;
-const newEnqueueLinks = String.raw\`function kpopFallbackCrawlMode(link) {
+}`;
+const newEnqueueLinks = String.raw`function kpopFallbackCrawlMode(link) {
   const explicit = String(link?.crawlMode || "").toLowerCase();
   if (["expand", "leaf", "skip"].includes(explicit)) return explicit;
   const title = String(link?.title || "").normalize("NFKC").trim();
@@ -329,7 +329,7 @@ function kpopEnqueueLinks(links, depth) {
   }
   kpopSortCloneQueue();
   return added;
-}\`;
+}`;
 v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue policy");
 
 v8 = mustReplace(
