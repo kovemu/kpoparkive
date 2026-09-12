@@ -325,25 +325,39 @@ async function pollRawQueueStatus(show = true) {
 
 function formatRawAssetJob(job) {
   if (!job || !String(job.id || "").startsWith("raw-assets")) return "Raw asset resolver is idle.";
+  const readiness = job.renderReadiness || null;
+  const readyTotal = Number(readiness?.sourceRenderReady || 0) + Number(readiness?.englishRenderReady || 0);
   const lines = [
     `Raw assets · ${job.rootTitle || "—"}`,
     `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
-    ...(job.cluster ? [`Core documents: ${job.coreDocuments || 0} · depth ≤ ${job.maxDepth ?? 1}`] : []),
-    `Unique files required: ${job.required || 0}`,
-    `Missing at start: ${job.planned || 0}`,
+    ...(job.cluster ? [
+      job.currentRenderOnly
+        ? `Core documents: ${job.coreDocuments || 0} · exact cluster depth = ${job.clusterDepth ?? 1} · CURRENT RENDER ONLY`
+        : `Core documents: ${job.coreDocuments || 0} · depth ≤ ${job.maxDepth ?? 1}`
+    ] : []),
+    ...(readiness ? [
+      `Render readiness: source ${readiness.sourceRenderReady || 0}/${job.coreDocuments || 0} · English ${readiness.englishRenderReady || 0}/${job.coreDocuments || 0}`
+    ] : []),
+    `Current-render unique missing files: ${job.required || 0}`,
+    `Capture required after global reuse: ${job.planned || 0}`,
+    `Current-render missing media refs: ${job.currentMissingMediaCount || 0}`,
     `Processed: ${job.processed || 0}/${job.planned || 0}`,
     `Resolved: ${job.resolved || 0}`,
     `Failed: ${job.failed || 0}`,
     `Remaining after verification: ${job.remaining == null ? "—" : job.remaining}`,
   ];
   if (job.current) lines.push(`Current: ${job.current}`);
-  if (job.running) lines.push("", "File pages are opened in background. If NamuWiki verification blocks a file, that tab will be brought forward.");
+  if (job.currentRenderOnly && readiness && readyTotal === 0) {
+    lines.push("", "No current The Tree render exists yet. Nothing was enqueued; unrelated unresolved rows were ignored.");
+  } else if (job.running) {
+    lines.push("", "Only current-render missing files are opened. NamuWiki verification may bring the blocked file tab forward.");
+  }
   if (Array.isArray(job.errors) && job.errors.length) {
     lines.push("", "Recent errors:");
     for (const error of job.errors.slice(-5)) lines.push(`- ${error}`);
   }
-  if (job.done && !job.failed && Number(job.remaining || 0) === 0) {
-    lines.push("", "All renderer-required assets are storage-backed. Re-run the The Tree renderer to refresh missing-files metadata/HTML.");
+  if (job.done && readyTotal > 0 && !job.failed && Number(job.remaining || 0) === 0) {
+    lines.push("", "All current-render file gaps are storage-backed. Re-run the The Tree renderer to refresh missing-files metadata/HTML.");
   }
   return lines.join("\n");
 }
@@ -644,16 +658,25 @@ rawButton.addEventListener("click", async () => {
 
 assetsButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
+  const expectedCoreDocuments = rootTitle === "방탄소년단" ? 33 : null;
   await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
   assetsButton.disabled = true;
   setStatus(
-    `Planning core-cluster assets for ${rootTitle}...\n` +
-    "All canonical RAW docs at depth ≤ 1 are audited together. Global storage-backed files are reused; only unique missing files are opened in this Chrome session."
+    `Planning CURRENT-RENDER assets for ${rootTitle}...\n` +
+    "Only exact cluster depth 1 documents are in scope. DB-wide unresolved rows and files absent from current source/English render missingFiles are ignored."
   );
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-start-raw-asset-resolver",
-      options: { rootTitle, sourceTitle: rootTitle, cluster: true, maxDepth: 1 },
+      options: {
+        rootTitle,
+        sourceTitle: rootTitle,
+        cluster: true,
+        maxDepth: 1,
+        clusterDepth: 1,
+        currentRenderOnly: true,
+        expectedCoreDocuments,
+      },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start raw asset resolver.");
     setStatus(formatRawAssetJob(response.job), "ok");
