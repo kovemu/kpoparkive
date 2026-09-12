@@ -24,7 +24,7 @@ const ACTIVE_SCOPE_POLICY_VERSION = 4;
 
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
-  "smart-core": { depth: 2, maxDocs: 40, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
+  "smart-core": { depth: 2, maxDocs: 80, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
   archive: { depth: 3, maxDocs: 150, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
 };
 
@@ -43,7 +43,7 @@ function applyCrawlProfile(name, { persist = true } = {}) {
     chrome.storage.local.set({
       kpoparkiveCrawlProfile: profileInput.value,
       kpoparkiveCloneDepth: Number(depthInput.value || 2),
-      kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 40),
+      kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 80),
       kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
       kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
       kpoparkiveRefreshExisting: Boolean(refreshExistingInput.checked),
@@ -56,7 +56,7 @@ function markCustomProfile() {
   chrome.storage.local.set({
     kpoparkiveCrawlProfile: "custom",
     kpoparkiveCloneDepth: Number(depthInput.value || 2),
-    kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 40),
+    kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 80),
     kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
     kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
     kpoparkiveRefreshExisting: Boolean(refreshExistingInput.checked),
@@ -366,7 +366,7 @@ chrome.storage.local.get([
     } else {
     profileInput.value = "custom";
     depthInput.value = String(stored.kpoparkiveCloneDepth ?? 2);
-    maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs ?? 40);
+    maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs ?? 80);
     crawlOrderInput.value = stored.kpoparkiveCrawlOrder === "toc" ? "toc" : "smart";
     includeLeafInput.checked = stored.kpoparkiveIncludeLeaf !== false;
       refreshExistingInput.checked = Boolean(stored.kpoparkiveRefreshExisting);
@@ -484,7 +484,7 @@ cloneButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   const crawlProfile = profileInput.value || "smart-core";
   const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 2) || 0));
-  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 40) || 40));
+  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 80) || 40));
   const crawlOrder = crawlOrderInput.value === "toc" ? "toc" : "smart";
   const includeLeaf = Boolean(includeLeafInput.checked);
   const refreshExisting = Boolean(refreshExistingInput.checked);
