@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import { notFound } from "next/navigation";
 import NamuBrowserArtifactRenderer, { type BrowserArtifactAssetMap } from "../../../../components/wiki/NamuBrowserArtifactRenderer";
 import NamuArtifactAdCleaner from "../../../../components/wiki/NamuArtifactAdCleaner";
@@ -6,6 +7,8 @@ import { buildNamuResolvedAssetMap } from "../../../../lib/namuStoredAssets";
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").trim().replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BUCKET = "wiki-media";
+
+export const runtime = "nodejs";
 
 async function db<T>(path: string): Promise<T> {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
@@ -42,6 +45,42 @@ type CaptureRow = {
   captured_at: string | null;
   metadata: Record<string, unknown> | null;
 };
+
+
+function privateStorageObjectUrl(bucket: string, storagePath: string) {
+  const encodedPath = storagePath
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${encodedPath}`;
+}
+
+async function loadBrowserArtifact(
+  meta: Record<string, unknown> | null,
+  kind: "article" | "style",
+) {
+  const storage = (meta?.artifact_storage || {}) as Record<string, unknown>;
+  const bucket = String(storage.bucket || "").trim();
+  const storagePath = String(
+    kind === "style" ? storage.style_path || "" : storage.article_path || "",
+  ).trim();
+  if (!bucket || !storagePath || !SERVICE_ROLE_KEY) return "";
+
+  const response = await fetch(privateStorageObjectUrl(bucket, storagePath), {
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Browser artifact download failed: ${response.status} ${await response.text()}`);
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return String(storage.encoding || "") === "gzip"
+    ? gunzipSync(bytes).toString("utf8")
+    : bytes.toString("utf8");
+}
 
 function publicStorageUrl(storagePath: string) {
   return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath.replace(/^\/+/, "")}`;
@@ -102,9 +141,17 @@ export default async function NamuBrowserPreviewPage({ params }: { params: Promi
   ]);
 
   const assets = browserAssetMap(assetRows, captureRows);
-  const browserHtml = source.source_browser_article_html?.trim() || "";
-  const styleCss = source.source_browser_style_css?.trim() || "";
   const meta = source.source_browser_capture_meta || {};
+  const [storedHtml, storedCss] = await Promise.all([
+    source.source_browser_article_html?.trim()
+      ? Promise.resolve(source.source_browser_article_html.trim())
+      : loadBrowserArtifact(meta, "article"),
+    source.source_browser_style_css?.trim()
+      ? Promise.resolve(source.source_browser_style_css.trim())
+      : loadBrowserArtifact(meta, "style"),
+  ]);
+  const browserHtml = storedHtml.trim();
+  const styleCss = storedCss.trim();
   const capturedWidth = Number(meta.renderedWidth || 0) || null;
 
   return (
