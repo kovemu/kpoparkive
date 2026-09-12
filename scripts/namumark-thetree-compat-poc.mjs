@@ -4,6 +4,8 @@
 // renderer input and asks namumark-thetree-poc.mjs to patch the locally cloned
 // The Tree cache at runtime. No modified The Tree source is stored in this repo.
 
+import crypto from "node:crypto";
+
 process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSET || "modern-namu-v2";
 
 const originalFetch = globalThis.fetch.bind(globalThis);
@@ -455,6 +457,9 @@ globalThis.fetch = async (input, init = undefined) => {
 
     const transformed = rows.map((row) => ({
       ...row,
+      __kpopCanonicalRevision: typeof row?.source_wikitext === "string"
+        ? `sha256:${crypto.createHash("sha256").update(row.source_wikitext).digest("hex")}`
+        : null,
       source_wikitext: typeof row?.source_wikitext === "string"
         ? applyCompatibility(row.source_wikitext, row.source_title || "", {
           expandMissingYouTubeIconTemplate: !hasYouTubeIconTemplate,
