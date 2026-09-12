@@ -337,7 +337,8 @@ chrome.storage.local.get([
   "kpoparkiveIncludeLeaf",
   "kpoparkiveRefreshExisting",
 ]).then(async (stored) => {
-  if (stored.kpoparkiveRootTitle) rootInput.value = stored.kpoparkiveRootTitle;
+  const savedRoot = String(stored.kpoparkiveRootTitle || "").normalize("NFKC").trim();
+  if (savedRoot) rootInput.value = savedRoot;
 
   const savedProfile = String(stored.kpoparkiveCrawlProfile || "smart-core");
   if (CRAWL_PROFILES[savedProfile]) {
@@ -350,7 +351,10 @@ chrome.storage.local.get([
     includeLeafInput.checked = stored.kpoparkiveIncludeLeaf !== false;
     refreshExistingInput.checked = Boolean(stored.kpoparkiveRefreshExisting);
   }
-  await syncRootFromActiveTab();
+
+  // Keep the team/root import scope stable while navigating member/subpages.
+  // Only adopt the active NamuWiki page when no root has been saved yet.
+  if (!savedRoot) await syncRootFromActiveTab();
 });
 
 rootInput.addEventListener("change", () => {
