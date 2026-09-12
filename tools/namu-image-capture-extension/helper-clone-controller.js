@@ -12,6 +12,52 @@ let kpopRawVerification = {
   since: 0,
 };
 
+const KPOP_RAW_QUEUE_STORAGE_KEY = "kpoparkiveRawQueueState";
+let kpopRawQueueDriving = false;
+let kpopRawQueueState = {
+  id: "",
+  rootTitle: "",
+  status: "idle",
+  running: false,
+  paused: false,
+  current: "",
+  initialNeeds: 0,
+  completed: 0,
+  remaining: null,
+  startedAt: null,
+  updatedAt: null,
+  finishedAt: null,
+  lastError: "",
+};
+
+function kpopPublicRawQueueState() {
+  return {
+    ...kpopRawQueueState,
+    verification: { ...kpopRawVerification },
+  };
+}
+
+async function kpopSaveRawQueueState() {
+  kpopRawQueueState.updatedAt = new Date().toISOString();
+  await chrome.storage.local.set({
+    [KPOP_RAW_QUEUE_STORAGE_KEY]: kpopRawQueueState,
+  });
+}
+
+async function kpopRestoreRawQueueState() {
+  try {
+    const stored = await chrome.storage.local.get([KPOP_RAW_QUEUE_STORAGE_KEY]);
+    const value = stored?.[KPOP_RAW_QUEUE_STORAGE_KEY];
+    if (value && typeof value === "object") {
+      kpopRawQueueState = {
+        ...kpopRawQueueState,
+        ...value,
+      };
+    }
+  } catch {}
+  return kpopPublicRawQueueState();
+}
+
 async function kpopShowVerification(tab, sourceTitle) {
   kpopRawVerification = {
     active: true,
@@ -976,6 +1022,178 @@ async function kpopCaptureNextRequiredRaw(options = {}) {
   };
 }
 
+async function kpopDriveRawQueue() {
+  if (kpopRawQueueDriving || !kpopRawQueueState.running) return;
+  kpopRawQueueDriving = true;
+
+  try {
+    while (kpopRawQueueState.running) {
+      await kpopRestoreRawTabState();
+      const rootTitle = String(kpopRawQueueState.rootTitle || "").normalize("NFKC").trim();
+      if (!rootTitle) throw new Error("RAW queue rootTitle is missing.");
+
+      const rawNeeds = await kpopRawNeedsStatus({ rootTitle });
+      const remaining = Number(rawNeeds?.counts?.needs_raw || 0);
+      const next = rawNeeds?.next || null;
+
+      kpopRawQueueState.remaining = remaining;
+      if (!next?.source_title || remaining <= 0) {
+        kpopRawQueueState.running = false;
+        kpopRawQueueState.paused = false;
+        kpopRawQueueState.current = "";
+        kpopRawQueueState.status = "done";
+        kpopRawQueueState.finishedAt = new Date().toISOString();
+        kpopRawQueueState.lastError = "";
+        await kpopSaveRawQueueState();
+        try {
+          await chrome.action.setBadgeText({ text: "" });
+          await chrome.action.setTitle({ title: "Kpoparkive Namu Capture" });
+        } catch {}
+        break;
+      }
+
+      const sourceTitle = String(next.source_title || "").normalize("NFKC").trim();
+      kpopRawQueueState.current = sourceTitle;
+      kpopRawQueueState.paused = Boolean(kpopRawVerification.active);
+      kpopRawQueueState.status = kpopRawVerification.active ? "paused" : "running";
+      await kpopSaveRawQueueState();
+
+      try {
+        await kpopCaptureRawBundle({ rootTitle, sourceTitle });
+
+        kpopRawQueueState.completed = Number(kpopRawQueueState.completed || 0) + 1;
+        kpopRawQueueState.current = "";
+        kpopRawQueueState.paused = false;
+        kpopRawQueueState.status = "running";
+        kpopRawQueueState.lastError = "";
+
+        const refreshed = await kpopRawNeedsStatus({ rootTitle });
+        kpopRawQueueState.remaining = Number(refreshed?.counts?.needs_raw || 0);
+        await kpopSaveRawQueueState();
+
+        try {
+          await chrome.action.setBadgeBackgroundColor({ color: "#0f766e" });
+          await chrome.action.setBadgeText({ text: "RAW" });
+          await chrome.action.setTitle({
+            title: `Kpoparkive RAW queue · ${kpopRawQueueState.remaining} remaining`,
+          });
+        } catch {}
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (error) {
+        const message = error?.message || String(error);
+        await kpopRestoreRawTabState();
+
+        if (kpopRawVerification.active) {
+          // Keep the queue alive on the same document/tab. A completed human
+          // verification is picked up by the next capture attempt; no extra
+          // operator click is required.
+          kpopRawQueueState.paused = true;
+          kpopRawQueueState.status = "paused";
+          kpopRawQueueState.lastError = "";
+          await kpopSaveRawQueueState();
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+
+        kpopRawQueueState.running = false;
+        kpopRawQueueState.paused = false;
+        kpopRawQueueState.status = "error";
+        kpopRawQueueState.lastError = message;
+        kpopRawQueueState.finishedAt = new Date().toISOString();
+        await kpopSaveRawQueueState();
+        try {
+          await chrome.action.setBadgeBackgroundColor({ color: "#b91c1c" });
+          await chrome.action.setBadgeText({ text: "ERR" });
+          await chrome.action.setTitle({ title: `Kpoparkive RAW queue stopped: ${message}` });
+        } catch {}
+        break;
+      }
+    }
+  } catch (error) {
+    kpopRawQueueState.running = false;
+    kpopRawQueueState.paused = false;
+    kpopRawQueueState.status = "error";
+    kpopRawQueueState.lastError = error?.message || String(error);
+    kpopRawQueueState.finishedAt = new Date().toISOString();
+    try { await kpopSaveRawQueueState(); } catch {}
+  } finally {
+    kpopRawQueueDriving = false;
+  }
+}
+
+async function kpopStartRawQueue(options = {}) {
+  const rootTitle = String(options?.rootTitle || "").normalize("NFKC").trim();
+  if (!rootTitle) throw new Error("rootTitle is required");
+
+  await kpopRestoreRawQueueState();
+  if (kpopRawQueueState.running) {
+    if (kpopRawQueueState.rootTitle !== rootTitle) {
+      throw new Error(`RAW queue is already running for ${kpopRawQueueState.rootTitle}.`);
+    }
+    void kpopDriveRawQueue();
+    return kpopPublicRawQueueState();
+  }
+
+  const plan = await kpopPlanRawNeeds({ rootTitle });
+  const needs = Number(plan?.counts?.needs_raw || 0);
+  const now = new Date().toISOString();
+
+  kpopRawQueueState = {
+    id: crypto.randomUUID(),
+    rootTitle,
+    status: needs > 0 ? "running" : "done",
+    running: needs > 0,
+    paused: false,
+    current: "",
+    initialNeeds: needs,
+    completed: 0,
+    remaining: needs,
+    startedAt: now,
+    updatedAt: now,
+    finishedAt: needs > 0 ? null : now,
+    lastError: "",
+  };
+  await kpopSaveRawQueueState();
+
+  if (needs > 0) {
+    try {
+      await chrome.action.setBadgeBackgroundColor({ color: "#0f766e" });
+      await chrome.action.setBadgeText({ text: "RAW" });
+      await chrome.action.setTitle({ title: `Kpoparkive RAW queue · ${needs} remaining` });
+    } catch {}
+    void kpopDriveRawQueue();
+  }
+
+  return kpopPublicRawQueueState();
+}
+
+async function kpopRawQueueStatus() {
+  await kpopRestoreRawQueueState();
+  if (kpopRawQueueState.running && !kpopRawQueueDriving) void kpopDriveRawQueue();
+  return kpopPublicRawQueueState();
+}
+
+async function kpopCancelRawQueue() {
+  await kpopRestoreRawQueueState();
+  kpopRawQueueState.running = false;
+  kpopRawQueueState.paused = false;
+  kpopRawQueueState.status = "cancelled";
+  kpopRawQueueState.current = "";
+  kpopRawQueueState.finishedAt = new Date().toISOString();
+  await kpopSaveRawQueueState();
+  try {
+    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setTitle({ title: "Kpoparkive Namu Capture" });
+  } catch {}
+  return kpopPublicRawQueueState();
+}
+
+async function kpopRecoverRawQueue() {
+  await kpopRestoreRawQueueState();
+  if (kpopRawQueueState.running) void kpopDriveRawQueue();
+}
+
 async function kpopRecoverRunner() {
   try {
     const status = await kpopControllerJson("/clone/status");
@@ -1075,6 +1293,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "kpoparkive-start-raw-queue") {
+    kpopStartRawQueue(message.options || {})
+      .then((job) => sendResponse({ ok: true, job }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-raw-queue-status") {
+    kpopRawQueueStatus()
+      .then((job) => sendResponse({ ok: true, job }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-cancel-raw-queue") {
+    kpopCancelRawQueue()
+      .then((job) => sendResponse({ ok: true, job }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
   if (message?.type === "kpoparkive-capture-edit-raw-source") {
     kpopCaptureEditRawSource(message.options || {})
       .then((result) => sendResponse({ ok: true, ...result }))
@@ -1083,6 +1322,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-chrome.runtime.onStartup.addListener(() => { kpopRecoverRunner(); });
-chrome.runtime.onInstalled.addListener(() => { kpopRecoverRunner(); });
-setTimeout(() => { kpopRecoverRunner(); }, 500);
+chrome.runtime.onStartup.addListener(() => {
+  kpopRecoverRunner();
+  kpopRecoverRawQueue();
+});
+chrome.runtime.onInstalled.addListener(() => {
+  kpopRecoverRunner();
+  kpopRecoverRawQueue();
+});
+setTimeout(() => {
+  kpopRecoverRunner();
+  kpopRecoverRawQueue();
+}, 500);
