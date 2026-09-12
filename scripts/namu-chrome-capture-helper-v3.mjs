@@ -214,7 +214,7 @@ async function loadQueue(rootTitle, sourceTitle = "", force = false) {
       `source_asset_queue?root_title=eq.${encodeURIComponent(root)}&asset_type=eq.image`;
     if (source) query += `&source_title=eq.${encodeURIComponent(source)}`;
     query +=
-      `&select=id,root_title,source_title,source_ref,label,status,metadata` +
+      `&select=id,root_title,source_title,source_ref,label,status,resolved_url,storage_path,metadata` +
       `&order=id.asc&limit=1000&offset=${offset}`;
 
     const batch = await db(query);
@@ -395,6 +395,45 @@ async function patchResolved(rows, stored, meta, contentType, width, height, byt
   })));
 }
 
+function reusableResolvedRow(rows) {
+  return (rows || []).find((row) =>
+    String(row?.status || "") === "resolved" &&
+    String(row?.storage_path || "").trim() &&
+    String(row?.resolved_url || "").trim()
+  ) || null;
+}
+
+async function attachUnresolvedRowsToExisting(rows, reusable) {
+  const pending = (rows || []).filter((row) =>
+    row?.id &&
+    !(
+      String(row?.status || "") === "resolved" &&
+      String(row?.storage_path || "").trim() &&
+      String(row?.resolved_url || "").trim()
+    )
+  );
+  if (!pending.length || !reusable) return 0;
+
+  const updatedAt = new Date().toISOString();
+  await Promise.all(pending.map((row) => db(`source_asset_queue?id=eq.${row.id}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      status: "resolved",
+      resolved_url: reusable.resolved_url,
+      storage_path: reusable.storage_path,
+      confidence: 1,
+      metadata: {
+        ...(row.metadata || {}),
+        reused_existing_asset: true,
+        reused_from_queue_id: reusable.id,
+      },
+      updated_at: updatedAt,
+    }),
+  })));
+  return pending.length;
+}
+
 function decodeMeta(value) {
   if (!value) throw new Error("missing X-Kpoparkive-Meta header");
   return JSON.parse(Buffer.from(value, "base64").toString("utf8"));
@@ -414,7 +453,7 @@ function readBody(req) {
   });
 }
 
-const stats = { received: 0, resolved: 0, inferred: 0, noQueue: 0, staged: 0, errors: 0 };
+const stats = { received: 0, resolved: 0, reused: 0, inferred: 0, noQueue: 0, staged: 0, errors: 0 };
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
@@ -503,6 +542,34 @@ const server = http.createServer(async (req, res) => {
         inferredFileName = representativeLabel(rows, inferred.key);
         matchHint = inferred.hint;
         stats.inferred += 1;
+      }
+    }
+
+    if (rows.length && !Boolean(meta.refreshExisting)) {
+      const reusable = reusableResolvedRow(rows);
+      if (reusable) {
+        const linkedRows = await attachUnresolvedRowsToExisting(rows, reusable);
+        stats.reused += 1;
+        console.log(
+          `REUSED ${inferredFileName || meta.fileName} <- ${meta.fileName} [${matchMethod || "existing-resolved"}] -> ${reusable.storage_path}` +
+          (linkedRows ? ` (+${linkedRows} queue rows linked)` : "")
+        );
+        json(res, 200, {
+          ok: true,
+          status: "resolved",
+          reused: true,
+          fileName: inferredFileName || meta.fileName,
+          matchedRows: rows.length,
+          storagePath: reusable.storage_path,
+          resolvedUrl: reusable.resolved_url,
+          bytes: Number(reusable?.metadata?.bytes || 0) || bytes.length,
+          width: Number(reusable?.metadata?.width || 0) || width,
+          height: Number(reusable?.metadata?.height || 0) || height,
+          queueRowsVisible: cache.rows.length,
+          matchMethod: matchMethod || "existing-resolved",
+          confidence: 1,
+        });
+        return;
       }
     }
 
