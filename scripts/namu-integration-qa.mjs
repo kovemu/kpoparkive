@@ -61,7 +61,7 @@ async function fetchDocuments(ids) {
     const filter = "(" + batch.join(",") + ")";
     const path =
       "source_documents?id=in." + enc(filter) +
-      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html,content_namumark_meta,published_namumark_meta,content_namumark_rendered_at";
+      "&select=id,source_title,root_title,source_wikitext,source_namumark_meta,source_namumark_rendered_at,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html,content_namumark_meta,published_namumark_meta,content_namumark_rendered_at";
     rows.push(...await db(path));
   }
   return rows;
@@ -171,6 +171,31 @@ for (const requirement of scope) {
   const warnings = [];
 
   if (!textPresent(doc.source_wikitext)) blockers.push("missing_canonical_raw");
+  if (!doc.source_namumark_rendered_at) blockers.push("missing_source_render");
+  const sourceMeta = doc.source_namumark_meta && typeof doc.source_namumark_meta === "object"
+    ? doc.source_namumark_meta
+    : null;
+  if (!sourceMeta) {
+    blockers.push("missing_source_render_meta");
+  } else {
+    const sourceMissingFiles = metaCount(sourceMeta, "missingFileCount") || metaCount(sourceMeta, "missingFiles");
+    const sourceMissingTemplates = metaCount(sourceMeta, "missingTemplateCount") || metaCount(sourceMeta, "missingTemplates");
+    const sourceMissingYouTube = metaCount(sourceMeta, "missingYouTubeEmbeds");
+    if (sourceMissingFiles > 0) blockers.push("source_missing_files:" + sourceMissingFiles);
+    if (sourceMissingTemplates > 0) blockers.push("source_missing_templates:" + sourceMissingTemplates);
+    if (sourceMissingYouTube > 0) blockers.push("source_missing_youtube:" + sourceMissingYouTube);
+
+    const compatVersion = String(sourceMeta?.compatibility?.version || "");
+    const enginePatchset = String(
+      sourceMeta?.compatibility?.enginePatchset || sourceMeta?.enginePatchset || "",
+    );
+    if (compatVersion !== "modern-namu-compat-v8") {
+      blockers.push("source_stale_compat:" + (compatVersion || "none"));
+    }
+    if (enginePatchset !== "modern-namu-v2") {
+      blockers.push("source_stale_patchset:" + (enginePatchset || "none"));
+    }
+  }
   if (doc.content_language !== "en" || !textPresent(doc.content_wikitext)) blockers.push("missing_english_revision");
   if (doc.translation_status === "failed") blockers.push("translation_failed");
   if (!textPresent(doc.content_namumark_html)) blockers.push("missing_current_render");
@@ -261,6 +286,21 @@ const summary = {
   blocked: results.filter((row) => row.readiness !== "PASS").length,
   published: results.filter((row) => row.published).length,
   canonicalRaw: results.filter((row) => !row.blockers.includes("missing_canonical_raw")).length,
+  sourceRender: results.filter((row) =>
+    !row.blockers.some((value) =>
+      value === "missing_source_render" ||
+      value === "missing_source_render_meta" ||
+      value.startsWith("source_stale_compat:") ||
+      value.startsWith("source_stale_patchset:")
+    )
+  ).length,
+  sourceDependenciesClean: results.filter((row) =>
+    !row.blockers.some((value) =>
+      value.startsWith("source_missing_files:") ||
+      value.startsWith("source_missing_templates:") ||
+      value.startsWith("source_missing_youtube:")
+    )
+  ).length,
   englishRevision: results.filter((row) => !row.blockers.includes("missing_english_revision")).length,
   currentRender: results.filter((row) => !row.blockers.includes("missing_current_render")).length,
   freshRender: results.filter((row) =>
@@ -295,6 +335,8 @@ if (json) {
   console.log(
     "scope=" + summary.scopeCount + (expectedCount == null ? "" : "/" + expectedCount) +
     " raw=" + summary.canonicalRaw + "/" + summary.scopeCount +
+    " source-render=" + summary.sourceRender + "/" + summary.scopeCount +
+    " source-deps=" + summary.sourceDependenciesClean + "/" + summary.scopeCount +
     " english=" + summary.englishRevision + "/" + summary.scopeCount +
     " render=" + summary.currentRender + "/" + summary.scopeCount +
     " fresh=" + summary.freshRender + "/" + summary.scopeCount +
