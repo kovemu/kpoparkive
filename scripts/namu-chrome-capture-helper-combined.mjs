@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v2";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v3";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -481,6 +481,7 @@ function kpopBuildInboundRelationMap(rows) {
         tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
         sourceArea: String(link?.sourceArea || ""),
         sectionTitle: String(link?.sectionTitle || ""),
+        crawlPolicyVersion: Number(link?.crawlPolicyVersion || 0) || 0,
       };
       const existing = map.get(title);
       if (
@@ -520,6 +521,7 @@ function kpopBuildDirectRootRelationMap(rootRow, rows) {
       tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
       sourceArea: String(link?.sourceArea || ""),
       sectionTitle: String(link?.sectionTitle || ""),
+      crawlPolicyVersion: Number(link?.crawlPolicyVersion || 0) || 0,
     };
     const existing = map.get(title);
     if (
@@ -544,18 +546,23 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
   const isRoot = sourceTitle === rootTitle;
   const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
   const directRelation = String(directRoot?.relation || "");
-  const directRelatedSectionLeaf = Boolean(
+  const directPolicyVersion = Number(directRoot?.crawlPolicyVersion || 0) || 0;
+  const isExplicitTocDocument = directRelation === "toc_document";
+  const legacyDirectSectionLeaf = Boolean(
+    directPolicyVersion < 3 &&
     directRelation === "related" &&
     String(directRoot?.crawlMode || "") === "leaf" &&
     String(directRoot?.sourceArea || "") === "section" &&
     Number.isFinite(Number(directRoot?.tocOrder)) &&
     Number(directRoot.tocOrder) <= 20
   );
+
   const inTeamCoreScope = Boolean(
     isRoot ||
     isDirectSubdocument ||
-    ["subdocument", "member", "core_kpop_document"].includes(directRelation) ||
-    directRelatedSectionLeaf
+    isExplicitTocDocument ||
+    directRelation === "member" ||
+    legacyDirectSectionLeaf
   );
 
   if (!inTeamCoreScope) {
