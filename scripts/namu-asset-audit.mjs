@@ -189,6 +189,46 @@ async function dbAll(pathname, pageSize = 1000, maxRows = 20000) {
   throw new Error(`Supabase pagination reached ${maxRows} rows for ${pathname}`);
 }
 
+function storagePublicUrl(storagePath) {
+  const encoded = String(storagePath || "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${SUPABASE_URL}/storage/v1/object/public/wiki-media/${encoded}`;
+}
+
+async function verifyStoragePaths(paths, concurrency = 16) {
+  const unique = [...new Set((paths || []).filter(Boolean))];
+  const existing = new Set();
+  const missing = new Set();
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < unique.length) {
+      const index = cursor++;
+      const storagePath = unique[index];
+      let ok = false;
+      try {
+        const response = await fetch(storagePublicUrl(storagePath), {
+          method: "HEAD",
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        });
+        ok = response.ok;
+      } catch {}
+      (ok ? existing : missing).add(storagePath);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length || 1) }, () => worker()));
+  return { existing, missing };
+}
+
+function rowTouchesRequiredKey(row, requiredKeys) {
+  return queueKeys(row).some((key) => requiredKeys.has(key));
+}
+
 async function enqueueMissing(rootTitle, audit) {
   let created = 0;
   let requeued = 0;
@@ -271,7 +311,30 @@ export async function runAssetAudit({ rootTitle = "RESCENE", maxDepth = 1, enque
       "&select=id,root_title,source_title,file_name,canonical_key,storage_path,content_type,byte_length,captured_at,metadata&order=captured_at.desc",
   );
 
-  const audit = buildAssetAudit(coreDocs, queueRows, stagingRows);
+  // A resolved DB row is not sufficient evidence. Verify only paths that can
+  // satisfy one of the core RAW references, then discard stale metadata whose
+  // Storage object is gone. This keeps the audit bounded while checking the
+  // complete RAW -> queue/staging -> Storage chain.
+  const requiredKeys = new Set(coreDocs.flatMap((doc) => requiredFilesForDocument(doc).map((item) => item.key)));
+  const relevantQueueRows = queueRows.filter((row) => rowTouchesRequiredKey(row, requiredKeys));
+  const relevantStagingRows = stagingRows.filter((row) => {
+    const key = canonicalAssetKey(row?.canonical_key || row?.file_name);
+    return key && requiredKeys.has(key);
+  });
+  const candidatePaths = [
+    ...relevantQueueRows.map(storagePathForQueueRow),
+    ...relevantStagingRows.map((row) => String(row?.storage_path || "").trim()),
+  ].filter(Boolean);
+  const storage = await verifyStoragePaths(candidatePaths);
+  const verifiedQueueRows = relevantQueueRows.filter((row) => {
+    const storagePath = storagePathForQueueRow(row);
+    return !storagePath || storage.existing.has(storagePath);
+  });
+  const verifiedStagingRows = relevantStagingRows.filter((row) =>
+    row?.storage_path && storage.existing.has(String(row.storage_path)),
+  );
+
+  const audit = buildAssetAudit(coreDocs, verifiedQueueRows, verifiedStagingRows);
   const enqueueResult = enqueue ? await enqueueMissing(rootTitle, audit) : null;
   const totals = audit.documents.reduce((acc, row) => {
     acc.required += row.required;
@@ -288,6 +351,8 @@ export async function runAssetAudit({ rootTitle = "RESCENE", maxDepth = 1, enque
       ...totals,
       missingUniqueFiles: audit.missingUnique.length,
       duplicateCanonicalKeys: audit.duplicatePaths.length,
+      verifiedStoragePaths: storage.existing.size,
+      staleStoragePaths: storage.missing.size,
     },
     enqueue: enqueueResult,
     documents: audit.documents,
@@ -297,6 +362,7 @@ export async function runAssetAudit({ rootTitle = "RESCENE", maxDepth = 1, enque
       existingQueueStatuses: [...new Set((item.queueRows || []).map((row) => row.status).filter(Boolean))],
     })),
     duplicateCanonicalKeys: audit.duplicatePaths,
+    staleStoragePaths: [...storage.missing].sort(),
   };
 }
 
