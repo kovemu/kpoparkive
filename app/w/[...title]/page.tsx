@@ -2,6 +2,7 @@ import { parse } from "node-html-parser";
 import { notFound, redirect } from "next/navigation";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
+import { getPublicWikiPage } from "../../../lib/publicWikiRead";
 import { stripNamuOperationalHtml } from "../../../lib/namuOperationalNotices";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import "../wiki.css";
@@ -210,27 +211,52 @@ export default async function RawWikiPage({
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
 
-  let docs = await db<DocRow[]>(
-    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-      `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=1`,
-  );
+  const isLocalDraftPreview = process.env.NODE_ENV !== "production";
+  let source: DocRow | undefined;
+  let publicAssets: AssetRow[] | null = null;
 
-  if (!docs[0]) {
-    const candidates = await db<DocRow[]>(
-      `source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(sourceTitle)}` +
-        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at&limit=5`,
+  if (isLocalDraftPreview) {
+    let docs = await db<DocRow[]>(
+      `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
+        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=1`,
     );
-    const folded = normalizeWikiKey(sourceTitle).toLocaleLowerCase();
-    const match = candidates.find(
-      (row) => normalizeWikiKey(row.source_title).toLocaleLowerCase() === folded,
-    );
-    docs = match ? [match] : [];
+
+    if (!docs[0]) {
+      const candidates = await db<DocRow[]>(
+        `source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(sourceTitle)}` +
+          `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=5`,
+      );
+      const folded = normalizeWikiKey(sourceTitle).toLocaleLowerCase();
+      const match = candidates.find(
+        (row) => normalizeWikiKey(row.source_title).toLocaleLowerCase() === folded,
+      );
+      docs = match ? [match] : [];
+    }
+
+    source = docs[0];
+  } else {
+    const payload = await getPublicWikiPage(sourceTitle);
+    if (!payload?.document) notFound();
+
+    source = {
+      id: payload.document.id,
+      source_title: payload.document.source_title,
+      root_title: payload.document.root_title,
+      source_namumark_html: null,
+      source_namumark_engine: null,
+      source_namumark_rendered_at: null,
+      content_status: "published",
+      content_revision_no: payload.document.published_revision_no,
+      content_namumark_html: null,
+      content_namumark_meta: null,
+      content_namumark_rendered_at: null,
+      published_namumark_html: payload.document.published_namumark_html,
+    };
+    publicAssets = payload.assets;
   }
 
-  const source = docs[0];
-
   if (!source) {
-    if (process.env.NODE_ENV === "production") notFound();
+    if (!isLocalDraftPreview) notFound();
     return (
       <main className="kpoparkiveRawWikiMissing">
         <h1>{sourceTitle}</h1>
@@ -253,8 +279,6 @@ export default async function RawWikiPage({
     source.content_namumark_html.length > 0 &&
     contentRevision > 0 &&
     renderedDraftRevision === contentRevision;
-  const isLocalDraftPreview = process.env.NODE_ENV !== "production";
-
   const publishedContentHtml =
     source.published_namumark_html ||
     (source.content_status === "published" ? source.content_namumark_html : null);
@@ -283,7 +307,7 @@ export default async function RawWikiPage({
   // rows instead of scanning the global asset registry on every page request.
   // This uses source_asset_queue_document_idx and keeps /w pages fast even as
   // the archive grows into thousands of captured files.
-  const resolvedRows = await db<AssetRow[]>(
+  const resolvedRows = publicAssets || await db<AssetRow[]>(
     `source_asset_queue?source_document_id=eq.${encodeURIComponent(source.id)}` +
       `&asset_type=eq.image&status=eq.resolved` +
       `&select=source_ref,label,status,resolved_url,storage_path,metadata&limit=500`,
