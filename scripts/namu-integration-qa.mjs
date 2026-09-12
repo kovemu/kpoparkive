@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { findVisibleKoreanLinkLabels } from "./namu-english-link-localizer.mjs";
+
 const DEFAULT_SUPABASE_URL = "https://hukrrzhltiyirtkxmotj.supabase.co";
 const DEFAULT_BASE_URL = "https://kpoparkive.vercel.app";
 
@@ -193,6 +195,11 @@ for (const requirement of scope) {
 
     const currentHtml = inspectHtml(doc.content_namumark_html);
     if (currentHtml.leaks.length > 0) blockers.push("current_syntax_leak:" + currentHtml.leaks.join("+"));
+
+    const visibleKoreanLinks = findVisibleKoreanLinkLabels(doc.content_namumark_html, { limit: 50 });
+    if (visibleKoreanLinks.length > 0) {
+      blockers.push("visible_korean_links:" + visibleKoreanLinks.length);
+    }
   }
 
   const published =
