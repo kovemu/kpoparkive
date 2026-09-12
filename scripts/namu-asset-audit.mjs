@@ -195,13 +195,19 @@ async function enqueueMissing(rootTitle, audit) {
   let alreadyQueued = 0;
 
   for (const item of audit.missingUnique) {
-    const existing = (item.queueRows || []).find((row) => row?.id);
-    if (existing) {
-      if (existing.status === "unresolved") {
-        alreadyQueued += 1;
-        continue;
-      }
-      await db(`source_asset_queue?id=eq.${encodeURIComponent(existing.id)}`, {
+    const rows = (item.queueRows || []).filter((row) => row?.id);
+    if (rows.some((row) => row.status === "unresolved")) {
+      alreadyQueued += 1;
+      continue;
+    }
+
+    // Never mutate a queue row owned by another root just because the filename
+    // matches. A non-storage external hint from another cluster may still be
+    // useful there. Requeue only a row already owned by this root; otherwise
+    // create one owner row below and let the global filename registry reuse it.
+    const localExisting = rows.find((row) => row.root_title === rootTitle);
+    if (localExisting) {
+      await db(`source_asset_queue?id=eq.${encodeURIComponent(localExisting.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
         body: JSON.stringify({
@@ -209,7 +215,7 @@ async function enqueueMissing(rootTitle, audit) {
           storage_path: null,
           resolved_url: null,
           metadata: {
-            ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+            ...(localExisting.metadata && typeof localExisting.metadata === "object" ? localExisting.metadata : {}),
             origin: "namu-asset-audit",
             filename: item.fileName,
             required_by: item.owners.map((owner) => owner.sourceTitle),
