@@ -14,8 +14,6 @@ export default function robots(): MetadataRoute.Robots {
         "/api/",
         "/edit/",
         "/login",
-        "/search",
-        "/wiki/",
       ],
     },
     sitemap: SITE_URL + "/sitemap.xml",
