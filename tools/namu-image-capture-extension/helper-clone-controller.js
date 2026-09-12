@@ -2,6 +2,9 @@ const KPOP_HELPER_CONTROLLER = "http://127.0.0.1:43117";
 const KPOP_RUNNER_URL = chrome.runtime.getURL("runner.html");
 let kpopRunnerWatch = { processed: -1, since: 0, recovering: false };
 let kpopRawEditTabId = null;
+let kpopRawNavigationSerial = Promise.resolve();
+let kpopRawLastNavigationAt = 0;
+const KPOP_RAW_MIN_NAVIGATION_INTERVAL_MS = 1200;
 let kpopRawVerification = {
   active: false,
   sourceTitle: "",
@@ -113,13 +116,13 @@ async function kpopOpenOrReuseRawEditTab(editUrl, sourceTitle = "") {
 
   const normalizedTitle = String(sourceTitle || "").normalize("NFKC").trim();
 
-  // Human verification owns the current RAW tab. Never navigate it away and
-  // never open another tab while the user is completing verification.
+  // Human verification owns the persistent RAW session tab. Never navigate it
+  // away and never open a second RAW tab while verification is active.
   if (kpopRawVerification.active) {
     const verificationTitle = String(kpopRawVerification.sourceTitle || "").normalize("NFKC").trim();
     if (verificationTitle && normalizedTitle && verificationTitle !== normalizedTitle) {
       throw new Error(
-        `NamuWiki verification is still in progress for ${verificationTitle}. Complete it in the existing tab before capturing ${normalizedTitle}.`
+        `NamuWiki verification is still in progress for ${verificationTitle}. Complete it in the existing RAW session tab before capturing ${normalizedTitle}.`
       );
     }
 
@@ -136,27 +139,69 @@ async function kpopOpenOrReuseRawEditTab(editUrl, sourceTitle = "") {
     }
   }
 
+  let existing = null;
   if (kpopRawEditTabId) {
     try {
-      const existing = await chrome.tabs.get(kpopRawEditTabId);
-      if (existing?.id) {
-        const currentUrl = String(existing.url || "");
-        if (currentUrl !== editUrl) {
-          await chrome.tabs.update(existing.id, { url: editUrl, active: false });
-        }
-        await chrome.storage.local.set({ kpoparkiveRawEditTabId: existing.id });
-        return await chrome.tabs.get(existing.id);
-      }
+      existing = await chrome.tabs.get(kpopRawEditTabId);
     } catch {
       kpopRawEditTabId = null;
+      try { await chrome.storage.local.remove("kpoparkiveRawEditTabId"); } catch {}
     }
   }
 
-  const created = await chrome.tabs.create({ url: editUrl, active: false });
-  if (!created?.id) throw new Error("Could not open the NamuWiki RAW/edit page.");
-  kpopRawEditTabId = created.id;
-  await chrome.storage.local.set({ kpoparkiveRawEditTabId: created.id });
-  return created;
+  if (!existing?.id) {
+    const created = await chrome.tabs.create({ url: editUrl, active: false });
+    if (!created?.id) throw new Error("Could not open the persistent NamuWiki RAW/edit session tab.");
+    kpopRawEditTabId = created.id;
+    kpopRawLastNavigationAt = Date.now();
+    await chrome.storage.local.set({ kpoparkiveRawEditTabId: created.id });
+    return created;
+  }
+
+  kpopRawEditTabId = existing.id;
+  await chrome.storage.local.set({ kpoparkiveRawEditTabId: existing.id });
+
+  const currentUrl = String(existing.url || "");
+  if (currentUrl === editUrl) return existing;
+
+  // Serialize every RAW/edit navigation through one browsing context and pace
+  // page changes slightly. This preserves the same cookies/session/challenge
+  // state and avoids bursts of independent RAW requests that can trigger
+  // repeated NamuWiki verification.
+  const previous = kpopRawNavigationSerial;
+  let release;
+  kpopRawNavigationSerial = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const waitMs = Math.max(
+      0,
+      KPOP_RAW_MIN_NAVIGATION_INTERVAL_MS - (Date.now() - kpopRawLastNavigationAt)
+    );
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+
+    let navigated = false;
+    try {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId: existing.id },
+        world: "MAIN",
+        func: (targetUrl) => {
+          if (location.href === targetUrl) return "same";
+          location.replace(targetUrl);
+          return "replace";
+        },
+        args: [editUrl],
+      });
+      navigated = Boolean(result?.length);
+    } catch {}
+
+    if (!navigated) {
+      await chrome.tabs.update(existing.id, { url: editUrl, active: false });
+    }
+    kpopRawLastNavigationAt = Date.now();
+    return await chrome.tabs.get(existing.id);
+  } finally {
+    release();
+  }
 }
 
 async function kpopCloseRawEditTab() {
@@ -411,6 +456,9 @@ async function kpopStartHelperClone(options = {}) {
       maxDepth,
       maxDocs,
       captureMode,
+      crawlProfile: String(options.crawlProfile || "smart-core"),
+      crawlOrder: String(options.crawlOrder || "smart"),
+      includeLeaf: options.includeLeaf !== false,
       refreshExisting: Boolean(options.refreshExisting),
     }),
   });
