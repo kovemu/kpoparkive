@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.13.8",
-  "description": "Hybrid NamuWiki RAW/DOM clone with verified synthetic templates and exact missing-media recovery.",
+  "version": "0.13.9",
+  "description": "Hybrid NamuWiki RAW/DOM clone with recursive missing-template RAW capture and exact missing-media recovery.",
   "permissions": [
     "activeTab",
     "storage",
