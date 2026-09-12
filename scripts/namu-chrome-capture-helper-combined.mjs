@@ -783,6 +783,21 @@ async function kpopPlanRawRequirements(rootTitle) {
     (row) => String(row?.source_title || "").normalize("NFKC").trim() === title
   ) || null;
   const directRootMap = kpopBuildDirectRootRelationMap(rootRow, docs);
+
+  const rootLinks = Array.isArray(rootRow?.source_browser_capture_meta?.internalLinks)
+    ? rootRow.source_browser_capture_meta.internalLinks
+    : [];
+  const observedPolicyVersion = rootLinks.reduce(
+    (max, link) => Math.max(max, Number(link?.crawlPolicyVersion || 0) || 0),
+    0
+  );
+  if (observedPolicyVersion < 3) {
+    throw new Error(
+      "TOC-first scope requires a fresh Smart /w/ DOM Harvest (crawl policy v3). " +
+      "Run DOM Harvest once, then Plan RAW Needs again."
+    );
+  }
+
   const detectedAt = new Date().toISOString();
   const payload = docs.map((row) => {
     const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
