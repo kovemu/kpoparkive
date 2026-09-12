@@ -44,7 +44,7 @@
       <label for="profile">Crawl profile</label>
       <select id="profile">
         <option value="essential">Essential · 1 depth / 20 docs</option>
-        <option value="smart-core" selected>Smart Core · Recursive TOC / 80 docs</option>
+        <option value="smart-core" selected>Smart Core · Root TOC + Members / 80 docs</option>
         <option value="archive">Archive · 3 depth / 150 docs</option>
         <option value="custom">Custom</option>
       </select>
@@ -55,8 +55,8 @@
         <label for="depth">Crawl depth</label>
         <select id="depth">
           <option value="0">0 · root only</option>
-          <option value="1">1 · direct links</option>
-          <option value="2" selected>2 · links of links</option>
+          <option value="1" selected>1 · root TOC + members</option>
+          <option value="2">2 · legacy / custom</option>
           <option value="3">3 · broad crawl</option>
         </select>
       </div>
@@ -77,7 +77,7 @@
     <label class="check"><input id="includeLeaf" type="checkbox" /> Include non-TOC related pages (legacy)</label>
     <label class="check"><input id="refreshExisting" type="checkbox" /> Refresh existing captures</label>
 
-    <p style="margin-top:8px">Smart Core recursively follows every /w/ link shown directly in each captured document's Contents. TOC links ignore the legacy depth guard; the 80-document budget is the safety cap. Ordinary body links are skipped by default.</p>
+    <p style="margin-top:8px">Smart Core collects only the root document, its direct Contents-linked documents, and members. First-hop documents do not recurse into their own TOC links. The 80-document budget is only a safety cap.</p>
     <button id="clone">Smart /w/ DOM Harvest</button>
     <button id="rawPlan" class="plan">Plan RAW Needs</button>
     <button id="rawNext" class="nextRaw">Capture Next Required RAW</button>
