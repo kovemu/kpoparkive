@@ -44,7 +44,7 @@
       <label for="profile">Crawl profile</label>
       <select id="profile">
         <option value="essential">Essential · 1 depth / 20 docs</option>
-        <option value="smart-core" selected>Smart Core · 2 depth / 80 docs</option>
+        <option value="smart-core" selected>Smart Core · Recursive TOC / 80 docs</option>
         <option value="archive">Archive · 3 depth / 150 docs</option>
         <option value="custom">Custom</option>
       </select>
@@ -77,7 +77,7 @@
     <label class="check"><input id="includeLeaf" type="checkbox" /> Include non-TOC related pages (legacy)</label>
     <label class="check"><input id="refreshExisting" type="checkbox" /> Refresh existing captures</label>
 
-    <p style="margin-top:8px">Smart Core now uses TOC-first scope: linked documents shown directly in the article's Contents are collected first. Ordinary body links are skipped by default. RAW Needs then classifies only the captured scope.</p>
+    <p style="margin-top:8px">Smart Core recursively follows every /w/ link shown directly in each captured document's Contents. TOC links ignore the legacy depth guard; the 80-document budget is the safety cap. Ordinary body links are skipped by default.</p>
     <button id="clone">Smart /w/ DOM Harvest</button>
     <button id="rawPlan" class="plan">Plan RAW Needs</button>
     <button id="rawNext" class="nextRaw">Capture Next Required RAW</button>
