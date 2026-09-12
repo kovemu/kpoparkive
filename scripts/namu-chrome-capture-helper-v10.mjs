@@ -184,7 +184,7 @@ const newExisting = String.raw`async function kpopExistingDocument(_rootTitle, s
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
     "&source_title=eq." + encodeURIComponent(sourceTitle) +
-    "&select=id,source_title,source_url,crawl_depth,discovered_links,source_browser_captured_at,source_browser_capture_version,source_wikitext,raw_extracted_at&limit=1"
+    "&select=id,source_title,source_url,crawl_depth,discovered_links,source_browser_captured_at,source_browser_capture_version,source_wikitext,raw_extracted_at,source_format,source_extraction_version&limit=1"
   );
   return rows?.[0] || null;
 }`;
@@ -485,6 +485,8 @@ const newSkip = String.raw`    const capturedAtMs = Date.parse(existing?.source_
           !item.forceCapture &&
           existing?.source_wikitext &&
           existing?.raw_extracted_at &&
+          existing?.source_format === "namuwiki_raw" &&
+          /^normal-chrome-(?:raw-view|edit-source)-v1$/.test(String(existing?.source_extraction_version || "")) &&
           ((item.mode || "expand") === "leaf" || (Array.isArray(existing?.discovered_links) && existing.discovered_links.length > 0))
         )
       : Boolean(!item.forceCapture && existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION && capturedAfterAdFilter);
