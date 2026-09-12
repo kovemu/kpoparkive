@@ -46,6 +46,7 @@ const UNIQUE_LIMIT = Math.max(1, Number(argValue("--limit", String(DEFAULT_LIMIT
 const DELAY_MS = Math.max(0, Number(argValue("--delay", String(DEFAULT_DELAY_MS))) || DEFAULT_DELAY_MS);
 const HEADLESS = hasArg("--headless");
 const FILE_FILTER = argValue("--only", "").normalize("NFKC").toLowerCase();
+const RENDERER_MISSING_ONLY = hasArg("--renderer-missing");
 
 if (!SERVICE_ROLE_KEY) {
   console.error("SUPABASE_SERVICE_ROLE_KEY is missing. Put it in .env.local before running the worker.");
@@ -110,6 +111,40 @@ async function fetchQueueRows(rootTitle) {
     if (rows.length < 1000) break;
   }
   return output;
+}
+
+
+async function fetchRendererMissingFileKeys(rootTitle) {
+  const requirements = await db(
+    `namu_raw_requirements?root_title=eq.${encodeURIComponent(rootTitle)}` +
+      `&detector_version=eq.raw-required-v8&status=eq.captured` +
+      `&select=source_document_id,source_title&order=source_title.asc`,
+  );
+  const ids = [...new Set(
+    (requirements || [])
+      .filter((row) => row?.source_document_id && !String(row?.source_title || "").startsWith("틀:"))
+      .map((row) => row.source_document_id),
+  )];
+  if (!ids.length) return new Set();
+
+  const result = new Set();
+  for (let index = 0; index < ids.length; index += 20) {
+    const batch = ids.slice(index, index + 20);
+    const rows = await db(
+      `source_documents?id=in.(${batch.map(encodeURIComponent).join(",")})` +
+        `&select=id,source_title,source_namumark_meta`,
+    );
+    for (const row of rows || []) {
+      const missing = Array.isArray(row?.source_namumark_meta?.missingFiles)
+        ? row.source_namumark_meta.missingFiles
+        : [];
+      for (const ref of missing) {
+        const key = canonicalFileKey(ref);
+        if (key) result.add(key);
+      }
+    }
+  }
+  return result;
 }
 
 function findBrowserExecutable() {
@@ -446,18 +481,25 @@ async function main() {
   console.log(`Mode: ${HEADLESS ? "headless" : "visible persistent browser"}`);
 
   const rows = await fetchQueueRows(ROOT_TITLE);
+  const rendererMissingKeys = RENDERER_MISSING_ONLY
+    ? await fetchRendererMissingFileKeys(ROOT_TITLE)
+    : null;
   const groups = new Map();
   for (const row of rows) {
     const key = canonicalFileKey(displayFileName(row));
     if (!key) continue;
     if (FILE_FILTER && !key.includes(FILE_FILTER)) continue;
+    if (rendererMissingKeys && !rendererMissingKeys.has(key)) continue;
     const group = groups.get(key) || [];
     group.push(row);
     groups.set(key, group);
   }
 
   const selected = [...groups.entries()].slice(0, UNIQUE_LIMIT);
-  console.log(`Queue rows: ${rows.length}; unique files selected: ${selected.length}/${groups.size}`);
+  console.log(
+    `Queue rows: ${rows.length}; unique files selected: ${selected.length}/${groups.size}` +
+    (rendererMissingKeys ? ` (renderer-missing scope=${rendererMissingKeys.size})` : ""),
+  );
   if (!selected.length) return;
 
   const executablePath = findBrowserExecutable();
