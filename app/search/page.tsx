@@ -168,50 +168,63 @@ async function searchDocuments(query: string): Promise<SearchRow[]> {
 
   const clean = query.replace(/[*,]/g, " ").replace(/\s+/g, " ").trim();
   if (!clean) return [];
+
   const pattern = `*${clean}*`;
   const encodedPattern = encodeURIComponent(pattern);
   const select =
     "source_title,translated_title,root_title,content_language,content_status," +
     "published_revision_no,content_wikitext";
 
-  try {
-    // Stage 1: fast structural discovery. root_title is crucial: searching a
-    // group should also discover its members/subdocuments without requiring the
-    // group name to be repeated in every translated title.
-    const primary = await fetchSearchRows(
-      `source_documents?source=eq.namu_mirror` +
-        `&or=(translated_title.ilike.${encodedPattern},root_title.ilike.${encodedPattern},source_title.ilike.${encodedPattern})` +
-        `&select=${select}&limit=100`,
-    );
+  // Filter to English-ready documents in PostgREST BEFORE applying result
+  // limits. root_title=RESCENE can match hundreds of captured Korean support
+  // documents, which previously filled limit=100 and pushed the actual RESCENE
+  // page and members out of the candidate set.
+  const englishReady =
+    "source=eq.namu_mirror" +
+    "&content_language=eq.en" +
+    "&content_wikitext=not.is.null" +
+    "&translated_title=not.is.null";
 
-    // Stage 2: body recall. Only run it when useful; body hits rank below title
-    // and root matches, so "leader" can find Woni without polluting "RESCENE".
-    const bodyRows = clean.length >= 3 && primary.length < 80
+  try {
+    const [titleRows, rootRows] = await Promise.all([
+      // Title/canonical matches are the high-precision lane. These must never
+      // compete for the same SQL limit with broad root/group matches.
+      fetchSearchRows(
+        `source_documents?${englishReady}` +
+          `&or=(translated_title.ilike.${encodedPattern},source_title.ilike.${encodedPattern})` +
+          `&select=${select}&limit=60`,
+      ),
+      // Group/root expansion is a secondary discovery lane.
+      fetchSearchRows(
+        `source_documents?${englishReady}` +
+          `&root_title=ilike.${encodedPattern}` +
+          `&select=${select}&limit=60`,
+      ),
+    ]);
+
+    // Body recall is last and intentionally bounded.
+    const bodyRows = clean.length >= 3
       ? await fetchSearchRows(
-          `source_documents?source=eq.namu_mirror&content_language=eq.en` +
+          `source_documents?${englishReady}` +
             `&content_wikitext=ilike.${encodedPattern}` +
             `&select=${select}&limit=40`,
         )
       : [];
 
     const merged = new Map<string, SearchRow>();
-    for (const row of [...primary, ...bodyRows]) {
+    for (const row of [...titleRows, ...rootRows, ...bodyRows]) {
       if (!merged.has(row.source_title)) merged.set(row.source_title, row);
     }
 
     return [...merged.values()]
       .filter((row) =>
         Boolean(englishDisplayTitle(row)) &&
-        row.content_language === "en" &&
-        Boolean(row.content_wikitext) &&
         !/^(?:틀|Template|파일|File):/i.test(row.source_title)
       )
       .sort((a, b) => {
         const rankDiff = searchRank(a, query) - searchRank(b, query);
         if (rankDiff) return rankDiff;
 
-        // A published result wins ties over a draft, then shorter/more direct
-        // titles win over verbose subdocuments.
         const aPublished = Number(a.published_revision_no || 0) > 0 ? 0 : 1;
         const bPublished = Number(b.published_revision_no || 0) > 0 ? 0 : 1;
         if (aPublished !== bPublished) return aPublished - bPublished;
