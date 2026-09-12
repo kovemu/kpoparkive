@@ -314,7 +314,9 @@ async function pollRawQueueStatus(show = true) {
       setStatus(formatRawQueue(job), job.status === "error" ? "bad" : "ok");
     }
 
-    if (!active && rawQueuePollTimer) {
+    if (active && !rawQueuePollTimer) {
+      rawQueuePollTimer = setInterval(() => pollRawQueueStatus(true), 800);
+    } else if (!active && rawQueuePollTimer) {
       clearInterval(rawQueuePollTimer);
       rawQueuePollTimer = null;
     }
