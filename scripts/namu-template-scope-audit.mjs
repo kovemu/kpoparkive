@@ -111,14 +111,38 @@ const COMPAT_BUILTINS = new Set([
   "틀:노래 세부사항2",
 ]);
 
-const docs = await db(
+const requirementRows = await db(
+  "namu_raw_requirements?root_title=eq." + encodeURIComponent(rootTitle) +
+  "&detector_version=eq.raw-required-v9" +
+  "&source_title=not.like." + encodeURIComponent("틀:%") +
+  "&select=source_title,status&limit=500"
+);
+const fixedArticleScope = new Set(
+  (requirementRows || [])
+    .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+    .filter(Boolean)
+);
+
+const allRootDocs = await db(
   "source_documents?source=eq.namu_mirror" +
   "&root_title=eq." + encodeURIComponent(rootTitle) +
   "&source_title=not.like." + encodeURIComponent("틀:%") +
   "&source_wikitext=not.is.null" +
-  "&select=id,source_title,source_wikitext,raw_extracted_at,source_format,source_extraction_version" +
+  "&select=id,source_title,source_wikitext,raw_extracted_at,source_format,source_extraction_version,crawl_depth" +
   "&order=crawl_depth.asc,source_title.asc&limit=500"
 );
+const docs = (allRootDocs || []).filter((row) =>
+  fixedArticleScope.has(String(row?.source_title || "").normalize("NFKC").trim())
+);
+
+if (!fixedArticleScope.size) {
+  throw new Error("Fixed article scope is missing from namu_raw_requirements. Refusing to infer a new scope.");
+}
+if (docs.length !== fixedArticleScope.size) {
+  const captured = new Set(docs.map((row) => String(row?.source_title || "").normalize("NFKC").trim()));
+  const missing = [...fixedArticleScope].filter((title) => !captured.has(title));
+  throw new Error(`Fixed article scope is incomplete: ${docs.length}/${fixedArticleScope.size}. Missing RAW: ${missing.join(" · ")}`);
+}
 
 const direct = new Map();
 for (const doc of docs || []) {
@@ -210,6 +234,7 @@ const counts = {};
 for (const row of rows) counts[row.resolution] = (counts[row.resolution] || 0) + 1;
 
 console.log(`Template scope audit · ${rootTitle}`);
+console.log(`Fixed core article scope: ${fixedArticleScope.size}`);
 console.log(`Core article RAW docs: ${docs.length}`);
 console.log(`Direct templates only: ${rows.length}`);
 console.log("Recursive template-of-template expansion: OFF");
