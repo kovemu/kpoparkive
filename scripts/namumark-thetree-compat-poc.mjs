@@ -4,7 +4,7 @@
 // renderer input and asks namumark-thetree-poc.mjs to patch the locally cloned
 // The Tree cache at runtime. No modified The Tree source is stored in this repo.
 
-process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSET || "modern-namu-v1";
+process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSET || "modern-namu-v2";
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
