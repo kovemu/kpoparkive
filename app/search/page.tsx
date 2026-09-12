@@ -49,31 +49,71 @@ function englishDisplayTitle(row: SearchRow) {
   return title;
 }
 
-function stripNamuMarkup(value: string) {
+function decodeWikiLinks(value: string) {
   return String(value || "")
-    .replace(/\[include\([^\]]*\)\]/gi, " ")
-    .replace(/\[\[분류:[^\]]+\]\]/gi, " ")
     .replace(/\[\[(?:파일|File):[^\]]+\]\]/gi, " ")
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/\[youtube\([^\]]*\)\]/gi, " ")
-    .replace(/\[(?:목차|tableofcontents)\]/gi, " ")
     .replace(/\[br\]/gi, " ")
-    .replace(/\{\{\{[#!+\-0-9a-zA-Z_="':;,.%()\s-]*\n?/g, " ")
-    .replace(/\}\}\}/g, " ")
-    .replace(/^={2,6}\s*(.*?)\s*={2,6}$/gm, "$1. ")
-    .replace(/\|\|/g, " ")
     .replace(/'''|''/g, "")
     .replace(/\[\*[^\]]*\]/g, " ")
-    .replace(/[#*]+/g, " ")
     .replace(/[가-힣]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
+function overviewBody(value: string) {
+  const source = String(value || "").replace(/\r\n?/g, "\n");
+  const overview = source.match(/^==\s*Overview\s*==\s*$/im);
+  if (!overview || overview.index == null) return source;
+
+  const afterHeading = overview.index + overview[0].length;
+  const rest = source.slice(afterHeading);
+  const nextHeading = rest.search(/^==\s*[^=].*?\s*==\s*$/m);
+  return nextHeading >= 0 ? rest.slice(0, nextHeading) : rest;
+}
+
 function searchSnippet(row: SearchRow) {
   if (row.content_language !== "en" || !row.content_wikitext) return "";
-  const text = stripNamuMarkup(row.content_wikitext);
+
+  const lines = overviewBody(row.content_wikitext).split("\n");
+  const candidates: string[] = [];
+  let blockDepth = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const opens = (line.match(/\{\{\{/g) || []).length;
+    const closes = (line.match(/\}\}\}/g) || []).length;
+    const insideBlock = blockDepth > 0 || opens > 0;
+
+    blockDepth = Math.max(0, blockDepth + opens - closes);
+
+    if (!line || insideBlock) continue;
+    if (
+      /^\|\|/.test(line) ||
+      /^={2,6}/.test(line) ||
+      /^\s*[*-]\s+/.test(line) ||
+      /^\[(?:include|youtube|목차|clearfix)/i.test(line) ||
+      /^##@/.test(line)
+    ) {
+      continue;
+    }
+
+    const text = decodeWikiLinks(line)
+      .replace(/\[(?:age|dday)\([^\]]+\)\]/gi, " ")
+      .replace(/\[[^\]]+\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (text.length < 45) continue;
+    if (!/[A-Za-z]/.test(text)) continue;
+    if (!/[.!?]/.test(text)) continue;
+
+    candidates.push(text);
+    if (candidates.join(" ").length >= 220) break;
+  }
+
+  const text = candidates.join(" ").trim();
   if (!text) return "";
   return text.length > 220 ? `${text.slice(0, 217).trimEnd()}…` : text;
 }
