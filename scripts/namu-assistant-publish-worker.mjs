@@ -199,6 +199,15 @@ async function recoverFreshDomFallbacks(ownerTitle) {
       String(row?.recovery_status || "") !== "verified" &&
       Number(row?.recovery_meta?.fidelityComparatorVersion || 0) < 2;
 
+    const htmlFallbackAuthoritative =
+      Boolean(row?.recovery_meta?.htmlFallbackRequired) &&
+      row?.recovery_meta?.promotionGate?.eligible === false &&
+      Boolean(row?.en_html) &&
+      row?.translation_status === "reviewed" &&
+      String(row?.recovery_version || "") === DOM_RECOVERY_TARGET_VERSION;
+
+    if (htmlFallbackAuthoritative) continue;
+
     let shouldRecover =
       !row?.synthetic_document_id ||
       String(row?.recovery_version || "") !== DOM_RECOVERY_TARGET_VERSION ||
@@ -227,12 +236,6 @@ async function recoverFreshDomFallbacks(ownerTitle) {
       // the authoritative English representation. Do not keep retrying merely
       // because the synthetic document has no English content; it is expected
       // to remain source-only in html-fallback-only mode.
-      const htmlFallbackAuthoritative =
-        Boolean(row?.recovery_meta?.htmlFallbackRequired) &&
-        row?.recovery_meta?.promotionGate?.eligible === false &&
-        Boolean(row?.en_html) &&
-        row?.translation_status === "reviewed";
-
       const needsEnglishSynthetic =
         row?.translation_status === "reviewed" &&
         Boolean(row?.en_html) &&
