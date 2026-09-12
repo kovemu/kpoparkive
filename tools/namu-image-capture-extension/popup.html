@@ -12,6 +12,9 @@
     label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; }
     input, select { box-sizing: border-box; width: 100%; padding: 8px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; background: white; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .field { margin-top: 10px; }
+    .check { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 12px; font-weight: 400; color: #333; }
+    .check input { width: auto; margin: 0; padding: 0; }
     button { width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 6px; background: #6f3cff; color: #fff; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     button.raw { background: #111827; }
@@ -34,23 +37,46 @@
     <p>Raw NamuMark is the canonical source. The current NamuWiki page becomes the root automatically.</p>
     <label for="root">Root document</label>
     <input id="root" value="RESCENE" autocomplete="off" />
+
+    <div class="field">
+      <label for="profile">Crawl profile</label>
+      <select id="profile">
+        <option value="essential">Essential · 1 depth / 20 docs</option>
+        <option value="smart-core" selected>Smart Core · 2 depth / 40 docs</option>
+        <option value="archive">Archive · 3 depth / 150 docs</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+
     <div class="row">
       <div>
         <label for="depth">Crawl depth</label>
         <select id="depth">
-          <option value="0" selected>0 · root only</option>
+          <option value="0">0 · root only</option>
           <option value="1">1 · direct links</option>
-          <option value="2">2 · links of links</option>
+          <option value="2" selected>2 · links of links</option>
           <option value="3">3 · broad crawl</option>
         </select>
       </div>
       <div>
-        <label for="maxDocs">Max documents</label>
-        <input id="maxDocs" type="number" min="1" max="200" value="1" />
+        <label for="maxDocs">Document budget</label>
+        <input id="maxDocs" type="number" min="1" max="200" value="40" />
       </div>
     </div>
-    <p style="margin-top:8px">Recommended order: harvest normal /w/ pages first, then capture the root RAW. Depth and Max documents apply only to DOM Harvest; RAW always reads exactly one page.</p>
-    <button id="clone">Broad /w/ DOM Harvest</button>
+
+    <div class="field">
+      <label for="crawlOrder">Queue order</label>
+      <select id="crawlOrder">
+        <option value="smart" selected>Smart · depth → core tier → TOC</option>
+        <option value="toc">TOC strict · depth → TOC → core tier</option>
+      </select>
+    </div>
+
+    <label class="check"><input id="includeLeaf" type="checkbox" checked /> Capture related leaf pages</label>
+    <label class="check"><input id="refreshExisting" type="checkbox" /> Refresh existing captures</label>
+
+    <p style="margin-top:8px">Smart Core is the default: reuse existing pages, finish each depth before going deeper, prioritize K-pop core documents, then follow NamuWiki TOC order. RAW always uses one persistent session tab and reads only the requested RAW page plus renderer-required dependencies.</p>
+    <button id="clone">Smart /w/ DOM Harvest</button>
     <button id="rawCrawl" class="raw">Capture Root RAW</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
