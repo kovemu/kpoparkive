@@ -229,7 +229,7 @@ export default async function RawWikiPage({
     if (!docs[0]) {
       const candidates = await db<DocRow[]>(
         `source_documents?source=eq.namu_mirror&source_title=ilike.${encodeURIComponent(sourceTitle)}` +
-          `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=5`,
+          `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_wikitext,content_language,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html,published_content_wikitext,published_content_language&limit=5`,
       );
       const folded = normalizeWikiKey(sourceTitle).toLocaleLowerCase();
       const match = candidates.find(
@@ -292,36 +292,59 @@ export default async function RawWikiPage({
     source.published_namumark_html ||
     (source.content_status === "published" ? source.content_namumark_html : null);
 
-  // Local development is the approval surface: show the current rendered draft
-  // without promoting it to production. Production never reads an unpublished draft.
-  let exactHtml = isLocalDraftPreview
-    ? (hasCurrentDraft ? source.content_namumark_html : null) ||
-      publishedContentHtml ||
-      source.source_namumark_html
-    : publishedContentHtml;
+  // A translated document must never fall back to the immutable Korean
+  // source render. Local review shows the current English revision; production
+  // shows the published English revision.
+  let exactHtml: string | null = null;
 
-  // Production may publish an English NamuMark revision before its HTML snapshot
-  // is materialized. Render that trusted published English source directly with
-  // the exact The Tree pipeline instead of falling back to the immutable Korean
-  // source capture.
-  if (
-    !isLocalDraftPreview &&
-    !exactHtml &&
-    source.published_content_language === "en" &&
-    typeof source.published_content_wikitext === "string" &&
-    source.published_content_wikitext.trim().length > 0
-  ) {
-    const rendered = await renderExactNamuPreview(
-      source.source_title,
-      source.published_content_wikitext,
-      "en",
-    );
-    if (rendered.hasError) {
-      throw new Error(
-        `Published English The Tree render failed for ${source.source_title}: ${rendered.errorCode || "unknown"}`,
-      );
+  if (isLocalDraftPreview) {
+    const hasEnglishDraft =
+      source.content_language === "en" &&
+      typeof source.content_wikitext === "string" &&
+      source.content_wikitext.trim().length > 0;
+
+    if (hasEnglishDraft) {
+      if (hasCurrentDraft) {
+        exactHtml = source.content_namumark_html;
+      } else {
+        const rendered = await renderExactNamuPreview(
+          source.source_title,
+          source.content_wikitext as string,
+          "en",
+        );
+        if (rendered.hasError) {
+          throw new Error(
+            `English draft The Tree render failed for ${source.source_title}: ${rendered.errorCode || "unknown"}`,
+          );
+        }
+        exactHtml = rendered.html;
+      }
+    } else {
+      exactHtml =
+        publishedContentHtml ||
+        source.source_namumark_html;
     }
-    exactHtml = rendered.html;
+  } else {
+    exactHtml = publishedContentHtml;
+
+    if (
+      !exactHtml &&
+      source.published_content_language === "en" &&
+      typeof source.published_content_wikitext === "string" &&
+      source.published_content_wikitext.trim().length > 0
+    ) {
+      const rendered = await renderExactNamuPreview(
+        source.source_title,
+        source.published_content_wikitext,
+        "en",
+      );
+      if (rendered.hasError) {
+        throw new Error(
+          `Published English The Tree render failed for ${source.source_title}: ${rendered.errorCode || "unknown"}`,
+        );
+      }
+      exactHtml = rendered.html;
+    }
   }
 
   if (!exactHtml) {
