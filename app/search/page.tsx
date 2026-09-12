@@ -1,9 +1,5 @@
 import SiteHeader from "../../components/wiki/SiteHeader";
-
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co")
-  .trim()
-  .replace(/\/$/, "");
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { searchPublicWiki } from "../../lib/publicWikiRead";
 
 type SearchRow = {
   source_title: string;
@@ -150,84 +146,17 @@ function searchRank(row: SearchRow, query: string) {
   return 50;
 }
 
-async function fetchSearchRows(path: string): Promise<SearchRow[]> {
-  if (!SERVICE_ROLE_KEY) return [];
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      apikey: SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) return [];
-  return response.json() as Promise<SearchRow[]>;
-}
-
 async function searchDocuments(query: string): Promise<SearchRow[]> {
-  if (!SERVICE_ROLE_KEY || !query) return [];
-
   const clean = query.replace(/[*,]/g, " ").replace(/\s+/g, " ").trim();
   if (!clean) return [];
 
-  const pattern = `*${clean}*`;
-  const encodedPattern = encodeURIComponent(pattern);
-  const select =
-    "source_title,translated_title,root_title,content_language,content_status," +
-    "published_revision_no,content_wikitext";
-
-  // Filter to English-ready documents in PostgREST BEFORE applying result
-  // limits. root_title=RESCENE can match hundreds of captured Korean support
-  // documents, which previously filled limit=100 and pushed the actual RESCENE
-  // page and members out of the candidate set.
-  const englishReady =
-    "source=eq.namu_mirror" +
-    "&content_language=eq.en" +
-    "&content_wikitext=not.is.null" +
-    "&translated_title=not.is.null";
-
   try {
-    const [titleRows, rootRows] = await Promise.all([
-      // Title/canonical matches are the high-precision lane. These must never
-      // compete for the same SQL limit with broad root/group matches.
-      fetchSearchRows(
-        `source_documents?${englishReady}` +
-          `&or=(translated_title.ilike.${encodedPattern},source_title.ilike.${encodedPattern})` +
-          `&select=${select}&limit=60`,
-      ),
-      // Group/root expansion is a secondary discovery lane.
-      fetchSearchRows(
-        `source_documents?${englishReady}` +
-          `&root_title=ilike.${encodedPattern}` +
-          `&select=${select}&limit=60`,
-      ),
-    ]);
-
-    // Body recall is last and intentionally bounded.
-    const bodyRows = clean.length >= 3
-      ? await fetchSearchRows(
-          `source_documents?${englishReady}` +
-            `&content_wikitext=ilike.${encodedPattern}` +
-            `&select=${select}&limit=40`,
-        )
-      : [];
-
-    const merged = new Map<string, SearchRow>();
-    for (const row of [...titleRows, ...rootRows, ...bodyRows]) {
-      if (!merged.has(row.source_title)) merged.set(row.source_title, row);
-    }
-
-    return [...merged.values()]
-      .filter((row) =>
-        Boolean(englishDisplayTitle(row)) &&
-        !/^(?:틀|Template|파일|File):/i.test(row.source_title)
-      )
+    const rows = await searchPublicWiki(clean);
+    return rows
+      .filter((row) => Boolean(englishDisplayTitle(row)))
       .sort((a, b) => {
         const rankDiff = searchRank(a, query) - searchRank(b, query);
         if (rankDiff) return rankDiff;
-
-        const aPublished = Number(a.published_revision_no || 0) > 0 ? 0 : 1;
-        const bPublished = Number(b.published_revision_no || 0) > 0 ? 0 : 1;
-        if (aPublished !== bPublished) return aPublished - bPublished;
 
         const aTitle = englishDisplayTitle(a);
         const bTitle = englishDisplayTitle(b);
