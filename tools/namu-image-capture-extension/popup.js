@@ -207,6 +207,14 @@ function formatRawNeeds(plan) {
     `Ignored: ${counts.ignored || 0}`,
   ];
 
+  if (plan.requiresDomRefresh || Number(plan.staleCount || 0) > 0) {
+    lines.push(
+      "",
+      `Scope cache stale: ${Number(plan.staleCount || 0)} old entries`,
+      "Run Smart /w/ DOM Harvest once to rebuild TOC-first scope v3."
+    );
+  }
+
   if (plan.next) {
     lines.push(
       "",
