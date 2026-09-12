@@ -547,9 +547,18 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
   const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
   const directRelation = String(directRoot?.relation || "");
   const directPolicyVersion = Number(directRoot?.crawlPolicyVersion || 0) || 0;
-  const isExplicitTocDocument = directRelation === "toc_document";
+  const inboundRelation = String(inbound?.relation || "");
+  const inboundPolicyVersion = Number(inbound?.crawlPolicyVersion || 0) || 0;
+
+  const explicitV3Scope = Boolean(
+    directRelation === "toc_document" ||
+    directRelation === "member" ||
+    inboundRelation === "toc_document" ||
+    inboundRelation === "member"
+  );
+
   const legacyDirectSectionLeaf = Boolean(
-    directPolicyVersion < 3 &&
+    Math.max(directPolicyVersion, inboundPolicyVersion) < 3 &&
     directRelation === "related" &&
     String(directRoot?.crawlMode || "") === "leaf" &&
     String(directRoot?.sourceArea || "") === "section" &&
@@ -559,9 +568,7 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
 
   const inTeamCoreScope = Boolean(
     isRoot ||
-    isDirectSubdocument ||
-    isExplicitTocDocument ||
-    directRelation === "member" ||
+    explicitV3Scope ||
     legacyDirectSectionLeaf
   );
 
