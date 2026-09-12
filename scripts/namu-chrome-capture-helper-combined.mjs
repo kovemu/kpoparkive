@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v3";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v4";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -558,7 +558,7 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
   );
 
   const legacyDirectSectionLeaf = Boolean(
-    Math.max(directPolicyVersion, inboundPolicyVersion) < 3 &&
+    Math.max(directPolicyVersion, inboundPolicyVersion) < 4 &&
     directRelation === "related" &&
     String(directRoot?.crawlMode || "") === "leaf" &&
     String(directRoot?.sourceArea || "") === "section" &&
@@ -804,9 +804,9 @@ async function kpopPlanRawRequirements(rootTitle) {
     (max, link) => Math.max(max, Number(link?.crawlPolicyVersion || 0) || 0),
     0
   );
-  if (observedPolicyVersion < 3) {
+  if (observedPolicyVersion < 4) {
     throw new Error(
-      "TOC-first scope requires a fresh Smart /w/ DOM Harvest (crawl policy v3). " +
+      "TOC-first scope requires a fresh Smart /w/ DOM Harvest (crawl policy v4). " +
       "Run DOM Harvest once, then Plan RAW Needs again."
     );
   }
