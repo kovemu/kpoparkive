@@ -24,14 +24,23 @@ loadEnv(path.join(ROOT, ".env"));
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co").replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const titles = process.argv.slice(2).map((value) => decodeURIComponent(value).normalize("NFKC").trim()).filter(Boolean);
+const cliArgs = process.argv.slice(2);
+const rootArg = cliArgs.find((value) => value.startsWith("--root="));
+const rootTitle = rootArg
+  ? decodeURIComponent(rootArg.slice("--root=".length)).normalize("NFKC").trim()
+  : "";
+let titles = cliArgs
+  .filter((value) => !value.startsWith("--"))
+  .map((value) => decodeURIComponent(value).normalize("NFKC").trim())
+  .filter(Boolean);
 
 if (!SERVICE_ROLE_KEY) {
   console.error("Manual publish: SUPABASE_SERVICE_ROLE_KEY is missing.");
   process.exit(1);
 }
-if (!titles.length) {
+if (!titles.length && !rootTitle) {
   console.error('Usage: npm.cmd run namu:publish -- "원이"');
+  console.error('   or: npm.cmd run namu:publish -- --root=RESCENE');
   process.exit(1);
 }
 
@@ -53,6 +62,20 @@ async function db(pathname, init = {}) {
   const text = await response.text();
   if (!response.ok) throw new Error(`Supabase ${response.status}: ${text}`);
   return text ? JSON.parse(text) : null;
+}
+
+async function fetchRootScopeTitles(root) {
+  const rows = await db(
+    "namu_raw_requirements?root_title=eq." + encodeURIComponent(root) +
+      "&status=neq.ignored" +
+      "&select=source_title,status" +
+      "&order=source_title.asc",
+  );
+  return [...new Set(
+    (rows || [])
+      .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+      .filter((title) => title && !title.startsWith("틀:"))
+  )];
 }
 
 async function fetchDraft(title) {
@@ -178,6 +201,16 @@ async function publishPrepared({ title, row, revision, meta }) {
 
   console.log(`PUBLISHED ${title} r${revision}`);
   console.log(`Public: https://kpoparkive.vercel.app/w/${title.split("/").map(encodeURIComponent).join("/")}`);
+}
+
+if (rootTitle) {
+  const rootTitles = await fetchRootScopeTitles(rootTitle);
+  titles = [...new Set([...titles, ...rootTitles])];
+  console.log(`ROOT SCOPE ${rootTitle}: ${rootTitles.length} article document(s)`);
+  if (!rootTitles.length) {
+    console.error(`PUBLISH ABORTED: no in-scope article documents found for root ${rootTitle}`);
+    process.exit(1);
+  }
 }
 
 const prepared = [];
