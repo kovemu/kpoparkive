@@ -352,6 +352,32 @@ async function documentStatus(rootTitle, sourceTitle) {
   };
 }
 
+async function invalidateSourceRender(sourceTitle) {
+  const title = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!title) throw new Error("sourceTitle is required");
+  const rows = await db(
+    `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(title)}&select=id&limit=1`,
+  );
+  const row = rows?.[0] || null;
+  if (!row?.id) throw new Error(`source document not found for render invalidation: ${title}`);
+
+  const invalidatedAt = new Date().toISOString();
+  await db(`source_documents?id=eq.${encodeURIComponent(row.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      source_namumark_html: null,
+      source_namumark_meta: null,
+      source_namumark_engine: null,
+      source_namumark_engine_version: null,
+      source_namumark_rendered_at: null,
+      updated_at: invalidatedAt,
+    }),
+  });
+  console.log(`SOURCE RENDER INVALIDATED ${title} -> dependency refresh`);
+  return { ok: true, sourceTitle: title, invalidatedAt };
+}
+
 async function rawSourceStatus(sourceTitle) {
   const title = String(sourceTitle || "").normalize("NFKC").trim();
   if (!title) throw new Error("sourceTitle is required");
@@ -469,6 +495,15 @@ const server = http.createServer(async (req, res) => {
       const sourceTitle = String(url.searchParams.get("sourceTitle") || "").trim();
       if (!sourceTitle) throw new Error("sourceTitle is required");
       json(res, 200, { ok: true, ...(await rawSourceStatus(sourceTitle)) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/invalidate-source-render") {
+      const bytes = await readBody(req, 64 * 1024);
+      let payload;
+      try { payload = JSON.parse(bytes.toString("utf8")); }
+      catch { throw new Error("invalidate-source-render payload is not valid JSON"); }
+      json(res, 200, await invalidateSourceRender(payload?.sourceTitle));
       return;
     }
 
