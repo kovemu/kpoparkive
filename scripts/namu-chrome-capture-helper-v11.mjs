@@ -13,13 +13,6 @@ if (!source.includes(combinedMarker) || !source.includes(v8Marker)) {
   throw new Error("v10 helper changed; v11 patch markers missing");
 }
 
-// Old persisted state files predate crawlPolicyVersion. Keep their default at 0
-// so the v1 queue migration actually discards stale country/date/etc. work.
-source = source.replace(
-  "policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,",
-  "policyVersion: 0, policyRefresh: false,",
-);
-
 // This remains the final compatibility wrapper for the legacy v10/v8 helper chain.
 // Transient Supabase failures must pause/retry instead of consuming clone attempts.
 const dbRetryPatch = [
