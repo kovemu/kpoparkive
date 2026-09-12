@@ -62,15 +62,15 @@
       </div>
       <div>
         <label for="maxDocs">Document budget</label>
-        <input id="maxDocs" type="number" min="1" max="200" value="40" />
+        <input id="maxDocs" type="number" min="1" max="200" value="80" />
       </div>
     </div>
 
     <div class="field">
       <label for="crawlOrder">Queue order</label>
       <select id="crawlOrder">
-        <option value="smart" selected>Smart · depth → core tier → TOC</option>
-        <option value="toc">TOC strict · depth → TOC → core tier</option>
+        <option value="smart" selected>TOC-first · then members/core</option>
+        <option value="toc">TOC strict · exact TOC order first</option>
       </select>
     </div>
 
