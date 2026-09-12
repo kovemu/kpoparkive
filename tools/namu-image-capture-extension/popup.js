@@ -5,13 +5,58 @@ const rawButton = document.getElementById("raw");
 const assetsButton = document.getElementById("assets");
 const compareButton = document.getElementById("compare");
 const resetButton = document.getElementById("reset");
+const profileInput = document.getElementById("profile");
 const depthInput = document.getElementById("depth");
 const maxDocsInput = document.getElementById("maxDocs");
+const crawlOrderInput = document.getElementById("crawlOrder");
+const includeLeafInput = document.getElementById("includeLeaf");
+const refreshExistingInput = document.getElementById("refreshExisting");
 const health = document.getElementById("health");
 const status = document.getElementById("status");
 const verification = document.getElementById("verification");
 let pollTimer = null;
 let rawAssetPollTimer = null;
+
+const CRAWL_PROFILES = {
+  essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
+  "smart-core": { depth: 2, maxDocs: 40, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
+  archive: { depth: 3, maxDocs: 150, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
+};
+
+function applyCrawlProfile(name, { persist = true } = {}) {
+  const key = String(name || "smart-core");
+  profileInput.value = CRAWL_PROFILES[key] ? key : "custom";
+  const preset = CRAWL_PROFILES[key];
+  if (preset) {
+    depthInput.value = String(preset.depth);
+    maxDocsInput.value = String(preset.maxDocs);
+    crawlOrderInput.value = preset.crawlOrder;
+    includeLeafInput.checked = preset.includeLeaf;
+    refreshExistingInput.checked = preset.refreshExisting;
+  }
+  if (persist) {
+    chrome.storage.local.set({
+      kpoparkiveCrawlProfile: profileInput.value,
+      kpoparkiveCloneDepth: Number(depthInput.value || 2),
+      kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 40),
+      kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
+      kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
+      kpoparkiveRefreshExisting: Boolean(refreshExistingInput.checked),
+    });
+  }
+}
+
+function markCustomProfile() {
+  if (profileInput.value !== "custom") profileInput.value = "custom";
+  chrome.storage.local.set({
+    kpoparkiveCrawlProfile: "custom",
+    kpoparkiveCloneDepth: Number(depthInput.value || 2),
+    kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 40),
+    kpoparkiveCrawlOrder: crawlOrderInput.value || "smart",
+    kpoparkiveIncludeLeaf: Boolean(includeLeafInput.checked),
+    kpoparkiveRefreshExisting: Boolean(refreshExistingInput.checked),
+  });
+}
 
 function setStatus(text, kind = "") {
   status.textContent = text;
@@ -80,6 +125,12 @@ function formatJob(job) {
   const lines = [
     `Root: ${job.rootTitle || "—"}`,
     `Mode: ${job.captureMode === "raw" ? "RAW" : "DOM"}`,
+    ...(job.captureMode === "raw" ? [] : [
+      `Profile: ${job.crawlProfile || "smart-core"}`,
+      `Order: ${job.crawlOrder === "toc" ? "TOC strict" : "Smart core → TOC"}`,
+      `Leaf pages: ${job.includeLeaf === false ? "off" : "on"}`,
+      `Refresh existing: ${job.refreshExisting ? "on" : "off"}`,
+    ]),
     `State: ${state}`,
     `Processed: ${job.processed || 0}/${job.maxDocs || 0}`,
     `Captured: ${job.captured || 0}`,
@@ -165,10 +216,28 @@ async function pollRawAssetStatus(show = true) {
   } catch {}
 }
 
-chrome.storage.local.get(["kpoparkiveRootTitle", "kpoparkiveCloneDepth", "kpoparkiveCloneMaxDocs"]).then(async (stored) => {
+chrome.storage.local.get([
+  "kpoparkiveRootTitle",
+  "kpoparkiveCrawlProfile",
+  "kpoparkiveCloneDepth",
+  "kpoparkiveCloneMaxDocs",
+  "kpoparkiveCrawlOrder",
+  "kpoparkiveIncludeLeaf",
+  "kpoparkiveRefreshExisting",
+]).then(async (stored) => {
   if (stored.kpoparkiveRootTitle) rootInput.value = stored.kpoparkiveRootTitle;
-  if (stored.kpoparkiveCloneDepth != null) depthInput.value = String(stored.kpoparkiveCloneDepth);
-  if (stored.kpoparkiveCloneMaxDocs != null) maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs);
+
+  const savedProfile = String(stored.kpoparkiveCrawlProfile || "smart-core");
+  if (CRAWL_PROFILES[savedProfile]) {
+    applyCrawlProfile(savedProfile, { persist: false });
+  } else {
+    profileInput.value = "custom";
+    depthInput.value = String(stored.kpoparkiveCloneDepth ?? 2);
+    maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs ?? 40);
+    crawlOrderInput.value = stored.kpoparkiveCrawlOrder === "toc" ? "toc" : "smart";
+    includeLeafInput.checked = stored.kpoparkiveIncludeLeaf !== false;
+    refreshExistingInput.checked = Boolean(stored.kpoparkiveRefreshExisting);
+  }
   await syncRootFromActiveTab();
 });
 
@@ -178,8 +247,12 @@ rootInput.addEventListener("change", () => {
   chrome.storage.local.set({ kpoparkiveRootTitle: value });
 });
 
-depthInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneDepth: Number(depthInput.value || 1) }));
-maxDocsInput.addEventListener("change", () => chrome.storage.local.set({ kpoparkiveCloneMaxDocs: Number(maxDocsInput.value || 25) }));
+profileInput.addEventListener("change", () => applyCrawlProfile(profileInput.value));
+depthInput.addEventListener("change", markCustomProfile);
+maxDocsInput.addEventListener("change", markCustomProfile);
+crawlOrderInput.addEventListener("change", markCustomProfile);
+includeLeafInput.addEventListener("change", markCustomProfile);
+refreshExistingInput.addEventListener("change", markCustomProfile);
 
 rawCrawlButton.addEventListener("click", async () => {
   const activeRoot = await syncRootFromActiveTab();
@@ -187,11 +260,7 @@ rawCrawlButton.addEventListener("click", async () => {
   const maxDepth = 0;
   const maxDocs = 1;
 
-  await chrome.storage.local.set({
-    kpoparkiveRootTitle: rootTitle,
-    kpoparkiveCloneDepth: maxDepth,
-    kpoparkiveCloneMaxDocs: maxDocs,
-  });
+  await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
 
   rawCrawlButton.disabled = true;
   setStatus(
@@ -215,22 +284,48 @@ rawCrawlButton.addEventListener("click", async () => {
 
 cloneButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
-  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
-  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 25) || 25));
+  const crawlProfile = profileInput.value || "smart-core";
+  const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 2) || 0));
+  const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 40) || 40));
+  const crawlOrder = crawlOrderInput.value === "toc" ? "toc" : "smart";
+  const includeLeaf = Boolean(includeLeafInput.checked);
+  const refreshExisting = Boolean(refreshExistingInput.checked);
 
   await chrome.storage.local.set({
     kpoparkiveRootTitle: rootTitle,
+    kpoparkiveCrawlProfile: crawlProfile,
     kpoparkiveCloneDepth: maxDepth,
     kpoparkiveCloneMaxDocs: maxDocs,
+    kpoparkiveCrawlOrder: crawlOrder,
+    kpoparkiveIncludeLeaf: includeLeaf,
+    kpoparkiveRefreshExisting: refreshExisting,
   });
 
   cloneButton.disabled = true;
-  setStatus(`Starting broad /w/ DOM harvest...\nRoot: ${rootTitle}\nDepth: ${maxDepth}\nMax documents: ${maxDocs}\nExisting captures will be refreshed.`);
+  setStatus([
+    "Starting smart /w/ DOM harvest...",
+    `Root: ${rootTitle}`,
+    `Profile: ${crawlProfile}`,
+    `Depth: ${maxDepth}`,
+    `Document budget: ${maxDocs}`,
+    `Order: ${crawlOrder === "toc" ? "depth → TOC → core tier" : "depth → core tier → TOC"}`,
+    `Related leaf pages: ${includeLeaf ? "on" : "off"}`,
+    `Existing captures: ${refreshExisting ? "refresh" : "reuse"}`,
+  ].join("\n"));
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-start-helper-clone",
-      options: { rootTitle, maxDepth, maxDocs, captureMode: "dom", refreshExisting: true },
+      options: {
+        rootTitle,
+        maxDepth,
+        maxDocs,
+        captureMode: "dom",
+        crawlProfile,
+        crawlOrder,
+        includeLeaf,
+        refreshExisting,
+      },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start import.");
     setStatus(formatJob(response.job), "ok");
