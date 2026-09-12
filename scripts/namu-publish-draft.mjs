@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { findVisibleKoreanLinkLabels } from "./namu-english-link-localizer.mjs";
+import { findVisibleKoreanLinkLabels, findVisibleKoreanText } from "./namu-english-link-localizer.mjs";
 
 const ROOT = process.cwd();
 
@@ -166,6 +166,17 @@ function validateDraft(row) {
       .join(" | ");
     throw new Error(
       `English link-label QA: ${visibleKoreanLinks.length} visible Korean link label(s) remain: ${preview}`,
+    );
+  }
+
+  const visibleKoreanText = findVisibleKoreanText(row.content_namumark_html, { limit: 20 });
+  if (visibleKoreanText.length > 0) {
+    const preview = visibleKoreanText
+      .slice(0, 5)
+      .map((item) => item.visible)
+      .join(" | ");
+    throw new Error(
+      `English text QA: ${visibleKoreanText.length} visible Korean text fragment(s) remain: ${preview}`,
     );
   }
 
