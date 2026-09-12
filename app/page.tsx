@@ -1,10 +1,6 @@
 import SiteHeader from "../components/wiki/SiteHeader";
 import HomeActivity from "../components/wiki/HomeActivity";
-
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhltiyirtkxmotj.supabase.co")
-  .trim()
-  .replace(/\/$/, "");
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { getPublicRecentActivity } from "../lib/publicWikiRead";
 
 type Activity = {
   id: string;
@@ -16,21 +12,8 @@ type Activity = {
 };
 
 async function getRecentActivity(): Promise<Activity[]> {
-  if (!SERVICE_ROLE_KEY) return [];
-
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/source_edit_proposals?select=id,source_title,summary,display_name,status,created_at&order=created_at.desc&limit=30`,
-      {
-        headers: {
-          apikey: SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-        },
-        cache: "no-store",
-      },
-    );
-    if (!response.ok) return [];
-    return response.json() as Promise<Activity[]>;
+    return await getPublicRecentActivity();
   } catch {
     return [];
   }
