@@ -227,6 +227,27 @@ v8 = mustReplace(
   "crawl policy state",
 );
 
+const oldLoadCloneState = String.raw`function kpopLoadCloneState() {
+  try {
+    if (!fs.existsSync(KPOP_CLONE_STATE_FILE)) return kpopDefaultCloneState();
+    const value = JSON.parse(fs.readFileSync(KPOP_CLONE_STATE_FILE, "utf8"));
+    return { ...kpopDefaultCloneState(), ...(value && typeof value === "object" ? value : {}) };
+  } catch { return kpopDefaultCloneState(); }
+}`;
+const newLoadCloneState = String.raw`function kpopLoadCloneState() {
+  try {
+    const defaults = kpopDefaultCloneState();
+    if (!fs.existsSync(KPOP_CLONE_STATE_FILE)) return defaults;
+    const value = JSON.parse(fs.readFileSync(KPOP_CLONE_STATE_FILE, "utf8"));
+    const persisted = value && typeof value === "object" ? value : {};
+    const loaded = { ...defaults, ...persisted };
+    if (!Object.prototype.hasOwnProperty.call(persisted, "policyVersion")) loaded.policyVersion = 0;
+    return loaded;
+  } catch { return kpopDefaultCloneState(); }
+}`;
+v8 = mustReplace(v8, oldLoadCloneState, newLoadCloneState, "legacy persisted crawl policy migration");
+
+
 v8 = mustReplace(
   v8,
   "    maxDocs: kpopCloneState.maxDocs,",
