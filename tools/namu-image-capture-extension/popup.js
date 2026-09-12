@@ -167,6 +167,7 @@ function formatJob(job) {
 }
 
 const RAW_REASON_LABELS = {
+  canonical_raw_missing: "canonical RAW NamuMark missing",
   root_canonical_anchor: "root canonical source",
   browser_dom_missing: "DOM capture missing",
   dom_promotion_blocked: "DOM promotion blocked",
