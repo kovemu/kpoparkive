@@ -6,6 +6,7 @@ const KPOP_RUNNER_ASSET_RETRIES = 5;
 const KPOP_RUNNER_BACKOFF_MS = [1200, 2500, 5000, 10000, 20000, 30000];
 const runnerStatusNode = document.getElementById("status");
 let runnerKnownAssetUrls = new Set();
+let runnerKnownAssetKeys = new Set();
 let runnerRootTitle = "";
 let runnerCaptureMode = "dom";
 let runnerRefreshExisting = false;
@@ -18,6 +19,22 @@ function runnerSetStatus(text) {
 function runnerNormalizeUrl(value) {
   try { return new URL(String(value || ""), "https://namu.wiki").toString(); }
   catch { return String(value || "").trim(); }
+}
+
+function runnerCanonicalAssetKey(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .trim()
+    .replace(/^(?:파일|File):/i, "")
+    .replace(/[?#].*$/, "")
+    .replace(/[ \t]+/g, " ")
+    .toLowerCase();
+}
+
+function runnerAssetKey(asset) {
+  return runnerCanonicalAssetKey(asset?.fileName || "");
 }
 
 function runnerTransientError(value) {
@@ -76,17 +93,27 @@ async function runnerLoadKnownAssets(rootTitle) {
   try {
     const result = await runnerJson(`/assets-known?rootTitle=${encodeURIComponent(rootTitle)}`);
     runnerKnownAssetUrls = new Set((result.urls || []).map(runnerNormalizeUrl));
+    runnerKnownAssetKeys = new Set(
+      (result.keys || [])
+        .map(runnerCanonicalAssetKey)
+        .filter(Boolean)
+    );
   } catch {
     runnerKnownAssetUrls = new Set();
+    runnerKnownAssetKeys = new Set();
   }
 }
 
 function runnerAssetAlreadyKnown(asset) {
-  return (asset?.urls || []).some((url) => runnerKnownAssetUrls.has(runnerNormalizeUrl(url)));
+  if ((asset?.urls || []).some((url) => runnerKnownAssetUrls.has(runnerNormalizeUrl(url)))) return true;
+  const key = runnerAssetKey(asset);
+  return Boolean(key && runnerKnownAssetKeys.has(key));
 }
 
 function runnerRememberAsset(asset) {
   for (const url of asset?.urls || []) runnerKnownAssetUrls.add(runnerNormalizeUrl(url));
+  const key = runnerAssetKey(asset);
+  if (key) runnerKnownAssetKeys.add(key);
 }
 
 async function runnerCaptureOneAssetWithRetry(prep, asset) {
@@ -461,9 +488,13 @@ async function runnerMain() {
 
     if (runnerCaptureMode === "dom" && !runnerRefreshExisting) {
       await runnerLoadKnownAssets(runnerRootTitle);
-      runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nKnown media cached: ${runnerKnownAssetUrls.size}`);
+      runnerSetStatus(
+        `Running DOM import · ${runnerRootTitle}\n` +
+        `Known media cached: ${runnerKnownAssetKeys.size} files · ${runnerKnownAssetUrls.size} URLs`
+      );
     } else if (runnerCaptureMode === "dom") {
       runnerKnownAssetUrls = new Set();
+      runnerKnownAssetKeys = new Set();
       runnerSetStatus(`Running DOM import · ${runnerRootTitle}\nRefresh existing: ON · media reuse bypassed`);
     } else {
       runnerSetStatus(`Running RAW crawl · ${runnerRootTitle}\nRoot RAW only · templates/assets come from cache and DOM captures`);
