@@ -1564,6 +1564,8 @@ async function main() {
     enginePatchset: ENGINE_PATCHSET || null,
     enginePatches,
     rawChars: String(target.source_wikitext).length,
+    renderedRevision: target.__kpopCanonicalRevision
+      || `sha256:${crypto.createHash("sha256").update(String(target.source_wikitext)).digest("hex")}`,
     htmlChars: html.length,
     renderMs: elapsed,
     hasError: Boolean(result?.hasError),
