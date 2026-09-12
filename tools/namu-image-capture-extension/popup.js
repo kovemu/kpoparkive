@@ -20,6 +20,8 @@ let pollTimer = null;
 let rawAssetPollTimer = null;
 let lastAutoPlannedCloneId = "";
 
+const ACTIVE_SCOPE_POLICY_VERSION = 4;
+
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
   "smart-core": { depth: 2, maxDocs: 40, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
@@ -346,20 +348,29 @@ chrome.storage.local.get([
   "kpoparkiveCrawlOrder",
   "kpoparkiveIncludeLeaf",
   "kpoparkiveRefreshExisting",
+  "kpoparkiveScopePolicyVersion",
 ]).then(async (stored) => {
   const savedRoot = String(stored.kpoparkiveRootTitle || "").normalize("NFKC").trim();
   if (savedRoot) rootInput.value = savedRoot;
 
-  const savedProfile = String(stored.kpoparkiveCrawlProfile || "smart-core");
-  if (CRAWL_PROFILES[savedProfile]) {
-    applyCrawlProfile(savedProfile, { persist: false });
+  const storedScopeVersion = Number(stored.kpoparkiveScopePolicyVersion || 0) || 0;
+  if (storedScopeVersion < ACTIVE_SCOPE_POLICY_VERSION) {
+    applyCrawlProfile("smart-core", { persist: true });
+    await chrome.storage.local.set({
+      kpoparkiveScopePolicyVersion: ACTIVE_SCOPE_POLICY_VERSION,
+    });
   } else {
+    const savedProfile = String(stored.kpoparkiveCrawlProfile || "smart-core");
+    if (CRAWL_PROFILES[savedProfile]) {
+      applyCrawlProfile(savedProfile, { persist: false });
+    } else {
     profileInput.value = "custom";
     depthInput.value = String(stored.kpoparkiveCloneDepth ?? 2);
     maxDocsInput.value = String(stored.kpoparkiveCloneMaxDocs ?? 40);
     crawlOrderInput.value = stored.kpoparkiveCrawlOrder === "toc" ? "toc" : "smart";
     includeLeafInput.checked = stored.kpoparkiveIncludeLeaf !== false;
-    refreshExistingInput.checked = Boolean(stored.kpoparkiveRefreshExisting);
+      refreshExistingInput.checked = Boolean(stored.kpoparkiveRefreshExisting);
+    }
   }
 
   // Keep the team/root import scope stable while navigating member/subpages.
