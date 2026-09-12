@@ -113,18 +113,50 @@ function ensureEngine() {
 }
 
 async function db(pathname, init = {}) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathname}`, {
-    ...init,
-    headers: {
-      apikey: SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Supabase ${response.status}: ${text}`);
-  return text ? JSON.parse(text) : null;
+  const delays = [1200, 2500, 5000, 10000, 20000, 30000];
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathname}`, {
+        ...init,
+        headers: {
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+          ...(init.headers || {}),
+        },
+      });
+      const text = await response.text();
+      if (response.ok) return text ? JSON.parse(text) : null;
+
+      const retryable =
+        response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 502 ||
+        (response.status === 500 && /(?:57014|statement timeout|canceling statement|PGRST002|Bad Gateway|Gateway Time-out)/i.test(text));
+
+      const error = new Error(`Supabase ${response.status}: ${text}`);
+      error.kpopRetryable = retryable;
+      lastError = error;
+      if (!retryable || attempt >= delays.length) throw error;
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error || "");
+      const retryable =
+        error?.kpopRetryable === true ||
+        /(?:fetch failed|network|ECONN|ETIMEDOUT|ECONNRESET|57014|statement timeout|canceling statement|PGRST002|502|503|504|429|408)/i.test(message);
+      if (!retryable || attempt >= delays.length) throw error;
+    }
+
+    const delay = delays[attempt] + Math.floor(Math.random() * 350);
+    console.warn(
+      `SUPABASE RENDER RETRY: attempt ${attempt + 1}/${delays.length} in ${Math.round(delay / 1000)}s`
+    );
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  throw lastError || new Error("Supabase request failed after retries");
 }
 
 async function dbAll(pathname, { pageSize = 1000, maxRows = 20000 } = {}) {
