@@ -197,9 +197,9 @@ const oldKnownAssets = String.raw`async function kpopKnownAssetUrls(rootTitle) {
   );
   return [...new Set((rows || []).map((row) => String(row?.source_url || "").trim()).filter(Boolean))];
 }`;
-const newKnownAssets = String.raw`async function kpopKnownAssetUrls(rootTitle) {
+const newKnownAssets = String.raw`async function kpopKnownAssetState(rootTitle) {
   const root = String(rootTitle || "").normalize("NFKC").trim();
-  if (!root) return [];
+  if (!root) return { urls: [], keys: [] };
 
   const staging = await db(
     "namu_capture_staging?root_title=eq." + encodeURIComponent(root) +
@@ -207,21 +207,46 @@ const newKnownAssets = String.raw`async function kpopKnownAssetUrls(rootTitle) {
   );
   const resolved = await db(
     "source_asset_queue?root_title=eq." + encodeURIComponent(root) +
-    "&asset_type=eq.image&status=eq.resolved&select=metadata&limit=10000"
+    "&asset_type=eq.image&status=eq.resolved" +
+    "&select=source_ref,label,resolved_url,storage_path&limit=10000"
   );
 
   const urls = [];
+  const keys = [];
   for (const row of staging || []) {
     const value = String(row?.source_url || "").trim();
     if (value) urls.push(value);
   }
   for (const row of resolved || []) {
-    const value = String(row?.metadata?.original_url || "").trim();
-    if (value) urls.push(value);
+    for (const raw of [row?.source_ref, row?.label]) {
+      const value = String(raw || "").normalize("NFKC").trim();
+      if (value) keys.push(value);
+    }
   }
-  return [...new Set(urls)];
+  return {
+    urls: [...new Set(urls)],
+    keys: [...new Set(keys)],
+  };
+}
+
+async function kpopKnownAssetUrls(rootTitle) {
+  return (await kpopKnownAssetState(rootTitle)).urls;
 }`;
-v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache");
+v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "root-scoped known-media cache");
+
+const oldKnownAssetsRoute = String.raw`    if (req.method === "GET" && url.pathname === "/assets-known") {
+      const rootTitle = String(url.searchParams.get("rootTitle") || "").trim();
+      if (!rootTitle) throw new Error("rootTitle is required");
+      json(res, 200, { ok: true, urls: await kpopKnownAssetUrls(rootTitle) });
+      return;
+    }`;
+const newKnownAssetsRoute = String.raw`    if (req.method === "GET" && url.pathname === "/assets-known") {
+      const rootTitle = String(url.searchParams.get("rootTitle") || "").trim();
+      if (!rootTitle) throw new Error("rootTitle is required");
+      json(res, 200, { ok: true, ...(await kpopKnownAssetState(rootTitle)) });
+      return;
+    }`;
+v8 = mustReplace(v8, oldKnownAssetsRoute, newKnownAssetsRoute, "known-media route with canonical keys");
 
 v8 = mustReplace(
   v8,
