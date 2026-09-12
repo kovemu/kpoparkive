@@ -320,6 +320,9 @@ export async function runCurrentRenderAssetAudit({
   const englishRenderReady = documents.filter((doc) => doc.englishRenderReady).length;
   const noCurrentRender = documents.filter((doc) => !doc.sourceRenderReady && !doc.englishRenderReady).length;
   const missingMediaReferences = documents.reduce((sum, doc) => sum + doc.currentMissingMedia.length, 0);
+  const affectedTitles = documents
+    .filter((doc) => doc.currentMissingFiles.length > 0 || doc.currentMissingMedia.length > 0)
+    .map((doc) => doc.sourceTitle);
 
   return {
     rootTitle,
@@ -351,6 +354,7 @@ export async function runCurrentRenderAssetAudit({
     missingMedia: documents
       .filter((doc) => doc.currentMissingMedia.length)
       .map((doc) => ({ sourceTitle: doc.sourceTitle, items: doc.currentMissingMedia })),
+    affectedTitles,
     staleStoragePaths: [...storage.missing].sort(),
     documents,
   };
