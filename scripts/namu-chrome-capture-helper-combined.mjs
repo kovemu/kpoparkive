@@ -297,6 +297,7 @@ async function saveRawSource(payload) {
           updated_at: capturedAt,
         }),
       });
+      await kpopMarkRawRequirementCaptured(doc, rootTitle, sourceTitle, capturedAt);
       console.log(`RAW SOURCE VERIFIED ${sourceTitle} -> canonical provenance upgraded without changing source text`);
       return {
         ok: true,
@@ -312,6 +313,7 @@ async function saveRawSource(payload) {
       };
     }
 
+    await kpopMarkRawRequirementCaptured(doc, rootTitle, sourceTitle, existing?.raw_extracted_at || capturedAt);
     console.log(`RAW SOURCE UNCHANGED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB; keeping raw_extracted_at/status`);
     return {
       ok: true,
@@ -344,6 +346,7 @@ async function saveRawSource(payload) {
     }),
   });
 
+  await kpopMarkRawRequirementCaptured(doc, rootTitle, sourceTitle, capturedAt);
   console.log(`RAW SOURCE SAVED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB via ${String(payload?.extractionMethod || "normal-chrome-edit")}`);
   if (shouldTranslate) {
     console.log(`CHATGPT TRANSLATION PENDING ${sourceTitle}`);
@@ -881,6 +884,30 @@ const server = http.createServer(async (req, res) => {
       const sourceTitle = String(url.searchParams.get("sourceTitle") || "").trim();
       if (!sourceTitle) throw new Error("sourceTitle is required");
       json(res, 200, { ok: true, ...(await rawSourceStatus(sourceTitle)) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/raw-needs") {
+      const rootTitle = String(url.searchParams.get("rootTitle") || "").trim();
+      json(res, 200, await kpopListRawRequirements(rootTitle));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/raw-needs/plan") {
+      const bytes = await readBody(req, 64 * 1024);
+      let payload;
+      try { payload = JSON.parse(bytes.toString("utf8") || "{}"); }
+      catch { throw new Error("raw-needs plan payload is not valid JSON"); }
+      json(res, 200, await kpopPlanRawRequirements(payload?.rootTitle));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/raw-needs/ignore") {
+      const bytes = await readBody(req, 64 * 1024);
+      let payload;
+      try { payload = JSON.parse(bytes.toString("utf8") || "{}"); }
+      catch { throw new Error("raw-needs ignore payload is not valid JSON"); }
+      json(res, 200, await kpopIgnoreRawRequirement(payload?.rootTitle, payload?.sourceTitle));
       return;
     }
 
