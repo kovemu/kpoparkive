@@ -7,6 +7,7 @@ const args = process.argv.slice(2);
 const rootTitle = String(args.find((arg) => !arg.startsWith("--")) || "RESCENE").normalize("NFKC").trim();
 const strict = args.includes("--strict");
 const json = args.includes("--json");
+const skipHttp = args.includes("--skip-http");
 const expectedArg = args.find((arg) => arg.startsWith("--expected-count="));
 const expectedCount = expectedArg ? Number(expectedArg.split("=")[1]) : null;
 
@@ -172,10 +173,10 @@ for (const requirement of scope) {
   if (!translatedTitle) warnings.push("missing_translated_title");
   else if (/[가-힣]/.test(translatedTitle)) warnings.push("translated_title_contains_hangul");
 
-  const route = await inspectRoute(doc.source_title, published);
-  if (!route.ok) blockers.push(published ? "public_route_failed" : "unpublished_route_not_404");
-  if (route.loadingImages > 0) warnings.push("loading_images:" + route.loadingImages);
-  if (route.koreanUi.length > 0) warnings.push("korean_ui:" + route.koreanUi.join(","));
+  const route = skipHttp ? null : await inspectRoute(doc.source_title, published);
+  if (route && !route.ok) blockers.push(published ? "public_route_failed" : "unpublished_route_not_404");
+  if (route?.loadingImages > 0) warnings.push("loading_images:" + route.loadingImages);
+  if (route?.koreanUi.length > 0) warnings.push("korean_ui:" + route.koreanUi.join(","));
 
   results.push({
     sourceTitle: doc.source_title,
@@ -208,13 +209,14 @@ const summary = {
   integrationFailures: results.filter((row) =>
     row.blockers.some((value) => value === "public_route_failed" || value === "unpublished_route_not_404")
   ).length,
+  httpChecksSkipped: skipHttp,
 };
 
 if (json) {
   console.log(JSON.stringify({ summary, results }, null, 2));
 } else {
   console.log("Kpoparkive integration QA · " + rootTitle);
-  console.log("base=" + baseUrl);
+  console.log("base=" + baseUrl + (skipHttp ? " (HTTP checks skipped)" : ""));
   console.log(
     "scope=" + summary.scopeCount + (expectedCount == null ? "" : "/" + expectedCount) +
     " raw=" + summary.canonicalRaw + "/" + summary.scopeCount +
