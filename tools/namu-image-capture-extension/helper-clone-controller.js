@@ -1073,7 +1073,7 @@ async function kpopDriveRawQueue() {
         kpopRawQueueState.status = "running";
         kpopRawQueueState.lastError = "";
 
-        const refreshed = await kpopRawNeedsStatus({ rootTitle });
+        const refreshed = await kpopPlanRawNeeds({ rootTitle });
         kpopRawQueueState.remaining = Number(refreshed?.counts?.needs_raw || 0);
         await kpopSaveRawQueueState();
 
