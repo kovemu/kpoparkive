@@ -8,8 +8,10 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 type SearchRow = {
   source_title: string;
   translated_title: string | null;
+  root_title: string | null;
   content_language: string | null;
   content_status: string | null;
+  published_revision_no: number | null;
 };
 
 async function searchDocuments(query: string): Promise<SearchRow[]> {
@@ -19,7 +21,7 @@ async function searchDocuments(query: string): Promise<SearchRow[]> {
 
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/source_documents?source=eq.namu_mirror&or=(source_title.ilike.${encodeURIComponent(pattern)},translated_title.ilike.${encodeURIComponent(pattern)})&select=source_title,translated_title,content_language,content_status&order=source_title.asc&limit=50`,
+      `${SUPABASE_URL}/rest/v1/source_documents?source=eq.namu_mirror&or=(source_title.ilike.${encodeURIComponent(pattern)},translated_title.ilike.${encodeURIComponent(pattern)})&select=source_title,translated_title,root_title,content_language,content_status,published_revision_no&order=source_title.asc&limit=50`,
       {
         headers: {
           apikey: SERVICE_ROLE_KEY,
@@ -68,11 +70,27 @@ export default async function SearchPage({
             <div className="searchResults">
               {results.map((row) => {
                 const encoded = row.source_title.split("/").map(encodeURIComponent).join("/");
+                const translated = row.translated_title?.trim() || "";
+                const hasPublishedEnglish =
+                  Number(row.published_revision_no || 0) > 0 &&
+                  Boolean(translated);
+                const primaryTitle = hasPublishedEnglish ? translated : row.source_title;
+
+                const contextParts = [
+                  row.root_title &&
+                  row.root_title !== row.source_title &&
+                  row.root_title !== primaryTitle
+                    ? row.root_title
+                    : "",
+                  primaryTitle !== row.source_title ? row.source_title : "",
+                ].filter(Boolean);
+
                 return (
                   <a className="searchResult" key={row.source_title} href={`/w/${encoded}`}>
-                    {row.content_status === "published" && row.content_language === "en" && row.translated_title
-                      ? row.translated_title
-                      : row.source_title}
+                    <span className="searchResultTitle">{primaryTitle}</span>
+                    {contextParts.length ? (
+                      <span className="searchResultMeta">{contextParts.join(" · ")}</span>
+                    ) : null}
                   </a>
                 );
               })}
