@@ -275,22 +275,33 @@ async function fetchSourceRenderPending() {
     const needsDomVideoRecovery =
       missingFiles && Number(meta?.domVideoRecoveryVersion || 0) < 1;
 
-    // A failed English draft is repairable when the captured Korean source is
-    // still known to have missing templates/media. Keep it in the source-repair
-    // loop instead of stranding it permanently in translation_status=failed.
-    const repairableFailedDraft =
-      row?.translation_status === "failed" &&
+    // Do not spin forever on an unresolved dependency. A missing template/file
+    // by itself is not a reason to rerender the same source every five seconds.
+    // Failed English drafts re-enter source repair only when the source render
+    // was explicitly invalidated/stale or an actual repair-version upgrade is
+    // still pending. Capturing a missing RAW template invalidates the owner
+    // render, which makes this condition true on the next poll.
+    const hasEnglishDraft =
       row?.content_language === "en" &&
       Number(row?.content_revision_no || 0) > 0 &&
       typeof row?.content_wikitext === "string" &&
-      row.content_wikitext.length > 0 &&
-      (missingTemplates || missingFiles);
+      row.content_wikitext.length > 0;
+    const repairableFailedDraftNeedsRender =
+      row?.translation_status === "failed" &&
+      hasEnglishDraft &&
+      (
+        !Number.isFinite(renderedAt) ||
+        (Number.isFinite(rawAt) && renderedAt < rawAt) ||
+        needsFallbackExtractorUpgrade ||
+        needsStagingAssetReconcile ||
+        needsDomVideoRecovery
+      );
 
     return staleByTime ||
       needsFallbackExtractorUpgrade ||
       needsStagingAssetReconcile ||
       needsDomVideoRecovery ||
-      repairableFailedDraft;
+      repairableFailedDraftNeedsRender;
   });
 }
 
@@ -314,19 +325,15 @@ async function fetchPending() {
     const sourceNewer =
       Number.isFinite(sourceRenderedAt) &&
       (!Number.isFinite(contentRenderedAt) || contentRenderedAt < sourceRenderedAt);
-    const renderStillBroken =
-      Boolean(meta?.hasError) ||
-      Number(meta?.missingTemplateCount || 0) > 0 ||
-      Number(meta?.missingFileCount || 0) > 0 ||
-      (Array.isArray(meta?.missingYouTubeEmbeds) && meta.missingYouTubeEmbeds.length > 0);
-
     const fallbackNormalizerOutdated =
       Number(meta?.domFallbackTemplateCount || 0) > 0 &&
       Number(meta?.domFallbackNormalizerVersion || 0) < DOM_FALLBACK_NORMALIZER_TARGET_VERSION;
 
+    // Missing renderer dependencies are a WAIT state, not a render-loop state.
+    // Once RAW/media capture repairs the source, source_namumark_rendered_at
+    // advances and sourceNewer schedules exactly one fresh English render.
     return renderedRevision !== revision ||
       sourceNewer ||
-      renderStillBroken ||
       fallbackNormalizerOutdated;
   }).slice(0, 10);
 }
@@ -560,6 +567,23 @@ async function fetchRendered(id) {
   return rows?.[0] || null;
 }
 
+function renderedDependencyGaps(row) {
+  const meta = row?.content_namumark_meta && typeof row.content_namumark_meta === "object"
+    ? row.content_namumark_meta
+    : {};
+  const templates = Array.isArray(meta?.missingTemplates) ? meta.missingTemplates : [];
+  const files = Array.isArray(meta?.missingFiles) ? meta.missingFiles : [];
+  const youtube = Array.isArray(meta?.missingYouTubeEmbeds) ? meta.missingYouTubeEmbeds : [];
+  return {
+    templateCount: Number(meta?.missingTemplateCount || templates.length || 0),
+    fileCount: Number(meta?.missingFileCount || files.length || 0),
+    youtubeCount: youtube.length,
+    templates,
+    files,
+    youtube,
+  };
+}
+
 async function validateRenderedDraft(row, expectedRevision) {
   if (!row) throw new Error("Rendered document disappeared");
   if (row.translation_status !== "translated_by_chatgpt") {
@@ -712,6 +736,27 @@ async function tick() {
 
         await runRenderer(title);
         const rendered = await fetchRendered(id);
+        const gaps = renderedDependencyGaps(rendered);
+        if (gaps.templateCount || gaps.fileCount || gaps.youtubeCount) {
+          const parts = [];
+          if (gaps.templateCount) {
+            parts.push(
+              `${gaps.templateCount} template(s)` +
+              (gaps.templates.length ? ` [${gaps.templates.slice(0, 5).join(" | ")}]` : "")
+            );
+          }
+          if (gaps.fileCount) {
+            parts.push(
+              `${gaps.fileCount} file(s)` +
+              (gaps.files.length ? ` [${gaps.files.slice(0, 5).join(" | ")}]` : "")
+            );
+          }
+          if (gaps.youtubeCount) parts.push(`${gaps.youtubeCount} YouTube embed(s)`);
+          console.log(
+            `ASSISTANT RENDER WAITING ${title}: renderer dependency capture required: ${parts.join(", ")}`,
+          );
+          continue;
+        }
         await validateRenderedDraft(rendered, revision);
       } catch (error) {
         await markFailed(id, title, error);
