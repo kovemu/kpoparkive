@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { runAssetAudit } from "./namu-asset-audit.mjs";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_RAW_ASSET_PORT || 43120) || 43120;
@@ -290,6 +291,50 @@ async function buildPlan(payload) {
   };
 }
 
+async function buildClusterPlan(payload) {
+  const rootTitle = String(payload?.rootTitle || "").normalize("NFKC").trim();
+  if (!rootTitle) throw new Error("rootTitle is required");
+  const maxDepth = Number.isFinite(Number(payload?.maxDepth)) ? Number(payload.maxDepth) : 1;
+  const audit = await runAssetAudit({
+    rootTitle,
+    maxDepth,
+    enqueue: payload?.enqueue !== false,
+  });
+
+  const requiredCount = Number(audit?.totals?.uniqueRequiredFiles || 0);
+  const missingFiles = (audit?.missingUniqueFiles || []).map((item) => {
+    const requiredBy = Array.isArray(item?.requiredBy) ? item.requiredBy.filter(Boolean) : [];
+    return {
+      fileName: item.fileName,
+      sourceRef: `파일:${item.fileName}`,
+      sourceTitle: requiredBy[0] || rootTitle,
+      requiredBy,
+      queueRowIds: [],
+      reason: item.existingQueueStatuses?.includes("unresolved")
+        ? "unresolved"
+        : "cluster-required",
+    };
+  });
+
+  return {
+    ok: true,
+    cluster: true,
+    rootTitle,
+    sourceTitle: rootTitle,
+    maxDepth,
+    coreDocuments: Number(audit?.coreDocuments || 0),
+    requiredCount,
+    resolvedCount: Math.max(0, requiredCount - missingFiles.length),
+    missingCount: missingFiles.length,
+    queueRowsCreated: Number(audit?.enqueue?.created || 0),
+    queueRowsRequeued: Number(audit?.enqueue?.requeued || 0),
+    alreadyQueued: Number(audit?.enqueue?.alreadyQueued || 0),
+    missingFiles,
+    staleStoragePaths: Array.isArray(audit?.staleStoragePaths) ? audit.staleStoragePaths : [],
+    duplicateCanonicalKeys: Array.isArray(audit?.duplicateCanonicalKeys) ? audit.duplicateCanonicalKeys.length : 0,
+  };
+}
+
 function safePart(value) {
   const part = String(value || "")
     .normalize("NFKD")
@@ -421,12 +466,17 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      json(res, 200, { ok: true, service: "kpoparkive-raw-asset-helper-v2", port: PORT, videoBackedFiles: true });
+      json(res, 200, { ok: true, service: "kpoparkive-raw-asset-helper-v2", port: PORT, videoBackedFiles: true, clusterPlan: true });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/plan") {
       json(res, 200, await buildPlan(await readJson(req)));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/cluster-plan") {
+      json(res, 200, await buildClusterPlan(await readJson(req)));
       return;
     }
 
