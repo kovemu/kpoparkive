@@ -252,7 +252,7 @@ v8 = mustReplace(v8, oldKnownAssetsRoute, newKnownAssetsRoute, "known-media rout
 v8 = mustReplace(
   v8,
   "const KPOP_CLONE_MAX_RETRIES = 2;",
-  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 5;",
+  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 6;",
   "crawl policy version",
 );
 
@@ -352,6 +352,10 @@ function kpopSortCloneQueue() {
 }
 
 function kpopEnqueueLinks(links, depth) {
+  // Scale-safe core scope: root -> direct TOC documents + members only.
+  // First-hop documents never recurse into their own TOC links.
+  if (depth > 1) return 0;
+
   const seen = new Set(kpopCloneState.seenUrls);
   let added = 0;
 
@@ -363,11 +367,8 @@ function kpopEnqueueLinks(links, depth) {
     if (mode === "leaf" && kpopCloneState.includeLeaf === false) continue;
 
     const relation = String(link?.relation || "");
-    const scopeCritical = relation === "toc_document" || relation === "member";
-
-    // TOC scope is recursive and outranks the legacy depth guard. The document
-    // budget remains the hard safety cap against runaway graphs.
-    if (depth > kpopCloneState.maxDepth && !scopeCritical) continue;
+    const coreRelation = relation === "toc_document" || relation === "member";
+    if (!coreRelation) continue;
 
     const url = kpopCleanCloneUrl(link.href);
     if (!url || seen.has(url)) continue;
@@ -386,7 +387,7 @@ function kpopEnqueueLinks(links, depth) {
       queueOrder: kpopCloneState.seenUrls.length,
       forceCapture: Boolean(
         kpopCloneState.refreshExisting ||
-        (kpopCloneState.policyRefresh && scopeCritical)
+        (kpopCloneState.policyRefresh && coreRelation)
       ),
     });
     added += 1;
