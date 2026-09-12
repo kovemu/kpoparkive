@@ -127,8 +127,73 @@ async function sendAsset(blob, meta) {
   return body;
 }
 
+async function readRenderedTransferField(tabId, transferId, field, totalLength) {
+  const chunks = [];
+  let offset = 0;
+  const expected = Math.max(0, Number(totalLength || 0) || 0);
+
+  while (offset < expected) {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "kpoparkive-read-namu-rendered-chunk",
+      transferId,
+      field,
+      offset,
+      limit: 2 * 1024 * 1024,
+    });
+    if (!response?.ok) throw new Error(response?.error || `Could not read rendered ${field} chunk.`);
+    const chunk = String(response.chunk || "");
+    chunks.push(chunk);
+    offset = Number(response.nextOffset || (offset + chunk.length)) || (offset + chunk.length);
+    if (response.done) break;
+    if (!chunk.length) throw new Error(`Rendered ${field} transfer stalled at offset ${offset}.`);
+  }
+
+  const value = chunks.join("");
+  if (value.length !== expected) {
+    throw new Error(`Rendered ${field} transfer length mismatch: expected ${expected}, got ${value.length}.`);
+  }
+  return value;
+}
+
+async function extractRenderedDocumentChunked(tabId) {
+  const prepared = await chrome.tabs.sendMessage(tabId, {
+    type: "kpoparkive-prepare-namu-rendered-document",
+  });
+  if (!prepared?.ok) {
+    throw new Error(prepared?.error || "Could not prepare rendered article DOM.");
+  }
+
+  const transferId = String(prepared.transferId || "");
+  if (!transferId) throw new Error("Rendered DOM transfer id is missing.");
+
+  try {
+    const [articleHtml, styleCss] = await Promise.all([
+      readRenderedTransferField(tabId, transferId, "articleHtml", prepared.articleLength),
+      readRenderedTransferField(tabId, transferId, "styleCss", prepared.styleLength),
+    ]);
+
+    return {
+      ok: true,
+      pageUrl: prepared.pageUrl,
+      pageTitle: prepared.pageTitle,
+      sourceTitle: prepared.sourceTitle,
+      articleHtml,
+      styleCss,
+      captureVersion: prepared.captureVersion,
+      meta: prepared.meta || {},
+    };
+  } finally {
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: "kpoparkive-release-namu-rendered-document",
+        transferId,
+      });
+    } catch {}
+  }
+}
+
 async function tabCapturePayload(tabId, rootTitle, crawlDepth = 0) {
-  const rendered = await chrome.tabs.sendMessage(tabId, { type: "kpoparkive-extract-namu-rendered-document" });
+  const rendered = await extractRenderedDocumentChunked(tabId);
   if (!rendered?.ok) throw new Error(rendered?.error || "Could not extract rendered article DOM.");
 
   let links = { ok: true, links: [] };
