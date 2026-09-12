@@ -77,10 +77,10 @@
     <label class="check"><input id="includeLeaf" type="checkbox" /> Include non-TOC related pages (legacy)</label>
     <label class="check"><input id="refreshExisting" type="checkbox" /> Refresh existing captures</label>
 
-    <p style="margin-top:8px">Smart Core collects only the root document, its direct Contents-linked documents, and members. First-hop documents do not recurse into their own TOC links. The 80-document budget is only a safety cap.</p>
+    <p style="margin-top:8px">Smart Core collects only the root document, its direct Contents-linked documents, and members. After Harvest, Start RAW Queue captures every missing canonical RAW document automatically and pauses only for NamuWiki verification.</p>
     <button id="clone">Smart /w/ DOM Harvest</button>
     <button id="rawPlan" class="plan">Plan RAW Needs</button>
-    <button id="rawNext" class="nextRaw">Capture Next Required RAW</button>
+    <button id="rawNext" class="nextRaw">Start RAW Queue</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
       <summary>Advanced / Debug</summary>
