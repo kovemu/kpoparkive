@@ -96,14 +96,27 @@ export async function generateMetadata({
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
   const meta = await wikiMetaFor(sourceTitle);
+  const pageTitle = `${meta.title} - Kpoparkive`;
+  const description = `English K-pop wiki article for ${meta.title}, with detailed profiles, activities, releases, media, and references.`;
+  const canonical = canonicalUrlFor(sourceTitle);
   return {
-    title: `${meta.title} - Kpoparkive`,
+    title: pageTitle,
+    description,
     alternates: meta.published
-      ? { canonical: canonicalUrlFor(sourceTitle) }
+      ? { canonical }
       : undefined,
     robots: meta.published
       ? { index: true, follow: true }
       : { index: false, follow: false },
+    openGraph: meta.published
+      ? {
+          title: pageTitle,
+          description,
+          url: canonical,
+          type: "article",
+          siteName: "Kpoparkive",
+        }
+      : undefined,
   };
 }
 
