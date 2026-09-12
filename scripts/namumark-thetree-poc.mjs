@@ -835,18 +835,43 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
 function applyTemplateDomFallbackMarkers(rawValue, fallbackByTitle) {
   const raw = String(rawValue || "");
   const ranges = findIncludeRanges(raw);
-  const counts = new Map();
-  for (const range of ranges) counts.set(range.title, (counts.get(range.title) || 0) + 1);
-  const replacements = [];
+  const grouped = new Map();
   for (const range of ranges) {
-    const fallback = fallbackByTitle.get(range.title);
-    if (!fallback) continue;
-    if ((counts.get(range.title) || 0) !== 1) continue;
-    const marker = "KPOPARKIVE_TEMPLATE_FALLBACK_" + crypto.createHash("sha1").update(range.title).digest("hex").slice(0, 16);
-    replacements.push({ ...range, marker, fallback });
+    const list = grouped.get(range.title) || [];
+    list.push(range);
+    grouped.set(range.title, list);
   }
+
+  const replacements = [];
+  const markerRanges = [];
+  for (const [title, group] of grouped.entries()) {
+    const fallback = fallbackByTitle.get(title);
+    if (!fallback || !group.length) continue;
+
+    // A captured DOM fallback is safe to replay for repeated includes only
+    // when every invocation is structurally identical. This covers logo/icon
+    // utility templates while refusing parameterized templates whose output
+    // varies per call.
+    const distinctInvocations = new Set(
+      group.map((item) => String(item.source || "").normalize("NFKC").replace(/\s+/g, " ").trim()),
+    );
+    if (group.length > 1 && distinctInvocations.size !== 1) continue;
+
+    const marker =
+      "KPOPARKIVE_TEMPLATE_FALLBACK_" +
+      crypto.createHash("sha1").update(title).digest("hex").slice(0, 16);
+    replacements.push({
+      ...group[0],
+      title,
+      marker,
+      fallback,
+      occurrenceCount: group.length,
+    });
+    for (const range of group) markerRanges.push({ ...range, marker });
+  }
+
   let renderedSource = raw;
-  for (const item of replacements.sort((a, b) => b.start - a.start)) {
+  for (const item of markerRanges.sort((a, b) => b.start - a.start)) {
     renderedSource = renderedSource.slice(0, item.start) + item.marker + renderedSource.slice(item.end);
   }
   return { renderedSource, replacements };
@@ -1185,11 +1210,11 @@ async function syncSourceTemplateFallback(target, replacement, sourceBrowserCapt
   let preservedTranslationStatus = "pending_chatgpt";
   let preservedTranslatedAt = null;
   let preservedMap = {};
-  if (existing?.id && untranslatedHangul.length === 0 && Object.keys(existingMap).length > 0) {
+  if (untranslatedHangul.length === 0) {
     const translated = translateFallbackHtml(sourceHtml, existingMap);
     if (translated.html && translated.unresolvedHangul.length === 0) {
       preservedEnHtml = translated.html;
-      preservedTranslationStatus = ["reviewed", "translated_by_chatgpt"].includes(String(existing.translation_status || ""))
+      preservedTranslationStatus = ["reviewed", "translated_by_chatgpt"].includes(String(existing?.translation_status || ""))
         ? existing.translation_status
         : "reviewed";
       preservedTranslatedAt = now;
@@ -1226,11 +1251,20 @@ async function translatedTemplateFallbackMap(target, renderSource, missingTempla
     "&select=id,template_title,include_hash,source_html,en_html,en_text_map,translation_status&order=updated_at.desc"
   );
   const ranges = findIncludeRanges(renderSource);
-  const counts = new Map();
-  for (const range of ranges) counts.set(range.title, (counts.get(range.title) || 0) + 1);
+  const grouped = new Map();
+  for (const range of ranges) {
+    const list = grouped.get(range.title) || [];
+    list.push(range);
+    grouped.set(range.title, list);
+  }
 
   for (const templateTitle of missingTemplates) {
-    if ((counts.get(templateTitle) || 0) !== 1) continue;
+    const invocations = grouped.get(templateTitle) || [];
+    if (!invocations.length) continue;
+    const distinctInvocations = new Set(
+      invocations.map((item) => String(item.source || "").normalize("NFKC").replace(/\s+/g, " ").trim()),
+    );
+    if (invocations.length > 1 && distinctInvocations.size !== 1) continue;
     const candidates = (rows || []).filter((row) => normalizeTitle(row.template_title) === normalizeTitle(templateTitle));
     if (candidates.length !== 1) continue;
     const row = candidates[0];
@@ -1552,7 +1586,7 @@ async function main() {
     domFallbackMediaRewritten: Number(injectedFallbacks.mediaRewritten || 0),
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
-    fallbackExtractorVersion: 4,
+    fallbackExtractorVersion: 5,
     assetReconcilerVersion: 2,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
