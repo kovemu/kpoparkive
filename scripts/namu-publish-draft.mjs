@@ -123,6 +123,18 @@ function validateDraft(row) {
     );
   }
 
+  const syntaxLeaks = [
+    ["raw-link", /\[\[[^\]]+\]\]/],
+    ["include", /\[include\s*\(/i],
+    ["wiki-directive", /\{\{\{#!/i],
+  ].filter(([, pattern]) => pattern.test(row.content_namumark_html));
+  if (syntaxLeaks.length > 0) {
+    throw new Error(`Rendered HTML still contains NamuMark syntax: ${syntaxLeaks.map(([name]) => name).join(", ")}`);
+  }
+  if (/href=["']https:\/\/namu\.wiki\/w\//i.test(row.content_namumark_html)) {
+    throw new Error("Rendered HTML still contains an absolute NamuWiki article link");
+  }
+
   const visibleKoreanLinks = findVisibleKoreanLinkLabels(row.content_namumark_html, { limit: 20 });
   if (visibleKoreanLinks.length > 0) {
     const preview = visibleKoreanLinks
@@ -137,9 +149,13 @@ function validateDraft(row) {
   return { revision, meta };
 }
 
-async function publishTitle(title) {
+async function prepareTitle(title) {
   const row = await fetchDraft(title);
   const { revision, meta } = validateDraft(row);
+  return { title, row, revision, meta };
+}
+
+async function publishPrepared({ title, row, revision, meta }) {
   const now = new Date().toISOString();
 
   await db(`source_documents?id=eq.${encodeURIComponent(row.id)}`, {
@@ -164,14 +180,36 @@ async function publishTitle(title) {
   console.log(`Public: https://kpoparkive.vercel.app/w/${title.split("/").map(encodeURIComponent).join("/")}`);
 }
 
-let failed = false;
+const prepared = [];
+let preflightFailed = false;
+
 for (const title of titles) {
   try {
-    await publishTitle(title);
+    const item = await prepareTitle(title);
+    prepared.push(item);
+    console.log(`PREFLIGHT OK ${title} r${item.revision}`);
   } catch (error) {
-    failed = true;
-    console.error(`PUBLISH FAILED ${title}: ${error instanceof Error ? error.message : String(error)}`);
+    preflightFailed = true;
+    console.error(`PREFLIGHT FAILED ${title}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-if (failed) process.exitCode = 1;
+if (preflightFailed) {
+  console.error("PUBLISH ABORTED: at least one document failed preflight; no requested documents were published.");
+  process.exitCode = 1;
+} else {
+  let publishFailed = false;
+  for (const item of prepared) {
+    try {
+      await publishPrepared(item);
+    } catch (error) {
+      publishFailed = true;
+      console.error(`PUBLISH FAILED ${item.title}: ${error instanceof Error ? error.message : String(error)}`);
+      break;
+    }
+  }
+  if (publishFailed) {
+    console.error("PUBLISH STOPPED after a runtime/database failure. Re-run preflight and inspect published_revision_no before retrying.");
+    process.exitCode = 1;
+  }
+}
