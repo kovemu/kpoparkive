@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import WikiShell from "../../../components/wiki/WikiShell";
 import "../shell.css";
@@ -51,6 +52,19 @@ async function displayTitleFor(sourceTitle: string) {
     // Fall back to the captured source title if metadata lookup fails.
   }
   return sourceTitle;
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ title: string[] }>;
+}): Promise<Metadata> {
+  const { title: segments } = await params;
+  const sourceTitle = sourceTitleFromSegments(segments);
+  const title = await displayTitleFor(sourceTitle);
+  return {
+    title: `${title} - Kpoparkive`,
+  };
 }
 
 export default async function WikiTitleLayout({
