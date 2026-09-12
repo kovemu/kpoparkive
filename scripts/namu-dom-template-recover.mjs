@@ -17,6 +17,8 @@ function classifyDomPromotion(sourceHtml, sourceResult) {
   const staticScore = Number(sourceResult?.fidelity?.score || 0) || 0;
   const domMetrics = sourceResult?.fidelity?.dom || {};
   const generatedMetrics = sourceResult?.fidelity?.generated || {};
+  const generatedNamuMarkChars = String(sourceResult?.namumark || "").trim().length;
+  const trivialSynthetic = html.length >= 200 && generatedNamuMarkChars < 8;
 
   const hashLinks = countMatches(html, /href=["']#(?:["']|[^"']*["'])/gi);
   const flexOrGrid = countMatches(html, /display\s*:\s*(?:flex|grid|inline-flex|inline-grid)\b/gi);
@@ -38,7 +40,8 @@ function classifyDomPromotion(sourceHtml, sourceResult) {
   const eligible =
     staticScore >= STATIC_PROMOTION_THRESHOLD &&
     !interactiveLayout &&
-    !structuralLoss;
+    !structuralLoss &&
+    !trivialSynthetic;
 
   const reasons = [];
   if (staticScore < STATIC_PROMOTION_THRESHOLD) {
@@ -46,6 +49,9 @@ function classifyDomPromotion(sourceHtml, sourceResult) {
   }
   if (interactiveLayout) reasons.push("interactive/tabbed CSS layout detected");
   if (structuralLoss) reasons.push("DOM structure is lost before rerender verification");
+  if (trivialSynthetic) {
+    reasons.push(`DOM->NamuMark output is trivial (${generatedNamuMarkChars} chars from ${html.length} HTML chars)`);
+  }
 
   return {
     eligible,
@@ -53,6 +59,8 @@ function classifyDomPromotion(sourceHtml, sourceResult) {
     threshold: STATIC_PROMOTION_THRESHOLD,
     interactiveLayout,
     structuralLoss,
+    trivialSynthetic,
+    generatedNamuMarkChars,
     signals: {
       hashLinks,
       flexOrGrid,
@@ -352,6 +360,30 @@ async function main() {
     `Promotion gate: ${promotion.eligible ? "ELIGIBLE" : "HTML FALLBACK"} · ${promotion.reason}`
   );
   if (englishResult) console.log(`EN synthetic: ${englishResult.namumark.length.toLocaleString()} chars · static=${englishResult.fidelity.score}`);
+
+  if (promotion.trivialSynthetic) {
+    const now = new Date().toISOString();
+    await patchFallback(fallback.id, {
+      recovery_status: "converted",
+      recovery_version: DOM_TO_NAMUMARK_VERSION,
+      recovered_at: now,
+      recovery_meta: {
+        converterVersion: DOM_TO_NAMUMARK_VERSION,
+        sourceStaticFidelity: sourceResult.fidelity,
+        englishStaticFidelity: englishResult?.fidelity || null,
+        verified: false,
+        htmlFallbackRequired: true,
+        visualPromotionEligible: false,
+        syntheticSkipped: true,
+        fidelityComparatorVersion: 2,
+        promotionGate: promotion,
+      },
+    });
+    console.log(
+      `Synthetic RAW skipped: ${promotion.reason}. Translated captured HTML fallback remains authoritative.`,
+    );
+    return;
+  }
 
   const documentId = await createOrRefreshSynthetic(ownerTitle, templateTitle, sourceResult, fallback);
   console.log(`Synthetic document: ${documentId}`);
