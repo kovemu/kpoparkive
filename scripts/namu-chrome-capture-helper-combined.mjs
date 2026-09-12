@@ -159,11 +159,13 @@ const stats = {
 };
 
 async function ensureSourceDocument({ rootTitle, sourceTitle, pageUrl, crawlDepth, internalLinks }) {
+  const normalizedSourceTitle = String(sourceTitle || "").normalize("NFKC").trim();
+  const isTemplate = /^틀:/i.test(normalizedSourceTitle);
   const docs = await db(
     `source_documents?source=eq.namu_mirror` +
-    `&root_title=eq.${encodeURIComponent(rootTitle)}` +
-    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-    `&select=id,source_title,root_title&limit=1`,
+    (isTemplate ? "" : `&root_title=eq.${encodeURIComponent(rootTitle)}`) +
+    `&source_title=eq.${encodeURIComponent(normalizedSourceTitle)}` +
+    `&select=id,source_title,root_title&order=raw_extracted_at.desc.nullslast&limit=1`,
   );
   if (docs?.[0]?.id) return docs[0];
 
@@ -516,7 +518,78 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v8";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v9";
+
+function kpopExtractTemplateDependencies(rawValue) {
+  const raw = String(rawValue || "").replace(/\r\n?/g, "\n");
+  const lower = raw.toLowerCase();
+  const output = [];
+  const seen = new Set();
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    const start = lower.indexOf("[include(", cursor);
+    if (start < 0) break;
+
+    let depth = 0;
+    let comma = -1;
+    let end = -1;
+    for (let i = start + 9; i < raw.length; i += 1) {
+      const ch = raw[i];
+      if (ch === "(") {
+        depth += 1;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth > 0) {
+          depth -= 1;
+          continue;
+        }
+        if (raw[i + 1] === "]") {
+          end = i;
+          break;
+        }
+      }
+      if (ch === "," && depth === 0 && comma < 0) comma = i;
+    }
+
+    if (end < 0) break;
+    const nameEnd = comma >= 0 && comma < end ? comma : end;
+    const title = raw.slice(start + 9, nameEnd)
+      .normalize("NFKC")
+      .replace(/\u00a0/g, " ")
+      .replace(/^(틀|Template)\s*:\s*/i, "$1:")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+
+    if (
+      /^틀:/i.test(title) &&
+      !/\/설명문서(?:$|\/)/i.test(title) &&
+      !/[{}\[\]]/.test(title) &&
+      !seen.has(title)
+    ) {
+      seen.add(title);
+      output.push(title);
+    }
+    cursor = end + 2;
+  }
+
+  return output;
+}
+
+function kpopPreferCanonicalTemplateRow(current, candidate) {
+  if (!current) return candidate;
+  const currentRaw = kpopCanonicalRawCaptured(current);
+  const candidateRaw = kpopCanonicalRawCaptured(candidate);
+  if (candidateRaw && !currentRaw) return candidate;
+  if (candidateRaw === currentRaw) {
+    const currentAt = Date.parse(current?.raw_extracted_at || "") || 0;
+    const candidateAt = Date.parse(candidate?.raw_extracted_at || "") || 0;
+    if (candidateAt > currentAt) return candidate;
+  }
+  return current;
+}
+
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -658,6 +731,83 @@ function kpopBuildRootCoreScope(rootTitle, rows) {
   return scope;
 }
 
+async function kpopExpandTemplateDependencyScope(rootTitle, docs, coreScope) {
+  const scope = new Map(coreScope);
+  const rowByTitle = new Map();
+  for (const row of docs || []) {
+    const title = String(row?.source_title || "").normalize("NFKC").trim();
+    if (title) rowByTitle.set(title, row);
+  }
+
+  const globalTemplates = await db(
+    "source_documents?source=eq.namu_mirror" +
+      "&source_title=like." + encodeURIComponent("틀:%") +
+      "&select=id,source_title,root_title,crawl_depth,source_format,source_extraction_version,source_wikitext,raw_extracted_at,source_browser_captured_at,source_browser_capture_meta,source_fidelity_meta,source_namumark_meta,source_render_manifest" +
+      "&order=raw_extracted_at.desc.nullslast&limit=3000"
+  );
+
+  const templateByTitle = new Map();
+  for (const row of Array.isArray(globalTemplates) ? globalTemplates : []) {
+    const title = String(row?.source_title || "").normalize("NFKC").trim();
+    if (!title) continue;
+    templateByTitle.set(
+      title,
+      kpopPreferCanonicalTemplateRow(templateByTitle.get(title), row)
+    );
+  }
+
+  const queue = [...scope.keys()];
+  const visited = new Set();
+  const requiredTemplateTitles = new Set();
+
+  while (queue.length) {
+    const ownerTitle = queue.shift();
+    if (!ownerTitle || visited.has(ownerTitle)) continue;
+    visited.add(ownerTitle);
+
+    const ownerRow = rowByTitle.get(ownerTitle) || templateByTitle.get(ownerTitle) || null;
+    if (!ownerRow?.source_wikitext) continue;
+
+    const parentScope = scope.get(ownerTitle) || {};
+    for (const templateTitle of kpopExtractTemplateDependencies(ownerRow.source_wikitext)) {
+      requiredTemplateTitles.add(templateTitle);
+
+      if (!scope.has(templateTitle)) {
+        scope.set(templateTitle, {
+          relation: "template_dependency",
+          parentTitle: ownerTitle,
+          scopeDepth: Math.max(1, Number(parentScope.scopeDepth || 0) + 1),
+          tocOrder: null,
+        });
+      }
+
+      let templateRow = templateByTitle.get(templateTitle) || null;
+      if (!templateRow) {
+        templateRow = await ensureSourceDocument({
+          rootTitle,
+          sourceTitle: templateTitle,
+          pageUrl: `https://namu.wiki/w/${encodeURIComponent(templateTitle)}`,
+          crawlDepth: Math.max(1, Number(parentScope.scopeDepth || 0) + 1),
+          internalLinks: [],
+        });
+        templateByTitle.set(templateTitle, templateRow);
+      }
+
+      if (templateRow?.source_wikitext && !visited.has(templateTitle)) {
+        queue.push(templateTitle);
+      }
+    }
+  }
+
+  return {
+    scope,
+    templateRows: [...requiredTemplateTitles]
+      .map((title) => templateByTitle.get(title))
+      .filter(Boolean),
+    requiredTemplateTitles: [...requiredTemplateTitles],
+  };
+}
+
 function kpopClassifyRawRequirement(row, rootTitle, scopeEntry) {
   const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
   const isRoot = sourceTitle === rootTitle;
@@ -698,7 +848,9 @@ function kpopClassifyRawRequirement(row, rootTitle, scopeEntry) {
       ? Math.max(80, 95 - scopeDepth)
       : relation === "member"
         ? Math.max(78, 90 - scopeDepth)
-        : 80;
+        : relation === "template_dependency"
+          ? Math.max(65, 76 - scopeDepth)
+          : 80;
   return {
     status: "needs_raw",
     score: 100,
@@ -800,9 +952,30 @@ async function kpopPlanRawRequirements(rootTitle) {
     );
   }
 
-  const scopeMap = kpopBuildRootCoreScope(title, docs);
+  const coreScopeMap = kpopBuildRootCoreScope(title, docs);
+  const templatePlan = await kpopExpandTemplateDependencyScope(title, docs, coreScopeMap);
+  const scopeMap = templatePlan.scope;
+
+  const planningByTitle = new Map();
+  for (const row of docs) {
+    const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
+    if (sourceTitle) planningByTitle.set(sourceTitle, row);
+  }
+  for (const row of templatePlan.templateRows) {
+    const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
+    if (!sourceTitle) continue;
+    const existing = planningByTitle.get(sourceTitle);
+    planningByTitle.set(
+      sourceTitle,
+      /^틀:/i.test(sourceTitle)
+        ? kpopPreferCanonicalTemplateRow(existing, row)
+        : (existing || row)
+    );
+  }
+  const planningDocs = [...planningByTitle.values()];
+
   const detectedAt = new Date().toISOString();
-  const payload = docs.map((row) => {
+  const payload = planningDocs.map((row) => {
     const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
     const classified = kpopClassifyRawRequirement(
       row,
@@ -845,7 +1018,8 @@ async function kpopPlanRawRequirements(rootTitle) {
     " needs_raw=" + result.counts.needs_raw +
     " review=" + result.counts.review +
     " ready=" + result.counts.ready +
-    " ignored=" + result.counts.ignored
+    " ignored=" + result.counts.ignored +
+    " templates=" + templatePlan.requiredTemplateTitles.length
   );
   return { ...result, planned: payload.length };
 }
