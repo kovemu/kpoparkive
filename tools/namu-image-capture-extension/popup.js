@@ -18,6 +18,7 @@ const status = document.getElementById("status");
 const verification = document.getElementById("verification");
 let pollTimer = null;
 let rawAssetPollTimer = null;
+let rawQueuePollTimer = null;
 let lastAutoPlannedCloneId = "";
 
 const ACTIVE_SCOPE_POLICY_VERSION = 6;
@@ -265,6 +266,61 @@ async function refreshRawNeeds({ show = false } = {}) {
   return response;
 }
 
+function formatRawQueue(job) {
+  if (!job?.id) return "RAW Queue is idle.";
+  const state = job.status === "done"
+    ? "DONE"
+    : job.status === "error"
+      ? "ERROR"
+      : job.paused
+        ? "PAUSED · VERIFICATION"
+        : job.running
+          ? "RUNNING"
+          : String(job.status || "IDLE").toUpperCase();
+  const lines = [
+    `RAW Queue · ${job.rootTitle || "—"}`,
+    `State: ${state}`,
+    `Captured this run: ${job.completed || 0}/${job.initialNeeds || 0}`,
+    `Remaining: ${job.remaining == null ? "—" : job.remaining}`,
+  ];
+  if (job.current) lines.push(`Current: ${job.current}`);
+  if (job.verification?.active) {
+    lines.push(
+      "",
+      `Verification required: ${job.verification.sourceTitle || job.current || "current document"}`,
+      "Complete the NamuWiki verification in the RAW session tab.",
+      "The queue resumes automatically afterward."
+    );
+  } else if (job.running) {
+    lines.push("", "You can close this popup. The RAW queue continues in the background.");
+  }
+  if (job.lastError) lines.push("", `Error: ${job.lastError}`);
+  if (job.status === "done") lines.push("", "All required canonical RAW documents are captured.");
+  return lines.join("\n");
+}
+
+async function pollRawQueueStatus(show = true) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-raw-queue-status" });
+    if (!response?.ok) return;
+    const job = response.job;
+    const active = Boolean(job?.running);
+
+    rawNextButton.disabled = active;
+    rawPlanButton.disabled = active;
+    cloneButton.disabled = active;
+
+    if (show && job?.id && (active || job.status === "done" || job.status === "error" || job.status === "cancelled")) {
+      setStatus(formatRawQueue(job), job.status === "error" ? "bad" : "ok");
+    }
+
+    if (!active && rawQueuePollTimer) {
+      clearInterval(rawQueuePollTimer);
+      rawQueuePollTimer = null;
+    }
+  } catch {}
+}
+
 function formatRawAssetJob(job) {
   if (!job || job.id !== "raw-assets") return "Raw asset resolver is idle.";
   const lines = [
@@ -409,40 +465,28 @@ rawNextButton.addEventListener("click", async () => {
   const rootTitle = rootInput.value.trim() || "RESCENE";
   rawNextButton.disabled = true;
   rawPlanButton.disabled = true;
+  cloneButton.disabled = true;
   setStatus(
-    `Finding the next REQUIRED RAW for ${rootTitle}...\n` +
-    "No manual NamuWiki navigation is needed. The persistent RAW session tab will move to the selected document."
+    `Starting automatic RAW Queue for ${rootTitle}...\n` +
+    "RAW Needs will be planned once, then every required document will be captured sequentially.\n" +
+    "Human verification pauses the same persistent RAW tab and resumes automatically."
   );
 
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "kpoparkive-capture-next-required-raw",
-      options: { rootTitle, replan: true },
+      type: "kpoparkive-start-raw-queue",
+      options: { rootTitle },
     });
-    if (!response?.ok) throw new Error(response?.error || "Could not capture the next required RAW.");
+    if (!response?.ok) throw new Error(response?.error || "Could not start RAW queue.");
 
-    if (response.noWork) {
-      setStatus(formatRawNeeds(response.rawNeeds), "ok");
-      return;
-    }
-
-    const planText = formatRawNeeds(response.rawNeeds);
-    setStatus(
-      [
-        "Required RAW saved.",
-        `Document: ${response.sourceTitle || "—"}`,
-        `Characters: ${response.charCount || 0}`,
-        `Method: ${response.extractionMethod || "persistent RAW tab"}`,
-        "",
-        planText,
-      ].join("\n"),
-      "ok"
-    );
+    setStatus(formatRawQueue(response.job), "ok");
+    if (rawQueuePollTimer) clearInterval(rawQueuePollTimer);
+    rawQueuePollTimer = setInterval(() => pollRawQueueStatus(true), 800);
   } catch (error) {
     setStatus(error?.message || String(error), "bad");
-  } finally {
     rawNextButton.disabled = false;
     rawPlanButton.disabled = false;
+    cloneButton.disabled = false;
   }
 });
 
@@ -637,8 +681,15 @@ resetButton.addEventListener("click", async () => {
   setStatus("Resetting crawler job...\nStopping workers and clearing the local queue.");
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-reset-helper-clone" });
+    const [response, rawQueue] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "kpoparkive-reset-helper-clone" }),
+      chrome.runtime.sendMessage({ type: "kpoparkive-cancel-raw-queue" }).catch(() => ({ ok: true })),
+    ]);
     if (!response?.ok) throw new Error(response?.error || "Could not reset import job.");
+    if (rawQueuePollTimer) {
+      clearInterval(rawQueuePollTimer);
+      rawQueuePollTimer = null;
+    }
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -672,5 +723,6 @@ refreshHealth();
 pollStatus();
 pollRawAssetStatus(false);
 refreshRawNeeds({ show: true }).catch(() => {});
+pollRawQueueStatus(true);
 pollVerificationStatus();
 setInterval(pollVerificationStatus, 600);
