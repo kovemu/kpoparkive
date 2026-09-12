@@ -178,7 +178,10 @@ for (const requirement of scope) {
     const currentTargets = internalWikiTargets(doc.content_namumark_html);
     const missingCoreTargets = currentTargets.filter((target) => coreTitles.has(target) && !publishedCoreTitles.has(target));
     const outsideCoreTargets = currentTargets.filter((target) => !coreTitles.has(target));
-    if (missingCoreTargets.length > 0) blockers.push("core_links_unpublished:" + missingCoreTargets.length);
+    if (missingCoreTargets.length > 0) {
+      if (skipHttp) warnings.push("core_links_pending_publish:" + missingCoreTargets.length);
+      else blockers.push("core_links_unpublished:" + missingCoreTargets.length);
+    }
     if (outsideCoreTargets.length > 0) warnings.push("outside_core_links:" + outsideCoreTargets.length);
 
     const meta = doc.content_namumark_meta;
