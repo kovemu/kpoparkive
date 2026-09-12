@@ -261,17 +261,34 @@ function matrixRows(report) {
 
 async function main() {
   let scope = await loadScope();
+  const renderRunFailures = new Map();
   if (SHOULD_RENDER) {
     let index = 0;
     for (const item of scope) {
       index += 1;
-      console.log(`\n[${index}/${scope.length}] RENDER ${item.requirement.source_title}`);
-      renderTitle(item.requirement.source_title);
+      const currentTitle = item.requirement.source_title;
+      console.log(`\n[${index}/${scope.length}] RENDER ${currentTitle}`);
+      try {
+        renderTitle(currentTitle);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        renderRunFailures.set(currentTitle, message);
+        console.error(`RENDER PROCESS FAILED ${currentTitle}: ${message}`);
+      }
     }
     scope = await loadScope();
   }
 
-  const documents = scope.map(analyze);
+  const documents = scope.map(analyze).map((row) => {
+    const renderRunError = renderRunFailures.get(row.title) || null;
+    if (!renderRunError) return row;
+    return {
+      ...row,
+      renderRunError,
+      engineFailure: true,
+      status: "ENGINE_FAIL",
+    };
+  });
   const report = {
     rootTitle: ROOT_TITLE,
     rendered: SHOULD_RENDER,
@@ -295,6 +312,7 @@ async function main() {
     for (const row of documents.filter((item) => item.engineFailure)) {
       console.log(`\nENGINE FAIL ${row.title}`);
       if (row.hasError) console.log("  renderer hasError / missing render output");
+      if (row.renderRunError) console.log(`  render process: ${row.renderRunError}`);
       if (row.missingYouTube.length) console.log(`  youtube missing: ${row.missingYouTube.join(" | ")}`);
       if (row.structuralLossCount > 0) {
         console.log(
