@@ -185,6 +185,11 @@ function analyze(item) {
   const missingTemplates = listMeta(meta, "missingTemplates");
   const missingFiles = listMeta(meta, "missingFiles");
   const missingYouTube = listMeta(meta, "missingYouTubeEmbeds");
+  const compatVersion = String(meta?.compatibility?.version || "");
+  const enginePatchset = String(meta?.compatibility?.enginePatchset || meta?.enginePatchset || "");
+  const staleEngine =
+    compatVersion !== EXPECTED_COMPAT_VERSION ||
+    enginePatchset !== EXPECTED_ENGINE_PATCHSET;
   const hasError = Boolean(meta.hasError) || rendered.parseError || !html;
   const leakCount = leaks.reduce((sum, entry) => sum + entry.count, 0);
   const engineFailure = hasError || leakCount > 0 || missingYouTube.length > 0;
@@ -196,6 +201,9 @@ function analyze(item) {
     htmlChars: html.length,
     engine: document.source_namumark_engine || null,
     engineVersion: document.source_namumark_engine_version || null,
+    compatVersion,
+    enginePatchset,
+    staleEngine,
     renderedAt: document.source_namumark_rendered_at || null,
     hasError,
     source,
@@ -207,7 +215,7 @@ function analyze(item) {
     leakCount,
     engineFailure,
     dependencyGap,
-    status: engineFailure ? "ENGINE_FAIL" : dependencyGap ? "DEPENDENCY" : "OK",
+    status: engineFailure ? "ENGINE_FAIL" : staleEngine ? "STALE_ENGINE" : dependencyGap ? "DEPENDENCY" : "OK",
   };
 }
 
@@ -216,6 +224,7 @@ function matrixRows(report) {
     Document: row.title,
     Status: row.status,
     Error: row.hasError ? 1 : 0,
+    Patch: row.staleEngine ? `${row.compatVersion || "-"}/${row.enginePatchset || "-"}` : "current",
     Tables: row.rendered.tables,
     Folding: `${row.source.folding}/${row.rendered.details}`,
     Footnotes: `${row.source.footnote}/${row.rendered.footnotes}`,
@@ -245,8 +254,9 @@ async function main() {
     generatedAt: new Date().toISOString(),
     total: documents.length,
     engineFailures: documents.filter((row) => row.engineFailure).length,
+    staleEngines: documents.filter((row) => row.staleEngine).length,
     dependencyGaps: documents.filter((row) => row.dependencyGap).length,
-    clean: documents.filter((row) => !row.engineFailure && !row.dependencyGap).length,
+    clean: documents.filter((row) => !row.engineFailure && !row.staleEngine && !row.dependencyGap).length,
     documents,
   };
 
@@ -256,7 +266,7 @@ async function main() {
     console.log(`\nKpoparkive The Tree failure matrix: ${ROOT_TITLE}`);
     console.table(matrixRows(report));
     console.log(
-      `SUMMARY total=${report.total} engine-fail=${report.engineFailures} dependency-gap=${report.dependencyGaps} clean=${report.clean}`
+      `SUMMARY total=${report.total} engine-fail=${report.engineFailures} stale-engine=${report.staleEngines} dependency-gap=${report.dependencyGaps} clean=${report.clean}`
     );
     for (const row of documents.filter((item) => item.engineFailure)) {
       console.log(`\nENGINE FAIL ${row.title}`);
@@ -267,6 +277,14 @@ async function main() {
         for (const sample of leak.samples) console.log(`    - ${sample}`);
       }
     }
+    const staleOnly = documents.filter((item) => !item.engineFailure && item.staleEngine);
+    if (staleOnly.length) {
+      console.log(`\nSTALE ENGINE (rerender required; expected ${EXPECTED_COMPAT_VERSION}/${EXPECTED_ENGINE_PATCHSET})`);
+      for (const row of staleOnly) {
+        console.log(`  ${row.title}: ${row.compatVersion || "-"} / ${row.enginePatchset || "-"}`);
+      }
+    }
+
     const dependencyOnly = documents.filter((item) => !item.engineFailure && item.dependencyGap);
     if (dependencyOnly.length) {
       console.log("\nDEPENDENCY-ONLY (owned by Template/Asset rooms)");
@@ -278,7 +296,7 @@ async function main() {
     }
   }
 
-  if (report.engineFailures > 0) process.exitCode = 1;
+  if (report.engineFailures > 0 || report.staleEngines > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {
