@@ -18,6 +18,8 @@
     button { width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 6px; background: #6f3cff; color: #fff; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     button.raw { background: #111827; }
+    button.plan { background: #0f766e; }
+    button.nextRaw { background: #9a3412; }
     button.assets { background: #b45309; }
     button.compare { background: #0f766e; }
     button.reset { background: #fff; color: #b00020; border: 1px solid #d7a4ad; }
@@ -75,12 +77,14 @@
     <label class="check"><input id="includeLeaf" type="checkbox" checked /> Capture related leaf pages</label>
     <label class="check"><input id="refreshExisting" type="checkbox" /> Refresh existing captures</label>
 
-    <p style="margin-top:8px">Smart Core is the default: reuse existing pages, finish each depth before going deeper, prioritize K-pop core documents, then follow NamuWiki TOC order. RAW always uses one persistent session tab and reads only the requested RAW page plus renderer-required dependencies.</p>
+    <p style="margin-top:8px">Smart Core is the default. After DOM harvest, RAW Needs classifies every captured document as READY, REVIEW, NEEDS RAW, or CAPTURED. Only NEEDS RAW is sent to the persistent RAW session tab.</p>
     <button id="clone">Smart /w/ DOM Harvest</button>
-    <button id="rawCrawl" class="raw">Capture Root RAW</button>
+    <button id="rawPlan" class="plan">Plan RAW Needs</button>
+    <button id="rawNext" class="nextRaw">Capture Next Required RAW</button>
     <div id="verification" class="verification">PAUSED · NamuWiki verification required</div>
     <details class="advanced">
       <summary>Advanced / Debug</summary>
+      <button id="rawCrawl" class="raw">Force Capture Root RAW</button>
       <button id="raw" class="raw">Capture Current Page Only</button>
       <button id="assets" class="assets">Legacy File-Page Resolver (Avoid)</button>
       <button id="compare" class="compare">Compare Live NamuWiki vs The Tree</button>
