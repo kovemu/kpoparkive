@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import { getPublicWikiPage } from "../../../lib/publicWikiRead";
+import { renderExactNamuPreview } from "../../../lib/thetreeExactPreview";
 import { stripNamuOperationalHtml } from "../../../lib/namuOperationalNotices";
 import TheTreeRuntimeBridge from "../../admin/thetree-frontend-poc/TheTreeRuntimeBridge";
 import "../wiki.css";
@@ -21,10 +22,14 @@ type DocRow = {
   source_namumark_rendered_at: string | null;
   content_status: string;
   content_revision_no: number | null;
+  content_wikitext: string | null;
+  content_language: string | null;
   content_namumark_html: string | null;
   content_namumark_meta: Record<string, any> | null;
   content_namumark_rendered_at: string | null;
   published_namumark_html: string | null;
+  published_content_wikitext: string | null;
+  published_content_language: string | null;
 };
 
 type AssetRow = {
@@ -218,7 +223,7 @@ export default async function RawWikiPage({
   if (isLocalDraftPreview) {
     let docs = await db<DocRow[]>(
       `source_documents?source=eq.namu_mirror&source_title=eq.${encodeURIComponent(sourceTitle)}` +
-        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html&limit=1`,
+        `&select=id,source_title,root_title,source_namumark_html,source_namumark_engine,source_namumark_rendered_at,content_status,content_revision_no,content_wikitext,content_language,content_namumark_html,content_namumark_meta,content_namumark_rendered_at,published_namumark_html,published_content_wikitext,published_content_language&limit=1`,
     );
 
     if (!docs[0]) {
@@ -247,10 +252,14 @@ export default async function RawWikiPage({
       source_namumark_rendered_at: null,
       content_status: "published",
       content_revision_no: payload.document.published_revision_no,
+      content_wikitext: null,
+      content_language: "en",
       content_namumark_html: null,
       content_namumark_meta: null,
       content_namumark_rendered_at: null,
       published_namumark_html: payload.document.published_namumark_html,
+      published_content_wikitext: payload.document.published_content_wikitext,
+      published_content_language: payload.document.published_content_language,
     };
     publicAssets = payload.assets;
   }
@@ -285,11 +294,35 @@ export default async function RawWikiPage({
 
   // Local development is the approval surface: show the current rendered draft
   // without promoting it to production. Production never reads an unpublished draft.
-  const exactHtml = isLocalDraftPreview
+  let exactHtml = isLocalDraftPreview
     ? (hasCurrentDraft ? source.content_namumark_html : null) ||
       publishedContentHtml ||
       source.source_namumark_html
     : publishedContentHtml;
+
+  // Production may publish an English NamuMark revision before its HTML snapshot
+  // is materialized. Render that trusted published English source directly with
+  // the exact The Tree pipeline instead of falling back to the immutable Korean
+  // source capture.
+  if (
+    !isLocalDraftPreview &&
+    !exactHtml &&
+    source.published_content_language === "en" &&
+    typeof source.published_content_wikitext === "string" &&
+    source.published_content_wikitext.trim().length > 0
+  ) {
+    const rendered = await renderExactNamuPreview(
+      source.source_title,
+      source.published_content_wikitext,
+      "en",
+    );
+    if (rendered.hasError) {
+      throw new Error(
+        `Published English The Tree render failed for ${source.source_title}: ${rendered.errorCode || "unknown"}`,
+      );
+    }
+    exactHtml = rendered.html;
+  }
 
   if (!exactHtml) {
     if (!isLocalDraftPreview) notFound();
