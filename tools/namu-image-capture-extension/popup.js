@@ -328,7 +328,8 @@ function formatRawAssetJob(job) {
   const lines = [
     `Raw assets · ${job.rootTitle || "—"}`,
     `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
-    `Required by renderer: ${job.required || 0}`,
+    ...(job.cluster ? [`Core documents: ${job.coreDocuments || 0} · depth ≤ ${job.maxDepth ?? 1}`] : []),
+    `Unique files required: ${job.required || 0}`,
     `Missing at start: ${job.planned || 0}`,
     `Processed: ${job.processed || 0}/${job.planned || 0}`,
     `Resolved: ${job.resolved || 0}`,
@@ -626,13 +627,13 @@ assetsButton.addEventListener("click", async () => {
   await chrome.storage.local.set({ kpoparkiveRootTitle: rootTitle });
   assetsButton.disabled = true;
   setStatus(
-    `Planning renderer-required assets for ${rootTitle}...\n` +
-    "Only files without storage-backed bytes will be opened and captured through this normal Chrome session."
+    `Planning core-cluster assets for ${rootTitle}...\n` +
+    "All canonical RAW docs at depth ≤ 1 are audited together. Global storage-backed files are reused; only unique missing files are opened in this Chrome session."
   );
   try {
     const response = await chrome.runtime.sendMessage({
       type: "kpoparkive-start-raw-asset-resolver",
-      options: { rootTitle, sourceTitle: rootTitle },
+      options: { rootTitle, sourceTitle: rootTitle, cluster: true, maxDepth: 1 },
     });
     if (!response?.ok) throw new Error(response?.error || "Could not start raw asset resolver.");
     setStatus(formatRawAssetJob(response.job), "ok");
