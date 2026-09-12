@@ -153,10 +153,10 @@ function renderTitle(title) {
 async function loadScope() {
   const requirements = await db(
     "namu_raw_requirements?root_title=eq." + encodeURIComponent(ROOT_TITLE) +
-      "&status=neq.ignored&select=source_document_id,source_title,status,priority,score,reason_codes&order=source_title.asc"
+      "&status=eq.captured&select=source_document_id,source_title,status,priority,score,reason_codes&order=source_title.asc"
   );
   if (!Array.isArray(requirements) || !requirements.length) {
-    throw new Error(`No active raw requirements found for ${ROOT_TITLE}`);
+    throw new Error(`No captured canonical core documents found for ${ROOT_TITLE}`);
   }
 
   const output = [];
