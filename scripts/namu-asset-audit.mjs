@@ -349,6 +349,7 @@ export async function runAssetAudit({ rootTitle = "RESCENE", maxDepth = 1, enque
     coreDocuments: coreDocs.length,
     totals: {
       ...totals,
+      uniqueRequiredFiles: requiredKeys.size,
       missingUniqueFiles: audit.missingUnique.length,
       duplicateCanonicalKeys: audit.duplicatePaths.length,
       verifiedStoragePaths: storage.existing.size,
