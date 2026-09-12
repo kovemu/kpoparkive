@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.14.0",
-  "description": "Smart K-pop crawl profiles with TOC-aware priority, one persistent RAW session tab, recursive missing-template RAW capture, and exact missing-media recovery.",
+  "version": "0.15.0",
+  "description": "Smart K-pop DOM harvest with RAW Required Detector, persistent Needs RAW queue, one reusable RAW session tab, and renderer-driven dependency recovery.",
   "permissions": [
     "activeTab",
     "storage",
