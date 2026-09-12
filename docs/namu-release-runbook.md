@@ -14,6 +14,33 @@ The public release unit is the article scope from `namu_raw_requirements` for th
 
 For RESCENE this scope is expected to contain 21 article documents.
 
+### 0. Dependency closeout before QA
+
+Keep the local capture-helper bundle running so current source renders are automatically
+upgraded to the latest compatibility/fallback versions and stale English drafts are
+re-rendered:
+
+```bash
+npm run namu:capture-helper
+```
+
+In a second terminal, repair only files that are blocking the current 21-document
+The Tree source render. This deliberately ignores historical/non-rendering unresolved
+asset rows:
+
+```bash
+npm run namu:repair-assets -- --root RESCENE --limit 100
+```
+
+The browser worker uses the persistent normal Chrome profile. If NamuWiki displays a
+human-verification screen, complete it in that visible browser; the safe worker pauses
+all crawling until the challenge is stably cleared.
+
+Do not substitute fake files/template stubs to make counters reach zero. The acceptance
+state is the current source render itself: source missing templates/files/YouTube must
+be zero, then every English revision must have a fresh render matching its current
+revision number.
+
 ### 1. Prepublish integration gate
 
 ```bash
@@ -25,11 +52,12 @@ This allows `pending_publish` and same-batch core links that are not live yet, b
 - missing canonical RAW
 - missing English revision
 - failed translation status
-- missing/stale render
+- missing/stale source or English render
+- stale source compatibility/engine patchset
 - The Tree render error
-- missing template/file/YouTube dependencies
+- source or English missing template/file/YouTube dependencies
 - NamuMark syntax leakage
-- visible Korean link-label leakage
+- visible Korean link-label or visible Korean text leakage
 - missing/non-English public display title
 
 Do not publish if this command exits non-zero.
