@@ -274,12 +274,8 @@ const newEnqueueLinks = String.raw`function kpopFallbackCrawlMode(link) {
   const explicit = String(link?.crawlMode || "").toLowerCase();
   if (["expand", "leaf", "skip"].includes(explicit)) return explicit;
 
-  const title = String(link?.title || "").normalize("NFKC").trim();
-  if (!title) return "skip";
-
-  // Policy v3 is TOC-first. Legacy rows without explicit crawlMode are only
-  // allowed to recurse when they are direct subdocuments of the team root.
-  if (title.startsWith(kpopCloneState.rootTitle + "/")) return "expand";
+  // Policy v3 is strict TOC-first. If an old captured link has no explicit
+  // crawl decision, it is not allowed to enter the clone queue.
   return "skip";
 }
 
