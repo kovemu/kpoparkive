@@ -953,8 +953,17 @@ async function kpopPlanRawRequirements(rootTitle) {
   }
 
   const coreScopeMap = kpopBuildRootCoreScope(title, docs);
-  const templatePlan = await kpopExpandTemplateDependencyScope(title, docs, coreScopeMap);
-  const scopeMap = templatePlan.scope;
+
+  // RAW Queue is intentionally article-only. Template dependencies belong to
+  // the separate template/fidelity pipeline and must never recursively expand
+  // the canonical article RAW queue. This keeps the queue bounded to the root
+  // document + direct TOC documents + members discovered by Smart Core.
+  const templatePlan = {
+    scope: coreScopeMap,
+    templateRows: [],
+    requiredTemplateTitles: [],
+  };
+  const scopeMap = coreScopeMap;
 
   const planningByTitle = new Map();
   for (const row of docs) {
