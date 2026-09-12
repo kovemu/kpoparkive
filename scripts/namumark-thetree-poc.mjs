@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { MessageChannel } from "node:worker_threads";
+import { gunzipSync } from "node:zlib";
 
 const { parse: parseHtml } = createRequire(import.meta.url)("node-html-parser");
 
@@ -157,6 +158,48 @@ async function db(pathname, init = {}) {
   }
 
   throw lastError || new Error("Supabase request failed after retries");
+}
+
+
+function storageObjectPath(pathname) {
+  return String(pathname || "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+async function downloadBrowserArtifact(meta, kind) {
+  const storage = meta?.artifact_storage;
+  const bucket = String(storage?.bucket || "").trim();
+  const storagePath = kind === "style"
+    ? String(storage?.style_path || "").trim()
+    : String(storage?.article_path || "").trim();
+  if (!bucket || !storagePath) return "";
+
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${storageObjectPath(storagePath)}`,
+    {
+      headers: {
+        apikey: SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Browser artifact download ${response.status}: ${await response.text()}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) return "";
+  return String(storage?.encoding || "") === "gzip"
+    ? gunzipSync(bytes).toString("utf8")
+    : bytes.toString("utf8");
+}
+
+async function browserArticleHtml(row) {
+  const inline = String(row?.source_browser_article_html || "");
+  if (inline) return inline;
+  return downloadBrowserArtifact(row?.source_browser_capture_meta || {}, "article");
 }
 
 async function dbAll(pathname, { pageSize = 1000, maxRows = 20000 } = {}) {
@@ -1286,10 +1329,11 @@ async function main() {
   if (!process.env.KPOPARKIVE_RENDER_CONTENT && missingTemplatesBeforeFallback.length) {
     const browserRows = await db(
       "source_documents?id=eq." + encodeURIComponent(target.id) +
-      "&select=source_browser_article_html,source_browser_captured_at&limit=1"
+      "&select=source_browser_article_html,source_browser_capture_meta,source_browser_captured_at&limit=1"
     );
-    const articleHtml = String(browserRows?.[0]?.source_browser_article_html || "");
-    const browserCapturedAt = browserRows?.[0]?.source_browser_captured_at || null;
+    const browserRow = browserRows?.[0] || null;
+    const articleHtml = await browserArticleHtml(browserRow);
+    const browserCapturedAt = browserRow?.source_browser_captured_at || null;
     if (articleHtml) {
       const fallbackByTitle = new Map();
       for (const templateTitle of missingTemplatesBeforeFallback) {
