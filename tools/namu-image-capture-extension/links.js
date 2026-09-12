@@ -2,7 +2,7 @@ function kpopDecodeLinkTitle(value) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
-const KPOP_CRAWL_POLICY_VERSION = 2;
+const KPOP_CRAWL_POLICY_VERSION = 3;
 
 const KPOP_SKIP_NAMESPACES = [
   "파일:", "File:", "틀:", "Template:", "분류:", "Category:", "사용자:", "User:",
@@ -55,16 +55,41 @@ function kpopPresentationRootForLinks() {
   return null;
 }
 
-function kpopBuildTocMeta(root) {
+function kpopBuildTocMeta(root, currentTitle) {
   const meta = new Map();
   let index = 0;
+
   for (const anchor of root.querySelectorAll('a[href^="#s-"]')) {
     const raw = String(anchor.getAttribute("href") || "").trim().slice(1);
     const sectionId = kpopSectionId(raw);
     if (!sectionId || meta.has(sectionId)) continue;
-    const text = String(anchor.textContent || "").replace(/\s+/g, " ").trim();
-    meta.set(sectionId, { order: index++, title: text });
+
+    const numberText = String(anchor.textContent || "").replace(/\s+/g, " ").trim();
+    const item = anchor.parentElement instanceof Element ? anchor.parentElement : anchor;
+    const fullText = String(item.textContent || "").replace(/\s+/g, " ").trim();
+    let title = fullText;
+
+    if (numberText && title.startsWith(numberText)) {
+      title = title.slice(numberText.length).replace(/^\s*\.\s*/, "").trim();
+    }
+    if (!title) title = numberText;
+
+    let documentLink = null;
+    for (const candidate of item.querySelectorAll("a[href]")) {
+      if (candidate === anchor) continue;
+      const parsed = kpopInternalLinkFromAnchor(candidate, currentTitle);
+      if (!parsed) continue;
+      documentLink = parsed;
+      break;
+    }
+
+    meta.set(sectionId, {
+      order: index++,
+      title,
+      documentLink,
+    });
   }
+
   return meta;
 }
 
@@ -122,19 +147,24 @@ function kpopClassifyLink({ title, currentTitle, sectionTitle, context }) {
   if (KPOP_SKIP_EXACT_TITLES.has(normalizedTitle)) return { crawlMode: "skip", relation: "generic_concept" };
   if (KPOP_SKIP_CONTEXT_RE.test(`${section} ${contextText}`)) return { crawlMode: "skip", relation: "profile_attribute" };
 
-  // A document nested under the current page is almost always a first-class wiki subdocument.
-  if (normalizedTitle.startsWith(`${currentTitle}/`)) return { crawlMode: "expand", relation: "subdocument" };
-
-  // Agency/credit/industry people are useful as documents, but must not fan out recursively.
-  if (KPOP_LEAF_RELATION_RE.test(`${section} ${contextText}`)) {
-    return { crawlMode: "leaf", relation: kpopRelationFromContext(contextText, section) };
+  // Rule #1: direct subdocuments stay first-class. This covers nested TOC
+  // documents even when the visual TOC markup is unusual.
+  if (normalizedTitle.startsWith(`${currentTitle}/`)) {
+    return { crawlMode: "expand", relation: "subdocument" };
   }
 
-  if (KPOP_MEMBER_SECTION_RE.test(section)) return { crawlMode: "expand", relation: "member" };
-  if (KPOP_EXPAND_SECTION_RE.test(section)) return { crawlMode: "expand", relation: "core_kpop_document" };
+  // Members are the only non-TOC body links that remain recursive for now.
+  if (KPOP_MEMBER_SECTION_RE.test(section)) {
+    return { crawlMode: "expand", relation: "member" };
+  }
 
-  // Related documents are retained, but unknown relations terminate after one capture.
-  return { crawlMode: "leaf", relation: kpopRelationFromContext(contextText, section) };
+  // TOC-first policy: agency, broadcasters, people, places, credits and any
+  // other ordinary body links remain links only. They are not clone targets.
+  if (KPOP_LEAF_RELATION_RE.test(`${section} ${contextText}`)) {
+    return { crawlMode: "skip", relation: kpopRelationFromContext(contextText, section) };
+  }
+
+  return { crawlMode: "skip", relation: "external_reference" };
 }
 
 function kpopModeRank(mode) {
@@ -143,6 +173,7 @@ function kpopModeRank(mode) {
 
 function kpopImportanceTier({ crawlMode, relation, sectionTitle }) {
   if (crawlMode === "skip") return 99;
+  if (relation === "toc_document") return 5;
   if (relation === "subdocument") return 10;
   if (relation === "member") return 20;
   if (relation === "core_kpop_document") return 30;
@@ -154,6 +185,7 @@ function kpopImportanceTier({ crawlMode, relation, sectionTitle }) {
 
 function kpopLinkPriority({ crawlMode, sectionTitle, sourceArea }) {
   if (crawlMode === "skip") return 0;
+  if (sourceArea === "toc") return 200;
   const section = String(sectionTitle || "");
   if (KPOP_MEMBER_SECTION_RE.test(section)) return 140;
   if (crawlMode === "expand" && KPOP_EXPAND_SECTION_RE.test(section)) return 120;
@@ -180,10 +212,31 @@ function kpopExtractInternalLinks() {
     };
   }
 
-  const tocMeta = kpopBuildTocMeta(root);
+  const tocMeta = kpopBuildTocMeta(root, currentTitle);
   const byTitle = new Map();
   let currentSection = "";
   let domOrder = 0;
+
+  // Rule #1: if the visible TOC item itself links to another /w/ document,
+  // that target is an explicit part of this article's scope.
+  for (const [sectionId, sectionMeta] of tocMeta.entries()) {
+    const link = sectionMeta?.documentLink;
+    if (!link) continue;
+    byTitle.set(link.title, {
+      ...link,
+      crawlMode: "expand",
+      relation: "toc_document",
+      crawlPolicyVersion: KPOP_CRAWL_POLICY_VERSION,
+      context: `TOC: ${sectionMeta.title || link.text || link.title}`,
+      section: sectionId,
+      sectionTitle: sectionMeta.title || null,
+      tocOrder: sectionMeta.order,
+      sourceArea: "toc",
+      priority: 200,
+      importanceTier: 5,
+      domOrder: domOrder++,
+    });
+  }
 
   for (const element of root.querySelectorAll("*")) {
     const sectionId = kpopSectionId(element.id);
@@ -267,6 +320,7 @@ function kpopExtractInternalLinks() {
     sourceTitle: currentTitle,
     crawlPolicyVersion: KPOP_CRAWL_POLICY_VERSION,
     tocSections: tocMeta.size,
+    tocDocuments: [...tocMeta.values()].filter((item) => item?.documentLink).length,
     crawlableCount: links.filter((link) => link.crawlMode !== "skip").length,
     links,
   };
