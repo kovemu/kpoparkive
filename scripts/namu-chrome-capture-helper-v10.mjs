@@ -150,6 +150,7 @@ function kpopPolicyCleanInternalLinks(value) {
     if (item?.sectionTitle) link.sectionTitle = String(item.sectionTitle).replace(/\s+/g, " ").trim().slice(0, 180);
     if (item?.context) link.context = String(item.context).replace(/\s+/g, " ").trim().slice(0, 900);
     if (Number.isFinite(Number(item?.priority))) link.priority = Number(item.priority);
+    if (Number.isFinite(Number(item?.importanceTier))) link.importanceTier = Number(item.importanceTier);
     if (Number.isFinite(Number(item?.tocOrder))) link.tocOrder = Number(item.tocOrder);
     if (Number.isFinite(Number(item?.crawlPolicyVersion))) link.crawlPolicyVersion = Number(item.crawlPolicyVersion);
     output.push(link);
@@ -215,25 +216,61 @@ v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache")
 v8 = mustReplace(
   v8,
   "const KPOP_CLONE_MAX_RETRIES = 2;",
-  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 1;",
+  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 2;",
   "crawl policy version",
 );
 
 v8 = mustReplace(
   v8,
   '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0,',
-  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", refreshExisting: false, paused: false, pauseReason: "", pausedAt: null, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
+  '    id: "", status: "idle", rootTitle: "", rootUrl: "", maxDepth: 0, maxDocs: 0, captureMode: "dom", crawlProfile: "smart-core", crawlOrder: "smart", includeLeaf: true, refreshExisting: false, paused: false, pauseReason: "", pausedAt: null, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh: false,',
   "crawl policy state",
 );
 
 v8 = mustReplace(
   v8,
   "    maxDocs: kpopCloneState.maxDocs,",
-  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    refreshExisting: Boolean(kpopCloneState.refreshExisting),\n    paused: Boolean(kpopCloneState.paused),\n    pauseReason: kpopCloneState.pauseReason || \"\",\n    pausedAt: kpopCloneState.pausedAt || null,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
+  "    maxDocs: kpopCloneState.maxDocs,\n    captureMode: kpopCloneState.captureMode || \"dom\",\n    crawlProfile: kpopCloneState.crawlProfile || \"smart-core\",\n    crawlOrder: kpopCloneState.crawlOrder || \"smart\",\n    includeLeaf: kpopCloneState.includeLeaf !== false,\n    refreshExisting: Boolean(kpopCloneState.refreshExisting),\n    paused: Boolean(kpopCloneState.paused),\n    pauseReason: kpopCloneState.pauseReason || \"\",\n    pausedAt: kpopCloneState.pausedAt || null,\n    policyVersion: kpopCloneState.policyVersion,\n    policyRefresh: Boolean(kpopCloneState.policyRefresh),",
   "public crawl policy state",
 );
 
-const oldEnqueueLinks = String.raw`function kpopEnqueueLinks(links, depth) {
+const oldEnqueueLinks = String.raw`function kpopQueueImportance(link, mode) {
+  if (Number.isFinite(Number(link?.importanceTier))) return Number(link.importanceTier);
+  const relation = String(link?.relation || "");
+  if (relation === "subdocument") return 10;
+  if (relation === "member") return 20;
+  if (relation === "core_kpop_document") return 30;
+  if (mode === "expand") return 35;
+  if (mode === "leaf") return 50;
+  return 70;
+}
+
+function kpopSortCloneQueue() {
+  const order = String(kpopCloneState.crawlOrder || "smart");
+  kpopCloneState.queue.sort((a, b) => {
+    const depthDiff = Number(a?.depth || 0) - Number(b?.depth || 0);
+    if (depthDiff) return depthDiff;
+
+    const aTier = Number(a?.importanceTier ?? 99);
+    const bTier = Number(b?.importanceTier ?? 99);
+    const aToc = Number.isFinite(Number(a?.tocOrder)) ? Number(a.tocOrder) : Number.MAX_SAFE_INTEGER;
+    const bToc = Number.isFinite(Number(b?.tocOrder)) ? Number(b.tocOrder) : Number.MAX_SAFE_INTEGER;
+
+    if (order === "toc") {
+      if (aToc !== bToc) return aToc - bToc;
+      if (aTier !== bTier) return aTier - bTier;
+    } else {
+      if (aTier !== bTier) return aTier - bTier;
+      if (aToc !== bToc) return aToc - bToc;
+    }
+
+    const priorityDiff = Number(b?.priority || 0) - Number(a?.priority || 0);
+    if (priorityDiff) return priorityDiff;
+    return Number(a?.queueOrder || 0) - Number(b?.queueOrder || 0);
+  });
+}
+
+function kpopEnqueueLinks(links, depth) {
   if (depth > kpopCloneState.maxDepth) return 0;
   const seen = new Set(kpopCloneState.seenUrls);
   let added = 0;
@@ -271,6 +308,7 @@ function kpopEnqueueLinks(links, depth) {
     if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
     const mode = kpopFallbackCrawlMode(link);
     if (mode === "skip") continue;
+    if (mode === "leaf" && kpopCloneState.includeLeaf === false) continue;
     const url = kpopCleanCloneUrl(link.href);
     if (!url || seen.has(url)) continue;
     seen.add(url);
@@ -280,10 +318,16 @@ function kpopEnqueueLinks(links, depth) {
       depth,
       attempts: 0,
       mode,
+      priority: Number(link?.priority || 0) || 0,
+      importanceTier: kpopQueueImportance(link, mode),
+      tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+      relation: String(link?.relation || "").slice(0, 80),
+      queueOrder: kpopCloneState.seenUrls.length,
       forceCapture: Boolean(kpopCloneState.refreshExisting || (kpopCloneState.policyRefresh && mode === "expand")),
     });
     added += 1;
   }
+  kpopSortCloneQueue();
   return added;
 }`;
 v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue policy");
@@ -291,7 +335,7 @@ v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue
 v8 = mustReplace(
   v8,
   "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
-  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 25) || 25));\n  const captureMode = String(payload?.captureMode || \"dom\").toLowerCase() === \"raw\" ? \"raw\" : \"dom\";\n  const refreshExisting = Boolean(payload?.refreshExisting);\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
+  "  const maxDocs = Math.max(1, Math.min(200, Number(payload?.maxDocs || 40) || 40));\n  const captureMode = String(payload?.captureMode || \"dom\").toLowerCase() === \"raw\" ? \"raw\" : \"dom\";\n  const crawlProfile = String(payload?.crawlProfile || \"smart-core\").toLowerCase();\n  const crawlOrder = String(payload?.crawlOrder || \"smart\").toLowerCase() === \"toc\" ? \"toc\" : \"smart\";\n  const includeLeaf = payload?.includeLeaf !== false;\n  const refreshExisting = Boolean(payload?.refreshExisting);\n  if (!rootTitle || !rootUrl) throw new Error(\"rootTitle/rootUrl are required\");",
   "capture mode on new job",
 );
 
@@ -305,28 +349,28 @@ v8 = mustReplace(
 v8 = mustReplace(
   v8,
   "    maxDepth, maxDocs, queue: [{ url: rootUrl, depth: 0, attempts: 0 }], seenUrls: [rootUrl],",
-  "    maxDepth, maxDocs, captureMode, refreshExisting, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", forceCapture: captureMode === \"raw\" || refreshExisting || policyRefresh }], seenUrls: [rootUrl],",
+  "    maxDepth, maxDocs, captureMode, crawlProfile, crawlOrder, includeLeaf, refreshExisting, policyVersion: KPOP_CRAWL_POLICY_VERSION, policyRefresh, queue: [{ url: rootUrl, depth: 0, attempts: 0, mode: \"expand\", priority: 999, importanceTier: 0, tocOrder: -1, relation: \"root\", queueOrder: 0, forceCapture: captureMode === \"raw\" || refreshExisting || policyRefresh }], seenUrls: [rootUrl],",
   "root queue policy",
 );
 
 v8 = mustReplace(
   v8,
   "      leaseId: crypto.randomUUID(), url: item.url, depth: item.depth, attempts,",
-  "      leaseId: crypto.randomUUID(), url: item.url, depth: item.depth, attempts, mode: item.mode || \"expand\", forceCapture: Boolean(item.forceCapture),",
+  "      leaseId: crypto.randomUUID(), url: item.url, depth: item.depth, attempts, mode: item.mode || \"expand\", priority: Number(item.priority || 0), importanceTier: Number(item.importanceTier ?? 99), tocOrder: item.tocOrder ?? null, relation: item.relation || \"\", queueOrder: Number(item.queueOrder || 0), forceCapture: Boolean(item.forceCapture),",
   "lease crawl mode",
 );
 
 v8 = mustReplace(
   v8,
   "      kpopCloneState.queue.unshift({ url: lease.url, depth: lease.depth, attempts: lease.attempts });",
-  "      kpopCloneState.queue.unshift({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", forceCapture: Boolean(lease.forceCapture) });",
+  "      kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", priority: Number(lease.priority || 0), importanceTier: Number(lease.importanceTier ?? 99), tocOrder: lease.tocOrder ?? null, relation: lease.relation || \"\", queueOrder: Number(lease.queueOrder || 0), forceCapture: Boolean(lease.forceCapture) });\n      kpopSortCloneQueue();",
   "expired lease crawl mode",
 );
 
 v8 = mustReplace(
   v8,
   "    kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts });",
-  "    kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", forceCapture: Boolean(lease.forceCapture) });",
+  "    kpopCloneState.queue.push({ url: lease.url, depth: lease.depth, attempts: lease.attempts, mode: lease.mode || \"expand\", priority: Number(lease.priority || 0), importanceTier: Number(lease.importanceTier ?? 99), tocOrder: lease.tocOrder ?? null, relation: lease.relation || \"\", queueOrder: Number(lease.queueOrder || 0), forceCapture: Boolean(lease.forceCapture) });\n    kpopSortCloneQueue();",
   "failed lease crawl mode",
 );
 
@@ -340,7 +384,7 @@ const policyResume = String.raw`if (kpopCloneState.status === "running" && Numbe
     policyVersion: KPOP_CRAWL_POLICY_VERSION,
     policyRefresh: true,
     status: "running",
-    queue: rootUrl ? [{ url: rootUrl, depth: 0, attempts: 0, mode: "expand", forceCapture: true }] : [],
+    queue: rootUrl ? [{ url: rootUrl, depth: 0, attempts: 0, mode: "expand", priority: 999, importanceTier: 0, tocOrder: -1, relation: "root", queueOrder: 0, forceCapture: true }] : [],
     leases: [],
     seenUrls: rootUrl ? [rootUrl] : [],
     completedUrls: [],
