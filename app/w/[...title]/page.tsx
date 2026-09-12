@@ -37,12 +37,41 @@ type AssetRow = {
 
 async function db<T>(path: string): Promise<T> {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-  return response.json() as Promise<T>;
+
+  const delays = [350, 900, 1800];
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+        cache: "no-store",
+      });
+      const text = await response.text();
+      if (response.ok) return (text ? JSON.parse(text) : null) as T;
+
+      const retryable =
+        response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 502 ||
+        (response.status === 500 && /(?:57014|statement timeout|canceling statement|PGRST002)/i.test(text));
+
+      const error = new Error(`${response.status} ${text}`);
+      lastError = error;
+      if (!retryable || attempt >= delays.length) throw error;
+    } catch (error) {
+      const current = error instanceof Error ? error : new Error(String(error));
+      lastError = current;
+      if (attempt >= delays.length) throw current;
+      if (!/(?:fetch failed|network|ECONN|ETIMEDOUT|57014|statement timeout|canceling statement|PGRST002|502|503|504|429|408)/i.test(current.message)) {
+        throw current;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+  }
+
+  throw lastError || new Error("Supabase request failed");
 }
 
 async function dbAll<T>(path: string, pageSize = 1000, maxRows = 10000): Promise<T[]> {
@@ -247,11 +276,15 @@ export default async function RawWikiPage({
     );
   }
 
-  const assetRows = await dbAll<AssetRow>(
-    `source_asset_queue?asset_type=eq.image` +
-      `&select=source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc`,
+  // Assets are registered per source document. Query only this page's resolved
+  // rows instead of scanning the global asset registry on every page request.
+  // This uses source_asset_queue_document_idx and keeps /w pages fast even as
+  // the archive grows into thousands of captured files.
+  const resolvedRows = await db<AssetRow[]>(
+    `source_asset_queue?source_document_id=eq.${encodeURIComponent(source.id)}` +
+      `&asset_type=eq.image&status=eq.resolved` +
+      `&select=source_ref,label,status,resolved_url,storage_path,metadata&limit=500`,
   );
-  const resolvedRows = assetRows.filter((row) => row.status === "resolved");
 
   const hints: Record<string, string> = {};
   for (const row of resolvedRows) {
