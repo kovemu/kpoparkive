@@ -2,7 +2,7 @@ function kpopDecodeLinkTitle(value) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
-const KPOP_CRAWL_POLICY_VERSION = 1;
+const KPOP_CRAWL_POLICY_VERSION = 2;
 
 const KPOP_SKIP_NAMESPACES = [
   "파일:", "File:", "틀:", "Template:", "분류:", "Category:", "사용자:", "User:",
@@ -141,6 +141,17 @@ function kpopModeRank(mode) {
   return mode === "expand" ? 3 : mode === "leaf" ? 2 : 1;
 }
 
+function kpopImportanceTier({ crawlMode, relation, sectionTitle }) {
+  if (crawlMode === "skip") return 99;
+  if (relation === "subdocument") return 10;
+  if (relation === "member") return 20;
+  if (relation === "core_kpop_document") return 30;
+  if (crawlMode === "expand") return 35;
+  if (KPOP_LOW_VALUE_SECTION_RE.test(String(sectionTitle || ""))) return 80;
+  if (crawlMode === "leaf") return 50;
+  return 70;
+}
+
 function kpopLinkPriority({ crawlMode, sectionTitle, sourceArea }) {
   if (crawlMode === "skip") return 0;
   const section = String(sectionTitle || "");
@@ -205,6 +216,11 @@ function kpopExtractInternalLinks() {
         sectionTitle: sectionMeta?.title || "",
         sourceArea: currentSection ? "section" : "preamble",
       }),
+      importanceTier: kpopImportanceTier({
+        crawlMode: classification.crawlMode,
+        relation: classification.relation,
+        sectionTitle: sectionMeta?.title || "",
+      }),
       domOrder: domOrder++,
     };
 
@@ -212,12 +228,21 @@ function kpopExtractInternalLinks() {
     if (!existing) {
       byTitle.set(link.title, candidate);
     } else if (
-      kpopModeRank(candidate.crawlMode) > kpopModeRank(existing.crawlMode)
-      || (candidate.crawlMode === existing.crawlMode && candidate.priority > existing.priority)
+      Number(candidate.importanceTier ?? 99) < Number(existing.importanceTier ?? 99)
       || (
-        candidate.crawlMode === existing.crawlMode
-        && candidate.priority === existing.priority
+        Number(candidate.importanceTier ?? 99) === Number(existing.importanceTier ?? 99)
         && (candidate.tocOrder ?? Number.MAX_SAFE_INTEGER) < (existing.tocOrder ?? Number.MAX_SAFE_INTEGER)
+      )
+      || (
+        Number(candidate.importanceTier ?? 99) === Number(existing.importanceTier ?? 99)
+        && (candidate.tocOrder ?? Number.MAX_SAFE_INTEGER) === (existing.tocOrder ?? Number.MAX_SAFE_INTEGER)
+        && candidate.priority > existing.priority
+      )
+      || (
+        Number(candidate.importanceTier ?? 99) === Number(existing.importanceTier ?? 99)
+        && (candidate.tocOrder ?? Number.MAX_SAFE_INTEGER) === (existing.tocOrder ?? Number.MAX_SAFE_INTEGER)
+        && candidate.priority === existing.priority
+        && kpopModeRank(candidate.crawlMode) > kpopModeRank(existing.crawlMode)
       )
     ) {
       byTitle.set(link.title, candidate);
@@ -228,12 +253,12 @@ function kpopExtractInternalLinks() {
 
   const links = [...byTitle.values()]
     .sort((a, b) => {
-      const modeDiff = kpopModeRank(b.crawlMode) - kpopModeRank(a.crawlMode);
-      if (modeDiff) return modeDiff;
-      if (a.priority !== b.priority) return b.priority - a.priority;
+      const tierDiff = Number(a.importanceTier ?? 99) - Number(b.importanceTier ?? 99);
+      if (tierDiff) return tierDiff;
       const aRank = a.tocOrder == null ? Number.MAX_SAFE_INTEGER : a.tocOrder;
       const bRank = b.tocOrder == null ? Number.MAX_SAFE_INTEGER : b.tocOrder;
       if (aRank !== bRank) return aRank - bRank;
+      if (a.priority !== b.priority) return b.priority - a.priority;
       return a.domOrder - b.domOrder;
     })
     .map(({ domOrder: _domOrder, ...link }) => link);
