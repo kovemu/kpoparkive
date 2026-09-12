@@ -64,7 +64,10 @@ function countMatches(value, pattern) {
 }
 
 function sourceFeatures(rawValue) {
-  const raw = String(rawValue || "");
+  const raw = String(rawValue || "")
+    .split(/\\r?\\n/)
+    .filter((line) => !/^\\s*##/.test(line))
+    .join("\\n");
   return {
     tableLines: countMatches(raw, /(?:^|\n)[^\n]*\|\|/g),
     folding: countMatches(raw, /#!folding\b/g),
