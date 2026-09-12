@@ -18,7 +18,8 @@
     "namu:dom-fallbacks": "node scripts/namu-dom-fallback-queue.mjs",
     "namu:recover-template": "node scripts/namu-dom-template-recover.mjs",
     "namu:publish": "node scripts/namu-publish-draft.mjs",
-    "local": "node scripts/kpoparkive-local.mjs"
+    "local": "node scripts/kpoparkive-local.mjs",
+    "namu:migrate-browser-artifacts": "node scripts/namu-migrate-browser-artifacts-to-storage.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
