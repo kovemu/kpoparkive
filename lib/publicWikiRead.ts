@@ -47,6 +47,15 @@ export type PublicWikiIndexRow = {
   published_revision_no: number;
 };
 
+export type PublicWikiSearchRow = {
+  source_title: string;
+  translated_title: string | null;
+  root_title: string | null;
+  content_language: string | null;
+  published_revision_no: number | null;
+  content_wikitext: string | null;
+};
+
 async function rpc<T>(name: string, body: Record<string, unknown>): Promise<T | null> {
   if (!SUPABASE_PUBLISHABLE_KEY) {
     throw new Error("Supabase publishable key is not configured");
@@ -135,4 +144,10 @@ export async function getPublicWikiMeta(sourceTitle: string) {
 
 export async function getPublicWikiIndex() {
   return rpcList<PublicWikiIndexRow>("get_public_wiki_index");
+}
+
+export async function searchPublicWiki(query: string) {
+  const clean = query.normalize("NFKC").trim().slice(0, 120);
+  if (!clean) return [];
+  return rpcList<PublicWikiSearchRow>("search_public_wiki", { p_query: clean });
 }
