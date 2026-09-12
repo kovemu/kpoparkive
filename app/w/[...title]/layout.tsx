@@ -15,9 +15,25 @@ const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hukrrzhlt
   .trim()
   .replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://kpoparkive.vercel.app")
+  .trim()
+  .replace(/\/$/, "");
 
-async function displayTitleFor(sourceTitle: string) {
-  if (!SERVICE_ROLE_KEY) return sourceTitle;
+type WikiMeta = {
+  title: string;
+  published: boolean;
+};
+
+function canonicalUrlFor(sourceTitle: string) {
+  const path = sourceTitle
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return SITE_URL + "/w/" + path;
+}
+
+async function wikiMetaFor(sourceTitle: string): Promise<WikiMeta> {
+  if (!SERVICE_ROLE_KEY) return { title: sourceTitle, published: false };
   try {
     const response = await fetch(
       SUPABASE_URL +
@@ -32,7 +48,7 @@ async function displayTitleFor(sourceTitle: string) {
         cache: "no-store",
       },
     );
-    if (!response.ok) return sourceTitle;
+    if (!response.ok) return { title: sourceTitle, published: false };
     const rows = await response.json() as Array<{
       translated_title: string | null;
       content_language: string | null;
@@ -45,13 +61,15 @@ async function displayTitleFor(sourceTitle: string) {
     // translated_title is display metadata, not publication state. Local draft
     // previews and already-published revisions must not fall back to the Korean
     // canonical source title merely because a newer English revision is draft.
+    const published = Number(row?.published_revision_no || 0) > 0;
     if (translated && !/[가-힣]/.test(translated)) {
-      return translated;
+      return { title: translated, published };
     }
+    return { title: sourceTitle, published };
   } catch {
-    // Fall back to the captured source title if metadata lookup fails.
+    // Metadata lookup failure must fail closed for indexing.
   }
-  return sourceTitle;
+  return { title: sourceTitle, published: false };
 }
 
 export async function generateMetadata({
@@ -61,9 +79,15 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
-  const title = await displayTitleFor(sourceTitle);
+  const meta = await wikiMetaFor(sourceTitle);
   return {
-    title: `${title} - Kpoparkive`,
+    title: `${meta.title} - Kpoparkive`,
+    alternates: meta.published
+      ? { canonical: canonicalUrlFor(sourceTitle) }
+      : undefined,
+    robots: meta.published
+      ? { index: true, follow: true }
+      : { index: false, follow: false },
   };
 }
 
@@ -76,7 +100,7 @@ export default async function WikiTitleLayout({
 }) {
   const { title: segments } = await params;
   const sourceTitle = sourceTitleFromSegments(segments);
-  const title = await displayTitleFor(sourceTitle);
+  const { title } = await wikiMetaFor(sourceTitle);
 
   return (
     <>
