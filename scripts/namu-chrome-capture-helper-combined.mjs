@@ -516,7 +516,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v7";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v8";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -611,7 +611,7 @@ function kpopBuildDirectRootRelationMap(rootRow, rows) {
   return map;
 }
 
-function kpopBuildRecursiveTocScope(rootTitle, rows) {
+function kpopBuildRootCoreScope(rootTitle, rows) {
   const docMap = new Map(
     (rows || [])
       .map((row) => [
@@ -622,46 +622,37 @@ function kpopBuildRecursiveTocScope(rootTitle, rows) {
   );
 
   const scope = new Map();
-  const queue = [];
+  if (!docMap.has(rootTitle)) return scope;
 
-  function add(title, meta) {
-    const normalized = String(title || "").normalize("NFKC").trim();
-    if (!normalized || scope.has(normalized) || !docMap.has(normalized)) return false;
-    scope.set(normalized, meta);
-    queue.push(normalized);
-    return true;
-  }
-
-  add(rootTitle, {
+  scope.set(rootTitle, {
     relation: "root",
     parentTitle: null,
     scopeDepth: 0,
     tocOrder: -1,
   });
 
-  while (queue.length) {
-    const currentTitle = queue.shift();
-    const currentRow = docMap.get(currentTitle);
-    const parentMeta = scope.get(currentTitle) || { scopeDepth: 0 };
-    const links = Array.isArray(currentRow?.source_browser_capture_meta?.internalLinks)
-      ? currentRow.source_browser_capture_meta.internalLinks
-      : [];
+  const rootRow = docMap.get(rootTitle);
+  const links = Array.isArray(rootRow?.source_browser_capture_meta?.internalLinks)
+    ? rootRow.source_browser_capture_meta.internalLinks
+    : [];
 
-    for (const link of links) {
-      const relation = String(link?.relation || "");
-      if (relation !== "toc_document" && relation !== "member") continue;
+  // Scale-safe core scope: only the team's root TOC documents and members.
+  // Links found inside those first-hop documents are intentionally not
+  // promoted into RAW scope; they remain normal wiki links.
+  for (const link of links) {
+    const relation = String(link?.relation || "");
+    if (relation !== "toc_document" && relation !== "member") continue;
 
-      const targetTitle = String(link?.title || "").normalize("NFKC").trim();
-      if (!targetTitle || !docMap.has(targetTitle)) continue;
+    const targetTitle = String(link?.title || "").normalize("NFKC").trim();
+    if (!targetTitle || !docMap.has(targetTitle) || scope.has(targetTitle)) continue;
 
-      add(targetTitle, {
-        relation,
-        parentTitle: currentTitle,
-        scopeDepth: Number(parentMeta.scopeDepth || 0) + 1,
-        tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
-        crawlPolicyVersion: Number(link?.crawlPolicyVersion || 0) || 0,
-      });
-    }
+    scope.set(targetTitle, {
+      relation,
+      parentTitle: rootTitle,
+      scopeDepth: 1,
+      tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+      crawlPolicyVersion: Number(link?.crawlPolicyVersion || 0) || 0,
+    });
   }
 
   return scope;
@@ -802,14 +793,14 @@ async function kpopPlanRawRequirements(rootTitle) {
     (max, link) => Math.max(max, Number(link?.crawlPolicyVersion || 0) || 0),
     0
   );
-  if (observedPolicyVersion < 5) {
+  if (observedPolicyVersion < 6) {
     throw new Error(
-      "Recursive TOC scope requires a fresh Smart /w/ DOM Harvest (crawl policy v5). " +
+      "Root TOC + members scope requires a fresh Smart /w/ DOM Harvest (crawl policy v6). " +
       "Run DOM Harvest once, then Plan RAW Needs again."
     );
   }
 
-  const scopeMap = kpopBuildRecursiveTocScope(title, docs);
+  const scopeMap = kpopBuildRootCoreScope(title, docs);
   const detectedAt = new Date().toISOString();
   const payload = docs.map((row) => {
     const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
