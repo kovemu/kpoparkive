@@ -1,6 +1,8 @@
 const rootInput = document.getElementById("root");
 const cloneButton = document.getElementById("clone");
 const rawCrawlButton = document.getElementById("rawCrawl");
+const rawPlanButton = document.getElementById("rawPlan");
+const rawNextButton = document.getElementById("rawNext");
 const rawButton = document.getElementById("raw");
 const assetsButton = document.getElementById("assets");
 const compareButton = document.getElementById("compare");
@@ -16,6 +18,7 @@ const status = document.getElementById("status");
 const verification = document.getElementById("verification");
 let pollTimer = null;
 let rawAssetPollTimer = null;
+let lastAutoPlannedCloneId = "";
 
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
@@ -161,6 +164,96 @@ function formatJob(job) {
   return lines.join("\n");
 }
 
+const RAW_REASON_LABELS = {
+  root_canonical_anchor: "root canonical source",
+  browser_dom_missing: "DOM capture missing",
+  dom_promotion_blocked: "DOM promotion blocked",
+  dom_structural_loss: "DOM structural loss",
+  interactive_layout: "interactive/tabbed layout",
+  render_leaked_markers: "render leaked Namu syntax",
+  table_geometry_mismatch: "table geometry mismatch",
+  unmatched_original_tables: "unmatched original tables",
+  source_render_error: "source render error",
+  source_render_missing_templates: "missing templates",
+  source_render_missing_files: "missing files",
+  complex_template_fallback: "complex template fallback",
+  template_structural_loss: "template structural loss",
+  template_interactive_layout: "interactive template",
+  template_fallback_unverified: "unverified template fallback",
+  dense_tables: "dense tables",
+  many_sections: "many sections",
+  large_dom_capture: "large DOM capture",
+  dense_link_graph: "dense link graph",
+  canonical_raw_present: "canonical RAW present",
+};
+
+function rawReasonText(item) {
+  const reasons = Array.isArray(item?.reason_codes) ? item.reason_codes : [];
+  return reasons
+    .slice(0, 4)
+    .map((reason) => RAW_REASON_LABELS[reason] || String(reason))
+    .join(" · ");
+}
+
+function formatRawNeeds(plan) {
+  if (!plan) return "RAW Needs has not been planned.";
+  const counts = plan.counts || {};
+  const lines = [
+    `RAW Needs · ${plan.rootTitle || rootInput.value.trim() || "—"}`,
+    `Captured: ${counts.captured || 0}`,
+    `Needs RAW: ${counts.needs_raw || 0}`,
+    `Review only: ${counts.review || 0}`,
+    `DOM ready: ${counts.ready || 0}`,
+    `Ignored: ${counts.ignored || 0}`,
+  ];
+
+  if (plan.next) {
+    lines.push(
+      "",
+      `Next RAW: ${plan.next.source_title || "—"}`,
+      `Priority: ${plan.next.priority || 0} · Score: ${plan.next.score || 0}`,
+    );
+    const reason = rawReasonText(plan.next);
+    if (reason) lines.push(`Reason: ${reason}`);
+  } else {
+    lines.push("", "No REQUIRED RAW remains.");
+  }
+
+  const reviews = Array.isArray(plan.items)
+    ? plan.items.filter((item) => item.status === "review").slice(0, 4)
+    : [];
+  if (reviews.length) {
+    lines.push("", "Review candidates:");
+    for (const item of reviews) {
+      lines.push(`- ${item.source_title}: ${rawReasonText(item) || "manual review"}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function planRawNeeds({ show = true } = {}) {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const response = await chrome.runtime.sendMessage({
+    type: "kpoparkive-plan-raw-needs",
+    options: { rootTitle },
+  });
+  if (!response?.ok) throw new Error(response?.error || "Could not plan RAW requirements.");
+  if (show) setStatus(formatRawNeeds(response), "ok");
+  return response;
+}
+
+async function refreshRawNeeds({ show = false } = {}) {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  const response = await chrome.runtime.sendMessage({
+    type: "kpoparkive-raw-needs-status",
+    options: { rootTitle },
+  });
+  if (!response?.ok) throw new Error(response?.error || "Could not read RAW requirements.");
+  if (show) setStatus(formatRawNeeds(response), "ok");
+  return response;
+}
+
 function formatRawAssetJob(job) {
   if (!job || job.id !== "raw-assets") return "Raw asset resolver is idle.";
   const lines = [
@@ -193,6 +286,25 @@ async function pollStatus() {
     if (job?.id) setStatus(formatJob(job), job.failed ? "" : "ok");
     cloneButton.disabled = Boolean(job?.running);
     rawCrawlButton.disabled = Boolean(job?.running);
+    rawPlanButton.disabled = Boolean(job?.running);
+    rawNextButton.disabled = Boolean(job?.running);
+
+    if (
+      job?.done &&
+      job.captureMode !== "raw" &&
+      job.rootTitle &&
+      job.id !== lastAutoPlannedCloneId
+    ) {
+      lastAutoPlannedCloneId = job.id;
+      try {
+        rootInput.value = job.rootTitle;
+        const plan = await planRawNeeds({ show: false });
+        setStatus(formatJob(job) + "\n\n" + formatRawNeeds(plan), "ok");
+      } catch (error) {
+        setStatus(formatJob(job) + "\n\nRAW Needs planning failed: " + (error?.message || String(error)), "");
+      }
+    }
+
     if (!job?.running && pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -253,6 +365,60 @@ maxDocsInput.addEventListener("change", markCustomProfile);
 crawlOrderInput.addEventListener("change", markCustomProfile);
 includeLeafInput.addEventListener("change", markCustomProfile);
 refreshExistingInput.addEventListener("change", markCustomProfile);
+
+rawPlanButton.addEventListener("click", async () => {
+  rawPlanButton.disabled = true;
+  setStatus("Analyzing DOM captures and fidelity signals...\nOnly genuinely required documents will enter the RAW queue.");
+  try {
+    const plan = await planRawNeeds({ show: false });
+    setStatus(formatRawNeeds(plan), "ok");
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+  } finally {
+    rawPlanButton.disabled = false;
+  }
+});
+
+rawNextButton.addEventListener("click", async () => {
+  const rootTitle = rootInput.value.trim() || "RESCENE";
+  rawNextButton.disabled = true;
+  rawPlanButton.disabled = true;
+  setStatus(
+    `Finding the next REQUIRED RAW for ${rootTitle}...\n` +
+    "No manual NamuWiki navigation is needed. The persistent RAW session tab will move to the selected document."
+  );
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "kpoparkive-capture-next-required-raw",
+      options: { rootTitle, replan: true },
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not capture the next required RAW.");
+
+    if (response.noWork) {
+      setStatus(formatRawNeeds(response.rawNeeds), "ok");
+      return;
+    }
+
+    const planText = formatRawNeeds(response.rawNeeds);
+    setStatus(
+      [
+        "Required RAW saved.",
+        `Document: ${response.sourceTitle || "—"}`,
+        `Characters: ${response.charCount || 0}`,
+        `Method: ${response.extractionMethod || "persistent RAW tab"}`,
+        "",
+        planText,
+      ].join("\n"),
+      "ok"
+    );
+  } catch (error) {
+    setStatus(error?.message || String(error), "bad");
+  } finally {
+    rawNextButton.disabled = false;
+    rawPlanButton.disabled = false;
+  }
+});
 
 rawCrawlButton.addEventListener("click", async () => {
   const activeRoot = await syncRootFromActiveTab();
@@ -479,5 +645,6 @@ async function pollVerificationStatus() {
 refreshHealth();
 pollStatus();
 pollRawAssetStatus(false);
+refreshRawNeeds({ show: false }).catch(() => {});
 pollVerificationStatus();
 setInterval(pollVerificationStatus, 600);
