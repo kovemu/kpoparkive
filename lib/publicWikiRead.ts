@@ -26,7 +26,9 @@ export type PublicWikiDocument = {
   root_title: string;
   translated_title: string | null;
   published_revision_no: number;
-  published_namumark_html: string;
+  published_namumark_html: string | null;
+  published_content_wikitext: string | null;
+  published_content_language: string | null;
 };
 
 export type PublicWikiPagePayload = {
