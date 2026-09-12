@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v6";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v7";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -538,23 +538,68 @@ function kpopBuildDirectRootRelationMap(rootRow, rows) {
   return map;
 }
 
-function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, directRoot) {
-  const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
-  const reasons = [];
-  let score = 0;
-
-  const isRoot = sourceTitle === rootTitle;
-  const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
-  const directRelation = String(directRoot?.relation || "");
-
-  // Scope must match the root harvest exactly. Do not infer membership from
-  // inbound links of previously crawled documents, otherwise old broad-crawl
-  // data can leak unrelated pages back into RAW Needs.
-  const inTeamCoreScope = Boolean(
-    isRoot ||
-    directRelation === "toc_document" ||
-    directRelation === "member"
+function kpopBuildRecursiveTocScope(rootTitle, rows) {
+  const docMap = new Map(
+    (rows || [])
+      .map((row) => [
+        String(row?.source_title || "").normalize("NFKC").trim(),
+        row,
+      ])
+      .filter(([title]) => Boolean(title))
   );
+
+  const scope = new Map();
+  const queue = [];
+
+  function add(title, meta) {
+    const normalized = String(title || "").normalize("NFKC").trim();
+    if (!normalized || scope.has(normalized) || !docMap.has(normalized)) return false;
+    scope.set(normalized, meta);
+    queue.push(normalized);
+    return true;
+  }
+
+  add(rootTitle, {
+    relation: "root",
+    parentTitle: null,
+    scopeDepth: 0,
+    tocOrder: -1,
+  });
+
+  while (queue.length) {
+    const currentTitle = queue.shift();
+    const currentRow = docMap.get(currentTitle);
+    const parentMeta = scope.get(currentTitle) || { scopeDepth: 0 };
+    const links = Array.isArray(currentRow?.source_browser_capture_meta?.internalLinks)
+      ? currentRow.source_browser_capture_meta.internalLinks
+      : [];
+
+    for (const link of links) {
+      const relation = String(link?.relation || "");
+      if (relation !== "toc_document" && relation !== "member") continue;
+
+      const targetTitle = String(link?.title || "").normalize("NFKC").trim();
+      if (!targetTitle || !docMap.has(targetTitle)) continue;
+
+      add(targetTitle, {
+        relation,
+        parentTitle: currentTitle,
+        scopeDepth: Number(parentMeta.scopeDepth || 0) + 1,
+        tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+        crawlPolicyVersion: Number(link?.crawlPolicyVersion || 0) || 0,
+      });
+    }
+  }
+
+  return scope;
+}
+
+function kpopClassifyRawRequirement(row, rootTitle, scopeEntry) {
+  const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
+  const isRoot = sourceTitle === rootTitle;
+  const relation = String(scopeEntry?.relation || "");
+  const scopeDepth = Number(scopeEntry?.scopeDepth || 0) || 0;
+  const inTeamCoreScope = Boolean(scopeEntry);
 
   if (!inTeamCoreScope) {
     return {
@@ -583,7 +628,13 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
   const missingRawReasons = ["canonical_raw_missing"];
   if (!row?.source_browser_captured_at) missingRawReasons.push("browser_dom_missing");
 
-  let canonicalPriority = isRoot ? 100 : directRelation === "toc_document" ? 95 : directRelation === "member" ? 90 : 85;
+  const canonicalPriority = isRoot
+    ? 100
+    : relation === "toc_document"
+      ? Math.max(80, 95 - scopeDepth)
+      : relation === "member"
+        ? Math.max(78, 90 - scopeDepth)
+        : 80;
   return {
     status: "needs_raw",
     score: 100,
@@ -592,130 +643,6 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
     rawCapturedAt: null,
   };
 
-  const depth = Math.max(0, Number(row?.crawl_depth || 0) || 0);
-  const captureMeta = row?.source_browser_capture_meta && typeof row.source_browser_capture_meta === "object"
-    ? row.source_browser_capture_meta
-    : {};
-  const fidelity = row?.source_fidelity_meta && typeof row.source_fidelity_meta === "object"
-    ? row.source_fidelity_meta
-    : {};
-  const renderMeta = row?.source_namumark_meta && typeof row.source_namumark_meta === "object"
-    ? row.source_namumark_meta
-    : {};
-
-  if (!row?.source_browser_captured_at) {
-    reasons.push("browser_dom_missing");
-    return {
-      status: "review",
-      score: 50,
-      priority: isRoot ? 100 : isDirectSubdocument ? 85 : 60,
-      reasons,
-      rawCapturedAt: null,
-    };
-  }
-
-  if (isRoot) {
-    score += 100;
-    reasons.push("root_canonical_anchor");
-  }
-
-  const promotionGate = fidelity?.promotionGate || fidelity?.promotion_gate || null;
-  if (promotionGate?.eligible === false || String(fidelity?.visualPromotionEligible || "").toLowerCase() === "false") {
-    score += 85;
-    reasons.push("dom_promotion_blocked");
-    if (promotionGate?.structuralLoss === true) reasons.push("dom_structural_loss");
-    if (promotionGate?.interactiveLayout === true) reasons.push("interactive_layout");
-  }
-
-  const summary = fidelity?.summary && typeof fidelity.summary === "object" ? fidelity.summary : {};
-  if (Number(summary?.leakedMarkerCount || 0) > 0) {
-    score += 80;
-    reasons.push("render_leaked_markers");
-  }
-  if (Number(summary?.tableGeometryMismatches || 0) >= 2) {
-    score += 45;
-    reasons.push("table_geometry_mismatch");
-  }
-  if (Number(summary?.unmatchedOriginalTables || 0) >= 4) {
-    score += 40;
-    reasons.push("unmatched_original_tables");
-  }
-
-  const missingTemplates = Array.isArray(renderMeta?.missingTemplates) ? renderMeta.missingTemplates.length : 0;
-  const missingFiles = Array.isArray(renderMeta?.missingFiles) ? renderMeta.missingFiles.length : 0;
-  if (renderMeta?.hasError === true || String(renderMeta?.hasError || "").toLowerCase() === "true") {
-    score += 80;
-    reasons.push("source_render_error");
-  }
-  if (missingTemplates > 0) {
-    score += 70;
-    reasons.push("source_render_missing_templates");
-  }
-  if (missingFiles > 0) {
-    score += 25;
-    reasons.push("source_render_missing_files");
-  }
-
-  for (const fallback of fallbackRows || []) {
-    const gate = fallback?.recovery_meta?.promotionGate || null;
-    const htmlOnly = fallback?.recovery_meta?.htmlFallbackRequired === true;
-    const badGate = gate?.eligible === false;
-    const unresolved = !["converted", "verified"].includes(String(fallback?.recovery_status || ""));
-    if (badGate || htmlOnly) {
-      score += 85;
-      reasons.push("complex_template_fallback");
-      if (gate?.structuralLoss === true) reasons.push("template_structural_loss");
-      if (gate?.interactiveLayout === true) reasons.push("template_interactive_layout");
-    } else if (unresolved) {
-      score += 45;
-      reasons.push("template_fallback_unverified");
-    }
-  }
-
-  const tables = Number(captureMeta?.tableCount || captureMeta?.rootMetrics?.tables || 0) || 0;
-  const headings = Number(captureMeta?.headingCount || captureMeta?.rootMetrics?.headings || 0) || 0;
-  const articleBytes = Number(captureMeta?.article_bytes || captureMeta?.articleBytes || 0) || 0;
-  const linkCount = Number(captureMeta?.internalLinkCount || 0) || 0;
-
-  // Complexity alone never forces RAW. It only escalates otherwise-simple DOM
-  // documents to REVIEW so humans do not spend verification time unnecessarily.
-  if (tables >= 24) {
-    score += 20;
-    reasons.push("dense_tables");
-  }
-  if (headings >= 24) {
-    score += 10;
-    reasons.push("many_sections");
-  }
-  if (articleBytes >= 8 * 1024 * 1024) {
-    score += 15;
-    reasons.push("large_dom_capture");
-  }
-  if (linkCount >= 180) {
-    score += 10;
-    reasons.push("dense_link_graph");
-  }
-
-  let status = "ready";
-  if (isRoot || score >= 80) status = "needs_raw";
-  else if (score >= 40) status = "review";
-
-  const relation = String(inbound?.relation || "");
-  let priority = isRoot ? 100 : isDirectSubdocument ? 88 : depth <= 1 ? 72 : 45;
-  if (relation === "subdocument") priority = Math.max(priority, 90);
-  else if (relation === "member") priority = Math.max(priority, 86);
-  else if (relation === "core_kpop_document") priority = Math.max(priority, 82);
-  else if (String(inbound?.crawlMode || "") === "leaf") priority = Math.min(priority, 55);
-
-  priority += Math.min(9, Math.floor(score / 20));
-
-  return {
-    status,
-    score,
-    priority,
-    reasons: [...new Set(reasons)],
-    rawCapturedAt: null,
-  };
 }
 
 async function kpopListRawRequirements(rootTitle) {
@@ -791,11 +718,9 @@ async function kpopPlanRawRequirements(rootTitle) {
       .map((row) => String(row?.source_title || ""))
   );
 
-  const inboundMap = kpopBuildInboundRelationMap(docs);
   const rootRow = docs.find(
     (row) => String(row?.source_title || "").normalize("NFKC").trim() === title
   ) || null;
-  const directRootMap = kpopBuildDirectRootRelationMap(rootRow, docs);
 
   const rootLinks = Array.isArray(rootRow?.source_browser_capture_meta?.internalLinks)
     ? rootRow.source_browser_capture_meta.internalLinks
@@ -804,22 +729,21 @@ async function kpopPlanRawRequirements(rootTitle) {
     (max, link) => Math.max(max, Number(link?.crawlPolicyVersion || 0) || 0),
     0
   );
-  if (observedPolicyVersion < 4) {
+  if (observedPolicyVersion < 5) {
     throw new Error(
-      "TOC-first scope requires a fresh Smart /w/ DOM Harvest (crawl policy v4). " +
+      "Recursive TOC scope requires a fresh Smart /w/ DOM Harvest (crawl policy v5). " +
       "Run DOM Harvest once, then Plan RAW Needs again."
     );
   }
 
+  const scopeMap = kpopBuildRecursiveTocScope(title, docs);
   const detectedAt = new Date().toISOString();
   const payload = docs.map((row) => {
     const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
     const classified = kpopClassifyRawRequirement(
       row,
       title,
-      fallbackMap.get(String(row?.id || "")) || [],
-      inboundMap.get(sourceTitle) || null,
-      directRootMap.get(sourceTitle) || null
+      scopeMap.get(sourceTitle) || null
     );
     const status = manuallyIgnored.has(sourceTitle) && classified.status !== "captured"
       ? "ignored"
