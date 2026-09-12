@@ -439,6 +439,356 @@ async function rawSourceStatus(sourceTitle) {
   };
 }
 
+
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v1";
+
+function kpopCanonicalRawCaptured(row) {
+  return Boolean(
+    row?.source_wikitext &&
+    row?.raw_extracted_at &&
+    row?.source_format === "namuwiki_raw" &&
+    /^normal-chrome-(?:raw-view|edit-source)-v1$/.test(String(row?.source_extraction_version || ""))
+  );
+}
+
+function kpopRawRequirementRelationRank(value) {
+  const relation = String(value || "");
+  if (relation === "subdocument") return 5;
+  if (relation === "member") return 4;
+  if (relation === "core_kpop_document") return 3;
+  if (relation === "related") return 2;
+  return 1;
+}
+
+function kpopBuildInboundRelationMap(rows) {
+  const known = new Set((rows || []).map((row) => String(row?.source_title || "").normalize("NFKC").trim()).filter(Boolean));
+  const map = new Map();
+
+  for (const row of rows || []) {
+    const links = Array.isArray(row?.source_browser_capture_meta?.internalLinks)
+      ? row.source_browser_capture_meta.internalLinks
+      : [];
+    for (const link of links) {
+      const title = String(link?.title || "").normalize("NFKC").trim();
+      if (!title || !known.has(title)) continue;
+      const candidate = {
+        relation: String(link?.relation || ""),
+        crawlMode: String(link?.crawlMode || ""),
+        priority: Number(link?.priority || 0) || 0,
+        tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+      };
+      const existing = map.get(title);
+      if (
+        !existing ||
+        kpopRawRequirementRelationRank(candidate.relation) > kpopRawRequirementRelationRank(existing.relation) ||
+        (
+          kpopRawRequirementRelationRank(candidate.relation) === kpopRawRequirementRelationRank(existing.relation) &&
+          candidate.priority > existing.priority
+        )
+      ) {
+        map.set(title, candidate);
+      }
+    }
+  }
+  return map;
+}
+
+function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound) {
+  const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
+  const reasons = [];
+  let score = 0;
+
+  if (kpopCanonicalRawCaptured(row)) {
+    return {
+      status: "captured",
+      score: 0,
+      priority: 0,
+      reasons: ["canonical_raw_present"],
+      rawCapturedAt: row.raw_extracted_at || null,
+    };
+  }
+
+  const isRoot = sourceTitle === rootTitle;
+  const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
+  const depth = Math.max(0, Number(row?.crawl_depth || 0) || 0);
+  const captureMeta = row?.source_browser_capture_meta && typeof row.source_browser_capture_meta === "object"
+    ? row.source_browser_capture_meta
+    : {};
+  const fidelity = row?.source_fidelity_meta && typeof row.source_fidelity_meta === "object"
+    ? row.source_fidelity_meta
+    : {};
+  const renderMeta = row?.source_namumark_meta && typeof row.source_namumark_meta === "object"
+    ? row.source_namumark_meta
+    : {};
+
+  if (!row?.source_browser_captured_at) {
+    reasons.push("browser_dom_missing");
+    return {
+      status: "review",
+      score: 50,
+      priority: isRoot ? 100 : isDirectSubdocument ? 85 : 60,
+      reasons,
+      rawCapturedAt: null,
+    };
+  }
+
+  if (isRoot) {
+    score += 100;
+    reasons.push("root_canonical_anchor");
+  }
+
+  const promotionGate = fidelity?.promotionGate || fidelity?.promotion_gate || null;
+  if (promotionGate?.eligible === false || String(fidelity?.visualPromotionEligible || "").toLowerCase() === "false") {
+    score += 85;
+    reasons.push("dom_promotion_blocked");
+    if (promotionGate?.structuralLoss === true) reasons.push("dom_structural_loss");
+    if (promotionGate?.interactiveLayout === true) reasons.push("interactive_layout");
+  }
+
+  const summary = fidelity?.summary && typeof fidelity.summary === "object" ? fidelity.summary : {};
+  if (Number(summary?.leakedMarkerCount || 0) > 0) {
+    score += 80;
+    reasons.push("render_leaked_markers");
+  }
+  if (Number(summary?.tableGeometryMismatches || 0) >= 2) {
+    score += 45;
+    reasons.push("table_geometry_mismatch");
+  }
+  if (Number(summary?.unmatchedOriginalTables || 0) >= 4) {
+    score += 40;
+    reasons.push("unmatched_original_tables");
+  }
+
+  const missingTemplates = Array.isArray(renderMeta?.missingTemplates) ? renderMeta.missingTemplates.length : 0;
+  const missingFiles = Array.isArray(renderMeta?.missingFiles) ? renderMeta.missingFiles.length : 0;
+  if (renderMeta?.hasError === true || String(renderMeta?.hasError || "").toLowerCase() === "true") {
+    score += 80;
+    reasons.push("source_render_error");
+  }
+  if (missingTemplates > 0) {
+    score += 70;
+    reasons.push("source_render_missing_templates");
+  }
+  if (missingFiles > 0) {
+    score += 25;
+    reasons.push("source_render_missing_files");
+  }
+
+  for (const fallback of fallbackRows || []) {
+    const gate = fallback?.recovery_meta?.promotionGate || null;
+    const htmlOnly = fallback?.recovery_meta?.htmlFallbackRequired === true;
+    const badGate = gate?.eligible === false;
+    const unresolved = !["converted", "verified"].includes(String(fallback?.recovery_status || ""));
+    if (badGate || htmlOnly) {
+      score += 85;
+      reasons.push("complex_template_fallback");
+      if (gate?.structuralLoss === true) reasons.push("template_structural_loss");
+      if (gate?.interactiveLayout === true) reasons.push("template_interactive_layout");
+    } else if (unresolved) {
+      score += 45;
+      reasons.push("template_fallback_unverified");
+    }
+  }
+
+  const tables = Number(captureMeta?.tableCount || captureMeta?.rootMetrics?.tables || 0) || 0;
+  const headings = Number(captureMeta?.headingCount || captureMeta?.rootMetrics?.headings || 0) || 0;
+  const articleBytes = Number(captureMeta?.article_bytes || captureMeta?.articleBytes || 0) || 0;
+  const linkCount = Number(captureMeta?.internalLinkCount || 0) || 0;
+
+  // Complexity alone never forces RAW. It only escalates otherwise-simple DOM
+  // documents to REVIEW so humans do not spend verification time unnecessarily.
+  if (tables >= 24) {
+    score += 20;
+    reasons.push("dense_tables");
+  }
+  if (headings >= 24) {
+    score += 10;
+    reasons.push("many_sections");
+  }
+  if (articleBytes >= 8 * 1024 * 1024) {
+    score += 15;
+    reasons.push("large_dom_capture");
+  }
+  if (linkCount >= 180) {
+    score += 10;
+    reasons.push("dense_link_graph");
+  }
+
+  let status = "ready";
+  if (isRoot || score >= 80) status = "needs_raw";
+  else if (score >= 40) status = "review";
+
+  const relation = String(inbound?.relation || "");
+  let priority = isRoot ? 100 : isDirectSubdocument ? 88 : depth <= 1 ? 72 : 45;
+  if (relation === "subdocument") priority = Math.max(priority, 90);
+  else if (relation === "member") priority = Math.max(priority, 86);
+  else if (relation === "core_kpop_document") priority = Math.max(priority, 82);
+  else if (String(inbound?.crawlMode || "") === "leaf") priority = Math.min(priority, 55);
+
+  priority += Math.min(9, Math.floor(score / 20));
+
+  return {
+    status,
+    score,
+    priority,
+    reasons: [...new Set(reasons)],
+    rawCapturedAt: null,
+  };
+}
+
+async function kpopListRawRequirements(rootTitle) {
+  const title = String(rootTitle || "").normalize("NFKC").trim();
+  if (!title) throw new Error("rootTitle is required");
+
+  const rows = await db(
+    "namu_raw_requirements?root_title=eq." + encodeURIComponent(title) +
+    "&select=id,root_title,source_document_id,source_title,status,priority,score,reason_codes,detector_version,detected_at,raw_captured_at,updated_at" +
+    "&order=priority.desc,source_title.asc&limit=500"
+  );
+
+  const items = Array.isArray(rows) ? rows : [];
+  const counts = { captured: 0, needs_raw: 0, review: 0, ready: 0, ignored: 0 };
+  for (const item of items) {
+    if (Object.prototype.hasOwnProperty.call(counts, item.status)) counts[item.status] += 1;
+  }
+  const next = items.find((item) => item.status === "needs_raw") || null;
+
+  return {
+    ok: true,
+    rootTitle: title,
+    detectorVersion: RAW_REQUIREMENT_DETECTOR_VERSION,
+    counts,
+    total: items.length,
+    next,
+    items,
+  };
+}
+
+async function kpopPlanRawRequirements(rootTitle) {
+  const title = String(rootTitle || "").normalize("NFKC").trim();
+  if (!title) throw new Error("rootTitle is required");
+
+  const rows = await db(
+    "source_documents?source=eq.namu_mirror&root_title=eq." + encodeURIComponent(title) +
+    "&select=id,source_title,root_title,crawl_depth,source_format,source_extraction_version,source_wikitext,raw_extracted_at,source_browser_captured_at,source_browser_capture_meta,source_fidelity_meta,source_namumark_meta,source_render_manifest" +
+    "&order=crawl_depth.asc,source_title.asc&limit=500"
+  );
+  const docs = Array.isArray(rows) ? rows : [];
+  if (!docs.length) return { ...(await kpopListRawRequirements(title)), planned: 0 };
+
+  const docIds = new Set(docs.map((row) => String(row?.id || "")).filter(Boolean));
+  const allFallbacks = await db(
+    "template_dom_fallbacks?source_document_id=not.is.null" +
+    "&select=source_document_id,template_title,recovery_status,translation_status,recovery_meta&limit=3000"
+  );
+  const fallbackMap = new Map();
+  for (const row of Array.isArray(allFallbacks) ? allFallbacks : []) {
+    const id = String(row?.source_document_id || "");
+    if (!docIds.has(id)) continue;
+    if (!fallbackMap.has(id)) fallbackMap.set(id, []);
+    fallbackMap.get(id).push(row);
+  }
+
+  const existingQueue = await db(
+    "namu_raw_requirements?root_title=eq." + encodeURIComponent(title) +
+    "&select=source_title,status&limit=500"
+  );
+  const ignored = new Set(
+    (Array.isArray(existingQueue) ? existingQueue : [])
+      .filter((row) => row?.status === "ignored")
+      .map((row) => String(row?.source_title || ""))
+  );
+
+  const inboundMap = kpopBuildInboundRelationMap(docs);
+  const detectedAt = new Date().toISOString();
+  const payload = docs.map((row) => {
+    const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
+    const classified = kpopClassifyRawRequirement(
+      row,
+      title,
+      fallbackMap.get(String(row?.id || "")) || [],
+      inboundMap.get(sourceTitle) || null
+    );
+    const status = ignored.has(sourceTitle) && classified.status !== "captured"
+      ? "ignored"
+      : classified.status;
+    return {
+      root_title: title,
+      source_document_id: row.id,
+      source_title: sourceTitle,
+      status,
+      priority: classified.priority,
+      score: classified.score,
+      reason_codes: classified.reasons,
+      detector_version: RAW_REQUIREMENT_DETECTOR_VERSION,
+      detected_at: detectedAt,
+      raw_captured_at: classified.rawCapturedAt,
+      updated_at: detectedAt,
+    };
+  });
+
+  if (payload.length) {
+    await db("namu_raw_requirements?on_conflict=root_title,source_title", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  const result = await kpopListRawRequirements(title);
+  console.log(
+    "RAW REQUIREMENTS PLANNED " + title +
+    " -> captured=" + result.counts.captured +
+    " needs_raw=" + result.counts.needs_raw +
+    " review=" + result.counts.review +
+    " ready=" + result.counts.ready +
+    " ignored=" + result.counts.ignored
+  );
+  return { ...result, planned: payload.length };
+}
+
+async function kpopMarkRawRequirementCaptured(doc, rootTitle, sourceTitle, capturedAt) {
+  if (!doc?.id || !rootTitle || !sourceTitle) return;
+  const now = capturedAt || new Date().toISOString();
+  try {
+    await db("namu_raw_requirements?on_conflict=root_title,source_title", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{
+        root_title: rootTitle,
+        source_document_id: doc.id,
+        source_title: sourceTitle,
+        status: "captured",
+        priority: 0,
+        score: 0,
+        reason_codes: ["canonical_raw_present"],
+        detector_version: RAW_REQUIREMENT_DETECTOR_VERSION,
+        detected_at: now,
+        raw_captured_at: now,
+        updated_at: now,
+      }]),
+    });
+  } catch (error) {
+    console.warn("RAW REQUIREMENT CAPTURE MARK FAILED " + sourceTitle + ": " + (error?.message || error));
+  }
+}
+
+async function kpopIgnoreRawRequirement(rootTitle, sourceTitle) {
+  const root = String(rootTitle || "").normalize("NFKC").trim();
+  const source = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!root || !source) throw new Error("rootTitle/sourceTitle are required");
+  await db(
+    "namu_raw_requirements?root_title=eq." + encodeURIComponent(root) +
+    "&source_title=eq." + encodeURIComponent(source),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ status: "ignored", updated_at: new Date().toISOString() }),
+    }
+  );
+  return kpopListRawRequirements(root);
+}
+
 async function proxyAsset(req, res) {
   const body = await readBody(req, MAX_IMAGE_BYTES);
   let lastError = "asset worker unavailable";
