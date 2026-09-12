@@ -120,53 +120,106 @@ function searchSnippet(row: SearchRow) {
 
 function searchRank(row: SearchRow, query: string) {
   const q = normalizeSearchKey(query);
-  const title = normalizeSearchKey(englishDisplayTitle(row));
-  const source = normalizeSearchKey(row.source_title);
+  const translated = normalizeSearchKey(String(row.translated_title || ""));
+  const displayTitle = normalizeSearchKey(englishDisplayTitle(row));
   const root = normalizeSearchKey(row.root_title || "");
+  const source = normalizeSearchKey(row.source_title);
+  const body = normalizeSearchKey(row.content_wikitext || "");
+  const isRootDocument =
+    Boolean(row.root_title) &&
+    row.source_title === row.root_title;
 
-  if (!q || !title) return 999;
-  if (title === q) return 0;
-  if (source === q) return 1;
-  if (title.startsWith(q + " ") || title.startsWith(q + "(")) return 2;
-  if (title.startsWith(q)) return 3;
-  if (root === q && title !== root) return 4;
-  if (title.includes(q)) return 5;
-  if (source.includes(q)) return 6;
-  if (root.includes(q)) return 7;
+  if (!q || !translated) return 999;
+
+  // Representative documents always win. "rescen" must put RESCENE first,
+  // while "liv" must put Liv (RESCENE) ahead of broader RESCENE matches.
+  if (translated === q || displayTitle === q) return 0;
+  if (isRootDocument && translated.startsWith(q)) return 1;
+  if (translated.startsWith(q) || displayTitle.startsWith(q)) return 2;
+  if (isRootDocument && root.startsWith(q)) return 3;
+  if (root.startsWith(q)) return 4;
+  if (translated.includes(q) || displayTitle.includes(q)) return 5;
+  if (root.includes(q)) return 6;
+
+  // Canonical Korean titles may still be used as hidden aliases, but never as
+  // display text. This lets a Korean query find the English result.
+  if (source.includes(q)) return 7;
+
+  // Full English body match is intentionally last.
+  if (body.includes(q)) return 8;
   return 50;
+}
+
+async function fetchSearchRows(path: string): Promise<SearchRow[]> {
+  if (!SERVICE_ROLE_KEY) return [];
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) return [];
+  return response.json() as Promise<SearchRow[]>;
 }
 
 async function searchDocuments(query: string): Promise<SearchRow[]> {
   if (!SERVICE_ROLE_KEY || !query) return [];
-  const pattern = `*${query.replace(/[*,]/g, " ").trim()}*`;
-  if (pattern === "**") return [];
+
+  const clean = query.replace(/[*,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+  const pattern = `*${clean}*`;
+  const encodedPattern = encodeURIComponent(pattern);
+  const select =
+    "source_title,translated_title,root_title,content_language,content_status," +
+    "published_revision_no,content_wikitext";
 
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/source_documents?source=eq.namu_mirror&or=(source_title.ilike.${encodeURIComponent(pattern)},translated_title.ilike.${encodeURIComponent(pattern)})&select=source_title,translated_title,root_title,content_language,content_status,published_revision_no,content_wikitext&limit=100`,
-      {
-        headers: {
-          apikey: SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-        },
-        cache: "no-store",
-      },
+    // Stage 1: fast structural discovery. root_title is crucial: searching a
+    // group should also discover its members/subdocuments without requiring the
+    // group name to be repeated in every translated title.
+    const primary = await fetchSearchRows(
+      `source_documents?source=eq.namu_mirror` +
+        `&or=(translated_title.ilike.${encodedPattern},root_title.ilike.${encodedPattern},source_title.ilike.${encodedPattern})` +
+        `&select=${select}&limit=100`,
     );
-    if (!response.ok) return [];
-    const rows = await response.json() as SearchRow[];
-    return rows
+
+    // Stage 2: body recall. Only run it when useful; body hits rank below title
+    // and root matches, so "leader" can find Woni without polluting "RESCENE".
+    const bodyRows = clean.length >= 3 && primary.length < 80
+      ? await fetchSearchRows(
+          `source_documents?source=eq.namu_mirror&content_language=eq.en` +
+            `&content_wikitext=ilike.${encodedPattern}` +
+            `&select=${select}&limit=40`,
+        )
+      : [];
+
+    const merged = new Map<string, SearchRow>();
+    for (const row of [...primary, ...bodyRows]) {
+      if (!merged.has(row.source_title)) merged.set(row.source_title, row);
+    }
+
+    return [...merged.values()]
       .filter((row) =>
         Boolean(englishDisplayTitle(row)) &&
         row.content_language === "en" &&
-        Boolean(row.content_wikitext)
+        Boolean(row.content_wikitext) &&
+        !/^(?:틀|Template|파일|File):/i.test(row.source_title)
       )
       .sort((a, b) => {
         const rankDiff = searchRank(a, query) - searchRank(b, query);
         if (rankDiff) return rankDiff;
+
+        // A published result wins ties over a draft, then shorter/more direct
+        // titles win over verbose subdocuments.
         const aPublished = Number(a.published_revision_no || 0) > 0 ? 0 : 1;
         const bPublished = Number(b.published_revision_no || 0) > 0 ? 0 : 1;
         if (aPublished !== bPublished) return aPublished - bPublished;
-        return englishDisplayTitle(a).localeCompare(englishDisplayTitle(b), "en");
+
+        const aTitle = englishDisplayTitle(a);
+        const bTitle = englishDisplayTitle(b);
+        if (aTitle.length !== bTitle.length) return aTitle.length - bTitle.length;
+        return aTitle.localeCompare(bTitle, "en");
       })
       .slice(0, 50);
   } catch {
