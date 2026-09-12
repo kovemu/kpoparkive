@@ -90,7 +90,7 @@ function applyModernNamuEnginePatches() {
     "utils/namumark/syntax/table.js",
     "const tagStr = paramStr.slice(1, closeIndex);",
     `const tagStr = paramStr.slice(1, closeIndex)\n                    .replace(/\\u00a0/g, ' ')\n                    .replace(/\\s*=\\s*/g, '=')\n                    .replace(/\\s*,\\s*/g, ',')\n                    .trim();`,
-    "treat NBSP as whitespace inside table parameter tokens",
+    "normalize modern whitespace inside table parameter tokens",
   ));
 
   console.log(`Applied The Tree patchset ${ENGINE_PATCHSET}: ${applied.join("; ")}`);
