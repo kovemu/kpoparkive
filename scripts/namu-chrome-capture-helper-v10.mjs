@@ -234,7 +234,37 @@ v8 = mustReplace(
   "public crawl policy state",
 );
 
-const oldEnqueueLinks = String.raw`function kpopQueueImportance(link, mode) {
+const oldEnqueueLinks = String.raw\`function kpopEnqueueLinks(links, depth) {
+  if (depth > kpopCloneState.maxDepth) return 0;
+  const seen = new Set(kpopCloneState.seenUrls);
+  let added = 0;
+  for (const link of cleanInternalLinks(links)) {
+    if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
+    const url = kpopCleanCloneUrl(link.href);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    kpopCloneState.seenUrls.push(url);
+    kpopCloneState.queue.push({ url, depth, attempts: 0 });
+    added += 1;
+  }
+  return added;
+}\`;
+const newEnqueueLinks = String.raw\`function kpopFallbackCrawlMode(link) {
+  const explicit = String(link?.crawlMode || "").toLowerCase();
+  if (["expand", "leaf", "skip"].includes(explicit)) return explicit;
+  const title = String(link?.title || "").normalize("NFKC").trim();
+  if (!title) return "skip";
+  if (/^(?:18|19|20|21)\\d{2}(?:년)?$/u.test(title)
+    || /^(?:1[0-2]|[1-9])월(?:\\s*(?:3[01]|[12]\\d|[1-9])일)?$/u.test(title)
+    || /^(?:3[01]|[12]\\d|[1-9])일$/u.test(title)) return "skip";
+  if (/^(?:대한민국|한국|북한|일본|중국|대만|미국|영국|프랑스|독일|캐나다|호주|러시아|태국|필리핀|베트남|인도네시아|말레이시아|싱가포르|홍콩|마카오)$/u.test(title)) return "skip";
+  if (/^(?:K-?POP|J-?POP|C-?POP|R&B|발라드|댄스|힙합|랩|보컬|아이돌|가수|음악|YouTube|유튜브|Instagram|인스타그램|TikTok|틱톡|Spotify|스포티파이|X|Twitter|트위터)$/iu.test(title)) return "skip";
+  if (title.startsWith(kpopCloneState.rootTitle + "/")) return "expand";
+  if (/(?:음악\\s*방송\\s*직캠|응원법|멤버\\s*간\\s*케미|디스코그래피|콘텐츠|활동|공연|콘서트|팬미팅|투어|팬덤|굿즈|수상)/i.test(title)) return "expand";
+  return "leaf";
+}
+
+function kpopQueueImportance(link, mode) {
   if (Number.isFinite(Number(link?.importanceTier))) return Number(link.importanceTier);
   const relation = String(link?.relation || "");
   if (relation === "subdocument") return 10;
@@ -276,36 +306,6 @@ function kpopEnqueueLinks(links, depth) {
   let added = 0;
   for (const link of cleanInternalLinks(links)) {
     if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
-    const url = kpopCleanCloneUrl(link.href);
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    kpopCloneState.seenUrls.push(url);
-    kpopCloneState.queue.push({ url, depth, attempts: 0 });
-    added += 1;
-  }
-  return added;
-}`;
-const newEnqueueLinks = String.raw`function kpopFallbackCrawlMode(link) {
-  const explicit = String(link?.crawlMode || "").toLowerCase();
-  if (["expand", "leaf", "skip"].includes(explicit)) return explicit;
-  const title = String(link?.title || "").normalize("NFKC").trim();
-  if (!title) return "skip";
-  if (/^(?:18|19|20|21)\d{2}(?:년)?$/u.test(title)
-    || /^(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?$/u.test(title)
-    || /^(?:3[01]|[12]\d|[1-9])일$/u.test(title)) return "skip";
-  if (/^(?:대한민국|한국|북한|일본|중국|대만|미국|영국|프랑스|독일|캐나다|호주|러시아|태국|필리핀|베트남|인도네시아|말레이시아|싱가포르|홍콩|마카오)$/u.test(title)) return "skip";
-  if (/^(?:K-?POP|J-?POP|C-?POP|R&B|발라드|댄스|힙합|랩|보컬|아이돌|가수|음악|YouTube|유튜브|Instagram|인스타그램|TikTok|틱톡|Spotify|스포티파이|X|Twitter|트위터)$/iu.test(title)) return "skip";
-  if (title.startsWith(kpopCloneState.rootTitle + "/")) return "expand";
-  if (/(?:음악\s*방송\s*직캠|응원법|멤버\s*간\s*케미|디스코그래피|콘텐츠|활동|공연|콘서트|팬미팅|투어|팬덤|굿즈|수상)/i.test(title)) return "expand";
-  return "leaf";
-}
-
-function kpopEnqueueLinks(links, depth) {
-  if (depth > kpopCloneState.maxDepth) return 0;
-  const seen = new Set(kpopCloneState.seenUrls);
-  let added = 0;
-  for (const link of cleanInternalLinks(links)) {
-    if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
     const mode = kpopFallbackCrawlMode(link);
     if (mode === "skip") continue;
     if (mode === "leaf" && kpopCloneState.includeLeaf === false) continue;
@@ -329,7 +329,7 @@ function kpopEnqueueLinks(links, depth) {
   }
   kpopSortCloneQueue();
   return added;
-}`;
+}\`;
 v8 = mustReplace(v8, oldEnqueueLinks, newEnqueueLinks, "expand leaf skip enqueue policy");
 
 v8 = mustReplace(
