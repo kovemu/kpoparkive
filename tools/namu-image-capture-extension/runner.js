@@ -197,6 +197,65 @@ async function runnerCaptureAssets(prep) {
   return result;
 }
 
+async function runnerResolveMissingRawTemplates(sourceTitle, initialMissingTemplates) {
+  const attempted = new Set();
+  const captured = [];
+  const reused = [];
+  const failed = [];
+  let rendered = null;
+  let missingTemplates = Array.from(new Set(
+    (initialMissingTemplates || [])
+      .map((value) => String(value || "").normalize("NFKC").trim())
+      .filter(Boolean)
+  ));
+
+  for (let round = 0; round < 8 && missingTemplates.length; round += 1) {
+    const candidates = missingTemplates.filter(
+      (title) => kpopShouldCaptureTemplate(title) && !attempted.has(title)
+    );
+    if (!candidates.length) break;
+
+    for (const templateTitle of candidates) {
+      attempted.add(templateTitle);
+      try {
+        const status = await kpopRawStatus(templateTitle);
+        if (status?.rawCaptured) {
+          reused.push(templateTitle);
+        } else {
+          runnerSetStatus(
+            `RAW · ${sourceTitle}\nMissing template source: ${templateTitle}\nCopying visible RAW source directly…`
+          );
+          await kpopCaptureOneRawTitle({
+            rootTitle: runnerRootTitle,
+            sourceTitle: templateTitle,
+          });
+          captured.push(templateTitle);
+        }
+      } catch (error) {
+        failed.push({
+          title: templateTitle,
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    // The owner may already have a fresh render timestamp from before these
+    // template sources existed. Explicitly invalidate it so the local The Tree
+    // worker rebuilds against the newly captured dependency set.
+    await runnerJson("/invalidate-source-render", {
+      method: "POST",
+      body: JSON.stringify({ sourceTitle }),
+    });
+
+    rendered = await runnerWaitForSourceRender(sourceTitle, 300000);
+    missingTemplates = Array.isArray(rendered?.missingTemplates)
+      ? rendered.missingTemplates
+      : [];
+  }
+
+  return { rendered, missingTemplates, captured, reused, failed };
+}
+
 async function runnerProcessTask(task) {
   let tabId = null;
   try {
@@ -217,7 +276,18 @@ async function runnerProcessTask(task) {
       let rendered = await runnerWaitForSourceRender(sourceTitle);
       let missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
       let missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+      let rawTemplateJob = null;
       let rawAssetJob = null;
+
+      if (missingTemplates.length) {
+        runnerSetStatus(
+          `RAW · ${sourceTitle}\nThe Tree found ${missingTemplates.length} missing template source(s)\nCopying the missing RAW templates directly…`
+        );
+        rawTemplateJob = await runnerResolveMissingRawTemplates(sourceTitle, missingTemplates);
+        if (rawTemplateJob?.rendered) rendered = rawTemplateJob.rendered;
+        missingFiles = Array.isArray(rendered?.missingFiles) ? rendered.missingFiles : [];
+        missingTemplates = Array.isArray(rendered?.missingTemplates) ? rendered.missingTemplates : [];
+      }
 
       if (missingFiles.length) {
         runnerSetStatus(
@@ -250,8 +320,11 @@ async function runnerProcessTask(task) {
               0,
               Number(raw.requiredFiles?.length || 0) - Number(rawAssetJob?.planned || 0),
             ),
-            failed: unresolvedDependencies,
-            rawTemplates: 0,
+            // Clone retries are for failed media capture only. Missing templates
+            // are a separate dependency class and must never cause the root RAW
+            // document to be copied over and over.
+            failed: missingFiles.length,
+            rawTemplates: Number(rawTemplateJob?.captured?.length || 0),
             includesReferenced: Number(raw.templatesDiscovered || 0),
             missingFiles: missingFiles.length,
             missingTemplates: missingTemplates.length,
@@ -266,7 +339,14 @@ async function runnerProcessTask(task) {
                   remaining: Number(rawAssetJob.remaining || 0),
                 }
               : null,
-            capturePolicy: "root-raw-plus-missing-media",
+            rawTemplateResolver: rawTemplateJob
+              ? {
+                  captured: rawTemplateJob.captured || [],
+                  reused: rawTemplateJob.reused || [],
+                  failed: rawTemplateJob.failed || [],
+                }
+              : null,
+            capturePolicy: "root-raw-plus-missing-dependencies",
           },
         }),
       });
@@ -274,13 +354,13 @@ async function runnerProcessTask(task) {
       return {
         ok: unresolvedDependencies === 0,
         sourceTitle: raw.sourceTitle,
-        rawTemplates: 0,
+        rawTemplates: Number(rawTemplateJob?.captured?.length || 0),
         includesReferenced: Number(raw.templatesDiscovered || 0),
         assetsResolved: Number(rawAssetJob?.resolved || 0),
         missingFiles,
         missingTemplates,
         rendered: true,
-        capturePolicy: "root-raw-plus-missing-media",
+        capturePolicy: "root-raw-plus-missing-dependencies",
       };
     }
 
