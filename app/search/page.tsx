@@ -6,7 +6,6 @@ type SearchRow = {
   translated_title: string | null;
   root_title: string | null;
   content_language: string | null;
-  content_status: string | null;
   published_revision_no: number | null;
   content_wikitext: string | null;
 };
