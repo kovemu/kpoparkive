@@ -324,7 +324,7 @@ async function pollRawQueueStatus(show = true) {
 }
 
 function formatRawAssetJob(job) {
-  if (!job || job.id !== "raw-assets") return "Raw asset resolver is idle.";
+  if (!job || !String(job.id || "").startsWith("raw-assets")) return "Raw asset resolver is idle.";
   const lines = [
     `Raw assets · ${job.rootTitle || "—"}`,
     `State: ${job.running ? "RUNNING" : job.done ? "DONE" : "IDLE"}`,
@@ -390,7 +390,7 @@ async function pollRawAssetStatus(show = true) {
     if (!response?.ok) return;
     const job = response.job;
     assetsButton.disabled = Boolean(job?.running);
-    if (show && job?.id === "raw-assets" && (job.running || job.done || job.planned)) {
+    if (show && String(job?.id || "").startsWith("raw-assets") && (job.running || job.done || job.planned)) {
       setStatus(formatRawAssetJob(job), job.failed ? "" : "ok");
     }
     if (!job?.running && rawAssetPollTimer) {
