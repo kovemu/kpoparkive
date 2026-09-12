@@ -40,12 +40,12 @@ async function rawAssetV2HelperHealth() {
   }
 }
 
-async function rawAssetV2Plan(rootTitle, sourceTitle = rootTitle, requiredFiles = [], cluster = false, maxDepth = 1) {
+async function rawAssetV2Plan(rootTitle, sourceTitle = rootTitle, requiredFiles = [], cluster = false, maxDepth = 1, currentRenderOnly = false, clusterDepth = maxDepth, expectedCoreDocuments = null) {
   const endpoint = cluster ? "cluster-plan" : "plan";
   const response = await fetch(`${RAW_ASSET_HELPER_V2}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rootTitle, sourceTitle, requiredFiles, maxDepth, enqueue: true }),
+    body: JSON.stringify({ rootTitle, sourceTitle, requiredFiles, maxDepth, clusterDepth, expectedCoreDocuments, currentRenderOnly, enqueue: true }),
   });
   const text = await response.text();
   let body;
@@ -322,11 +322,11 @@ async function rawAssetV2SaveJob() {
   await chrome.storage.local.set({ kpoparkiveRawAssetJob: rawAssetV2Job });
 }
 
-async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [], cluster = false, maxDepth = 1 }) {
+async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [], cluster = false, maxDepth = 1, currentRenderOnly = false, clusterDepth = maxDepth, expectedCoreDocuments = null }) {
   const health = await rawAssetV2HelperHealth();
   if (!health.ok) throw new Error("Raw asset helper is not running. Restart: npm.cmd run namu:capture-helper");
 
-  const plan = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles, cluster, maxDepth);
+  const plan = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments);
   rawAssetV2Job.cluster = Boolean(plan.cluster || cluster);
   rawAssetV2Job.maxDepth = Number(plan.maxDepth || maxDepth || 1);
   rawAssetV2Job.coreDocuments = Number(plan.coreDocuments || 0);
@@ -351,7 +351,7 @@ async function runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles = [
   }
 
   try {
-    const verification = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles, cluster, maxDepth);
+    const verification = await rawAssetV2Plan(rootTitle, sourceTitle, requiredFiles, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments);
     rawAssetV2Job.remaining = Number(verification.missingCount || 0);
   } catch (error) {
     rawAssetV2Job.errors = [...rawAssetV2Job.errors, `Verification: ${error?.message || error}`].slice(-20);
@@ -384,9 +384,12 @@ function startRawAssetV2Resolver(options = {}) {
   const requiredFiles = Array.isArray(options.requiredFiles) ? options.requiredFiles : [];
   const cluster = Boolean(options.cluster);
   const maxDepth = Number.isFinite(Number(options.maxDepth)) ? Number(options.maxDepth) : 1;
-  rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle, cluster, maxDepth };
+  const currentRenderOnly = Boolean(options.currentRenderOnly);
+  const clusterDepth = Number.isFinite(Number(options.clusterDepth)) ? Number(options.clusterDepth) : maxDepth;
+  const expectedCoreDocuments = options.expectedCoreDocuments == null ? null : Number(options.expectedCoreDocuments);
+  rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments };
   rawAssetV2SaveJob();
-  runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles, cluster, maxDepth }).catch(async (error) => {
+  runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments }).catch(async (error) => {
     rawAssetV2Job.running = false;
     rawAssetV2Job.done = true;
     rawAssetV2Job.failed += 1;
@@ -403,10 +406,13 @@ async function rawAssetV2ResolveNow(options = {}) {
   const requiredFiles = Array.isArray(options.requiredFiles) ? options.requiredFiles : [];
   const cluster = Boolean(options.cluster);
   const maxDepth = Number.isFinite(Number(options.maxDepth)) ? Number(options.maxDepth) : 1;
-  rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle, cluster, maxDepth };
+  const currentRenderOnly = Boolean(options.currentRenderOnly);
+  const clusterDepth = Number.isFinite(Number(options.clusterDepth)) ? Number(options.clusterDepth) : maxDepth;
+  const expectedCoreDocuments = options.expectedCoreDocuments == null ? null : Number(options.expectedCoreDocuments);
+  rawAssetV2Job = { ...rawAssetV2DefaultJob(), running: true, rootTitle, sourceTitle, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments };
   await rawAssetV2SaveJob();
   try {
-    await runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles, cluster, maxDepth });
+    await runRawAssetV2Resolver({ rootTitle, sourceTitle, requiredFiles, cluster, maxDepth, currentRenderOnly, clusterDepth, expectedCoreDocuments });
     return { ...rawAssetV2Job };
   } catch (error) {
     rawAssetV2Job.running = false;
