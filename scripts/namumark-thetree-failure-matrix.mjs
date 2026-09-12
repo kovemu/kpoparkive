@@ -12,7 +12,7 @@ const ROOT_TITLE = decodeURIComponent(
 const SHOULD_RENDER = process.argv.includes("--render");
 const JSON_ONLY = process.argv.includes("--json");
 const COMPAT_RENDERER = path.join(ROOT_DIR, "scripts", "namumark-thetree-compat-poc.mjs");
-const EXPECTED_COMPAT_VERSION = String(process.env.KPOPARKIVE_EXPECTED_COMPAT_VERSION || "modern-namu-compat-v7");
+const EXPECTED_COMPAT_VERSION = String(process.env.KPOPARKIVE_EXPECTED_COMPAT_VERSION || "modern-namu-compat-v8");
 const EXPECTED_ENGINE_PATCHSET = String(process.env.KPOPARKIVE_EXPECTED_ENGINE_PATCHSET || "modern-namu-v2");
 
 function loadEnv(filePath) {
