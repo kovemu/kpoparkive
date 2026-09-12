@@ -433,9 +433,25 @@ chrome.storage.local.get([
     }
   }
 
-  // Keep the team/root import scope stable while navigating member/subpages.
-  // Only adopt the active NamuWiki page when no root has been saved yet.
-  if (!savedRoot) await syncRootFromActiveTab();
+  // Keep the root stable only while an import is actively running.
+  // Once the previous job is idle/done, the currently open NamuWiki document
+  // becomes the next root automatically. This prevents a completed team's root
+  // (for example RESCENE) from leaking into the next team import.
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-clone-status" });
+    const job = response?.ok ? response.job : null;
+    if (job?.running || job?.paused) {
+      const activeJobRoot = String(job.rootTitle || savedRoot || "").normalize("NFKC").trim();
+      if (activeJobRoot) {
+        rootInput.value = activeJobRoot;
+        await chrome.storage.local.set({ kpoparkiveRootTitle: activeJobRoot });
+      }
+    } else {
+      await syncRootFromActiveTab();
+    }
+  } catch {
+    if (!savedRoot) await syncRootFromActiveTab();
+  }
 });
 
 rootInput.addEventListener("change", () => {
@@ -529,7 +545,11 @@ rawCrawlButton.addEventListener("click", async () => {
 });
 
 cloneButton.addEventListener("click", async () => {
-  const rootTitle = rootInput.value.trim() || "RESCENE";
+  // Smart DOM harvest always starts from the NamuWiki document currently
+  // open in the active tab. A running job keeps its own root because this
+  // button is disabled while that job is active.
+  const activeRoot = await syncRootFromActiveTab();
+  const rootTitle = activeRoot || rootInput.value.trim() || "RESCENE";
   const crawlProfile = profileInput.value || "smart-core";
   const maxDepth = Math.max(0, Math.min(3, Number(depthInput.value || 1) || 0));
   const maxDocs = Math.max(1, Math.min(200, Number(maxDocsInput.value || 80) || 40));
