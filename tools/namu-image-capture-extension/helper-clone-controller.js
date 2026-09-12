@@ -31,8 +31,14 @@ let kpopRawQueueState = {
 };
 
 function kpopPublicRawQueueState() {
+  const verificationActive = Boolean(kpopRawVerification.active);
   return {
     ...kpopRawQueueState,
+    paused: Boolean(kpopRawQueueState.paused || verificationActive),
+    status:
+      kpopRawQueueState.running && verificationActive
+        ? "paused"
+        : kpopRawQueueState.status,
     verification: { ...kpopRawVerification },
   };
 }
