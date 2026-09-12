@@ -6,8 +6,9 @@ import { findVisibleKoreanLinkLabels, findVisibleKoreanText } from "./namu-engli
 const ROOT = process.cwd();
 const POLL_MS = Math.max(3000, Number(process.env.KPOPARKIVE_ASSISTANT_PUBLISH_POLL_MS || 5000) || 5000);
 const DOM_RECOVERY_TARGET_VERSION = "dom-to-namumark-v3.1";
-const FALLBACK_EXTRACTOR_TARGET_VERSION = 4;
+const FALLBACK_EXTRACTOR_TARGET_VERSION = 5;
 const DOM_FALLBACK_NORMALIZER_TARGET_VERSION = 2;
+const COMPATIBILITY_TARGET_VERSION = "modern-namu-compat-v8";
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -270,6 +271,8 @@ async function fetchSourceRenderPending() {
     const missingFiles = Number(meta?.missingFileCount || 0) > 0;
     const needsFallbackExtractorUpgrade =
       missingTemplates && Number(meta?.fallbackExtractorVersion || 0) < FALLBACK_EXTRACTOR_TARGET_VERSION;
+    const needsCompatibilityUpgrade =
+      String(meta?.compatibility?.version || "") !== COMPATIBILITY_TARGET_VERSION;
     const needsStagingAssetReconcile =
       missingFiles && Number(meta?.assetReconcilerVersion || 0) < 2;
     const needsDomVideoRecovery =
@@ -299,6 +302,7 @@ async function fetchSourceRenderPending() {
 
     return staleByTime ||
       needsFallbackExtractorUpgrade ||
+      needsCompatibilityUpgrade ||
       needsStagingAssetReconcile ||
       needsDomVideoRecovery ||
       repairableFailedDraftNeedsRender;
