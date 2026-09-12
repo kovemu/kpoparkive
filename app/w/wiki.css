@@ -13,6 +13,21 @@
   overflow: hidden;
 }
 
+/* Missing internal documents keep The Tree's live existence marker, but should
+   read like ordinary text until the target document exists. When the runtime
+   removes .not-exist, the original blue link behavior returns automatically. */
+.kpoparkiveRawWikiPage .wiki-content .not-exist {
+  color: inherit !important;
+  text-decoration: none !important;
+  cursor: text !important;
+  pointer-events: none;
+}
+
+.kpoparkiveRawWikiPage .wiki-content .not-exist:hover {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+
 /* Preserve horizontal panning for genuinely wide wiki tables, but hide the
    native scrollbar track. This also covers verified synthetic DOM→NamuMark
    templates rendered through the public /w/ shell. */
