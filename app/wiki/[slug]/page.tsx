@@ -2,6 +2,10 @@ import { notFound } from "next/navigation";
 import WikiBlocks from "../../../components/wiki/WikiBlocks";
 import { getStoragePublicUrl, getWikiDocument, getWikiMedia } from "../../../lib/wiki";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+};
+
 const albumCoverBySlug: Record<string, string> = {
   "re-scene": "rescene/albums/re-scene.jpg",
   scenedrome: "rescene/albums/scenedrome.jpg",
