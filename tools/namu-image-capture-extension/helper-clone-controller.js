@@ -662,6 +662,18 @@ async function kpopExtractVisibleRawFromTab(tabId, normalizedTitle) {
   }
 }
 
+function kpopTabMatchesTarget(tab, targetUrl) {
+  try {
+    const current = new URL(String(tab?.url || ""));
+    const target = new URL(String(targetUrl || ""));
+    return current.origin === target.origin &&
+      current.pathname === target.pathname &&
+      current.search === target.search;
+  } catch {
+    return String(tab?.url || "") === String(targetUrl || "");
+  }
+}
+
 async function kpopTryReadOnlyRawTitle(normalizedTitle) {
   await kpopRestoreRawTabState();
 
@@ -686,7 +698,7 @@ async function kpopTryReadOnlyRawTitle(normalizedTitle) {
       throw new Error(`The NamuWiki RAW tab for ${normalizedTitle} was closed before capture finished.`);
     }
 
-    if (current.status === "complete") {
+    if (current.status === "complete" && kpopTabMatchesTarget(current, rawUrl)) {
       try {
         const result = await kpopWithTimeout(
           chrome.tabs.sendMessage(tab.id, { type: "kpoparkive-extract-namu-raw-page" }),
@@ -753,7 +765,7 @@ async function kpopTryEditRawTitle(normalizedTitle) {
     try { tab = await chrome.tabs.get(editTab.id); }
     catch { throw new Error(`The NamuWiki edit tab for ${normalizedTitle} was closed before source capture finished.`); }
 
-    if (tab.status === "complete") {
+    if (tab.status === "complete" && kpopTabMatchesTarget(tab, editUrl)) {
       try {
         const result = await chrome.tabs.sendMessage(editTab.id, { type: "kpoparkive-extract-namu-edit-source" });
         if (result?.ok && result.raw) {
