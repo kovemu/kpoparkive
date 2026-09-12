@@ -22,7 +22,9 @@
     "namu:migrate-browser-artifacts": "node scripts/namu-migrate-browser-artifacts-to-storage.mjs",
     "namu:engine-thetree-matrix": "node scripts/namumark-thetree-failure-matrix.mjs",
     "namu:integration-qa": "node scripts/namu-integration-qa.mjs",
-    "namu:repair-assets": "node scripts/namu-browser-image-worker-safe.mjs --renderer-missing"
+    "namu:repair-assets": "node scripts/namu-browser-image-worker-safe.mjs --renderer-missing",
+    "namu:capture-helper:watch": "node scripts/namu-capture-helper-all.mjs --assistant-publish",
+    "namu:assistant-publish": "node scripts/namu-assistant-publish-worker.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
