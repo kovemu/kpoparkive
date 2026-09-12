@@ -283,7 +283,9 @@ async function pollStatus() {
     const response = await chrome.runtime.sendMessage({ type: "kpoparkive-helper-clone-status" });
     if (!response?.ok) return;
     const job = response.job;
-    if (job?.id) setStatus(formatJob(job), job.failed ? "" : "ok");
+    if (job?.id && (job.running || job.paused || job.failed)) {
+      setStatus(formatJob(job), job.failed ? "" : "ok");
+    }
     cloneButton.disabled = Boolean(job?.running);
     rawCrawlButton.disabled = Boolean(job?.running);
     rawPlanButton.disabled = Boolean(job?.running);
@@ -649,6 +651,6 @@ async function pollVerificationStatus() {
 refreshHealth();
 pollStatus();
 pollRawAssetStatus(false);
-refreshRawNeeds({ show: false }).catch(() => {});
+refreshRawNeeds({ show: true }).catch(() => {});
 pollVerificationStatus();
 setInterval(pollVerificationStatus, 600);
