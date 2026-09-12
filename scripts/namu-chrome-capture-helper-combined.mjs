@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v4";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v5";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -546,30 +546,14 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
   const isRoot = sourceTitle === rootTitle;
   const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
   const directRelation = String(directRoot?.relation || "");
-  const directPolicyVersion = Number(directRoot?.crawlPolicyVersion || 0) || 0;
-  const inboundRelation = String(inbound?.relation || "");
-  const inboundPolicyVersion = Number(inbound?.crawlPolicyVersion || 0) || 0;
 
-  const explicitV3Scope = Boolean(
-    directRelation === "toc_document" ||
-    directRelation === "member" ||
-    inboundRelation === "toc_document" ||
-    inboundRelation === "member"
-  );
-
-  const legacyDirectSectionLeaf = Boolean(
-    Math.max(directPolicyVersion, inboundPolicyVersion) < 4 &&
-    directRelation === "related" &&
-    String(directRoot?.crawlMode || "") === "leaf" &&
-    String(directRoot?.sourceArea || "") === "section" &&
-    Number.isFinite(Number(directRoot?.tocOrder)) &&
-    Number(directRoot.tocOrder) <= 20
-  );
-
+  // Scope must match the root harvest exactly. Do not infer membership from
+  // inbound links of previously crawled documents, otherwise old broad-crawl
+  // data can leak unrelated pages back into RAW Needs.
   const inTeamCoreScope = Boolean(
     isRoot ||
-    explicitV3Scope ||
-    legacyDirectSectionLeaf
+    directRelation === "toc_document" ||
+    directRelation === "member"
   );
 
   if (!inTeamCoreScope) {
