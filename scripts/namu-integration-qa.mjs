@@ -31,6 +31,13 @@ function textPresent(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function metaCount(meta, key) {
+  const value = meta && typeof meta === "object" ? meta[key] : null;
+  if (Array.isArray(value)) return value.length;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
 async function db(path) {
   const response = await fetch(supabaseUrl + "/rest/v1/" + path, {
     headers: {
@@ -50,7 +57,7 @@ async function fetchDocuments(ids) {
     const filter = "(" + batch.join(",") + ")";
     const path =
       "source_documents?id=in." + enc(filter) +
-      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html";
+      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html,content_namumark_meta,published_namumark_meta";
     rows.push(...await db(path));
   }
   return rows;
@@ -106,12 +113,12 @@ async function inspectRoute(title, published) {
   }
 }
 
-const scope = await db(
+const scope = (await db(
   "namu_raw_requirements?root_title=eq." + enc(rootTitle) +
   "&status=neq.ignored" +
   "&select=source_document_id,source_title,status,reason_codes" +
   "&order=source_title.asc"
-);
+)).filter((row) => !String(row.source_title || "").normalize("NFKC").startsWith("틀:"));
 
 const ids = [...new Set(scope.map((row) => row.source_document_id).filter(Boolean))];
 const docs = await fetchDocuments(ids);
@@ -138,6 +145,23 @@ for (const requirement of scope) {
   if (doc.content_language !== "en" || !textPresent(doc.content_wikitext)) blockers.push("missing_english_revision");
   if (doc.translation_status === "failed") blockers.push("translation_failed");
   if (!textPresent(doc.content_namumark_html)) blockers.push("missing_current_render");
+
+  if (textPresent(doc.content_namumark_html)) {
+    const meta = doc.content_namumark_meta;
+    if (!meta || typeof meta !== "object") blockers.push("missing_render_meta");
+    else {
+      if (meta.hasError === true) blockers.push("render_error");
+      const missingFiles = metaCount(meta, "missingFileCount") || metaCount(meta, "missingFiles");
+      const missingTemplates = metaCount(meta, "missingTemplateCount") || metaCount(meta, "missingTemplates");
+      const missingYouTube = metaCount(meta, "missingYouTubeEmbeds");
+      if (missingFiles > 0) blockers.push("missing_files:" + missingFiles);
+      if (missingTemplates > 0) blockers.push("missing_templates:" + missingTemplates);
+      if (missingYouTube > 0) blockers.push("missing_youtube:" + missingYouTube);
+    }
+
+    const currentHtml = inspectHtml(doc.content_namumark_html);
+    if (currentHtml.leaks.length > 0) blockers.push("current_syntax_leak:" + currentHtml.leaks.join("+"));
+  }
 
   const published =
     Number(doc.published_revision_no || 0) > 0 &&
