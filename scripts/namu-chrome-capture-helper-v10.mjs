@@ -197,9 +197,19 @@ const oldKnownAssets = String.raw`async function kpopKnownAssetUrls(rootTitle) {
   );
   return [...new Set((rows || []).map((row) => String(row?.source_url || "").trim()).filter(Boolean))];
 }`;
-const newKnownAssets = String.raw`async function kpopKnownAssetUrls(_rootTitle) {
-  const staging = await db("namu_capture_staging?select=source_url&source_url=not.is.null&limit=10000");
-  const resolved = await db("source_asset_queue?status=eq.resolved&select=metadata&limit=10000");
+const newKnownAssets = String.raw`async function kpopKnownAssetUrls(rootTitle) {
+  const root = String(rootTitle || "").normalize("NFKC").trim();
+  if (!root) return [];
+
+  const staging = await db(
+    "namu_capture_staging?root_title=eq." + encodeURIComponent(root) +
+    "&select=source_url&source_url=not.is.null&limit=10000"
+  );
+  const resolved = await db(
+    "source_asset_queue?root_title=eq." + encodeURIComponent(root) +
+    "&asset_type=eq.image&status=eq.resolved&select=metadata&limit=10000"
+  );
+
   const urls = [];
   for (const row of staging || []) {
     const value = String(row?.source_url || "").trim();
