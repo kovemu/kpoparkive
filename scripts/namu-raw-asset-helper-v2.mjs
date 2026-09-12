@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { runAssetAudit } from "./namu-asset-audit.mjs";
+import { runCurrentRenderAssetAudit } from "./namu-current-render-asset-audit.mjs";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.NAMU_RAW_ASSET_PORT || 43120) || 43120;
@@ -295,13 +296,28 @@ async function buildClusterPlan(payload) {
   const rootTitle = String(payload?.rootTitle || "").normalize("NFKC").trim();
   if (!rootTitle) throw new Error("rootTitle is required");
   const maxDepth = Number.isFinite(Number(payload?.maxDepth)) ? Number(payload.maxDepth) : 1;
-  const audit = await runAssetAudit({
-    rootTitle,
-    maxDepth,
-    enqueue: payload?.enqueue !== false,
-  });
+  const currentRenderOnly = payload?.currentRenderOnly === true;
+  const clusterDepth = Number.isFinite(Number(payload?.clusterDepth)) ? Number(payload.clusterDepth) : maxDepth;
+  const expectedCoreDocuments = payload?.expectedCoreDocuments == null
+    ? null
+    : Number(payload.expectedCoreDocuments);
 
-  const requiredCount = Number(audit?.totals?.uniqueRequiredFiles || 0);
+  const audit = currentRenderOnly
+    ? await runCurrentRenderAssetAudit({
+        rootTitle,
+        clusterDepth,
+        expectedCoreDocuments,
+        enqueue: payload?.enqueue !== false,
+      })
+    : await runAssetAudit({
+        rootTitle,
+        maxDepth,
+        enqueue: payload?.enqueue !== false,
+      });
+
+  const requiredCount = currentRenderOnly
+    ? Number(audit?.totals?.currentMissingUniqueFiles || 0)
+    : Number(audit?.totals?.uniqueRequiredFiles || 0);
   const missingFiles = (audit?.missingUniqueFiles || []).map((item) => {
     const requiredBy = Array.isArray(item?.requiredBy) ? item.requiredBy.filter(Boolean) : [];
     return {
@@ -312,20 +328,29 @@ async function buildClusterPlan(payload) {
       queueRowIds: [],
       reason: item.existingQueueStatuses?.includes("unresolved")
         ? "unresolved"
-        : "cluster-required",
+        : currentRenderOnly
+          ? "current-render-missing"
+          : "cluster-required",
     };
   });
 
   return {
     ok: true,
     cluster: true,
+    currentRenderOnly,
+    scope: currentRenderOnly ? "cluster-current-render" : "cluster-required-raw",
     rootTitle,
     sourceTitle: rootTitle,
     maxDepth,
+    clusterDepth,
+    expectedCoreDocuments,
     coreDocuments: Number(audit?.coreDocuments || 0),
+    renderReadiness: audit?.renderReadiness || null,
     requiredCount,
     resolvedCount: Math.max(0, requiredCount - missingFiles.length),
     missingCount: missingFiles.length,
+    currentMissingMediaCount: Number(audit?.totals?.currentMissingMediaReferences || 0),
+    missingMedia: Array.isArray(audit?.missingMedia) ? audit.missingMedia : [],
     queueRowsCreated: Number(audit?.enqueue?.created || 0),
     queueRowsRequeued: Number(audit?.enqueue?.requeued || 0),
     alreadyQueued: Number(audit?.enqueue?.alreadyQueued || 0),
