@@ -288,3 +288,38 @@ export function findVisibleKoreanLinkLabels(html, { limit = 30 } = {}) {
 
   return output;
 }
+
+
+export function findVisibleKoreanText(html, { limit = 30, context = 56 } = {}) {
+  const root = parse(String(html || ""));
+
+  for (const selector of ["script", "style", "noscript", "template"]) {
+    for (const node of root.querySelectorAll(selector)) node.remove();
+  }
+
+  const text = String(root.text || root.innerText || "")
+    .normalize("NFKC")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[ \t]+/g, " ");
+
+  const output = [];
+  const seen = new Set();
+  const hangul = /[가-힣]+/g;
+  let match;
+
+  while ((match = hangul.exec(text))) {
+    const index = Number(match.index || 0);
+    const start = Math.max(0, index - context);
+    const end = Math.min(text.length, index + match[0].length + context);
+    const visible = normalize(text.slice(start, end));
+    if (!visible) continue;
+    const key = visible;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push({ visible, hangul: match[0] });
+    if (output.length >= limit) break;
+  }
+
+  return output;
+}
