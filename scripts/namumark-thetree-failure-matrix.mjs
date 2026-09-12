@@ -76,6 +76,8 @@ function sourceFeatures(rawValue) {
     if: countMatches(raw, /#!if\b/g),
     footnote: countMatches(raw, /\[\*(?!\*)/g),
     youtube: countMatches(raw, /\[youtube\(/gi),
+    colspan: countMatches(raw, /<-\d+>/g),
+    rowspan: countMatches(raw, /<(?:\^|v)?\|\d+>/g),
     category: countMatches(raw, /\[\[(?:분류|Category):/gi),
   };
 }
@@ -93,6 +95,8 @@ function renderedFeatures(htmlValue) {
     details: root.querySelectorAll("details").length,
     footnotes: root.querySelectorAll(".wiki-fn-content").length,
     youtube: root.querySelectorAll('iframe[src*="youtube.com/embed/"],iframe[src*="youtube-nocookie.com/embed/"]').length,
+    colspan: root.querySelectorAll("[colspan]").length,
+    rowspan: root.querySelectorAll("[rowspan]").length,
     headings: root.querySelectorAll("h1,h2,h3,h4,h5,h6").length,
     parseError: false,
   };
@@ -199,6 +203,8 @@ function analyze(item) {
     folding: Math.max(0, source.folding - rendered.details),
     footnotes: Math.max(0, source.footnote - rendered.footnotes),
     youtube: Math.max(0, source.youtube - rendered.youtube),
+    colspan: Math.max(0, source.colspan - rendered.colspan),
+    rowspan: Math.max(0, source.rowspan - rendered.rowspan),
   };
   const structuralLossCount = Object.values(structuralLoss).reduce((sum, value) => sum + value, 0);
   const engineFailure =
@@ -244,6 +250,8 @@ function matrixRows(report) {
     Folding: `${row.source.folding}/${row.rendered.details}`,
     Footnotes: `${row.source.footnote}/${row.rendered.footnotes}`,
     YouTube: `${row.source.youtube}/${row.rendered.youtube}`,
+    Colspan: `${row.source.colspan}/${row.rendered.colspan}`,
+    Rowspan: `${row.source.rowspan}/${row.rendered.rowspan}`,
     "Missing Tpl": row.missingTemplates.length,
     "Missing Files": row.missingFiles.length,
     Leaks: row.leakCount,
@@ -290,7 +298,7 @@ async function main() {
       if (row.missingYouTube.length) console.log(`  youtube missing: ${row.missingYouTube.join(" | ")}`);
       if (row.structuralLossCount > 0) {
         console.log(
-          `  structural loss: folding=${row.structuralLoss.folding} footnotes=${row.structuralLoss.footnotes} youtube=${row.structuralLoss.youtube}`
+          `  structural loss: folding=${row.structuralLoss.folding} footnotes=${row.structuralLoss.footnotes} youtube=${row.structuralLoss.youtube} colspan=${row.structuralLoss.colspan} rowspan=${row.structuralLoss.rowspan}`
         );
       }
       for (const leak of row.leaks) {
