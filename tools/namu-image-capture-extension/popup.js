@@ -22,7 +22,7 @@ let lastAutoPlannedCloneId = "";
 
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
-  "smart-core": { depth: 2, maxDocs: 40, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
+  "smart-core": { depth: 2, maxDocs: 40, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
   archive: { depth: 3, maxDocs: 150, crawlOrder: "smart", includeLeaf: true, refreshExisting: false },
 };
 
