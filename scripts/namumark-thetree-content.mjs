@@ -157,6 +157,7 @@ globalThis.fetch = async (input, init = undefined) => {
         const contentMeta = body.source_namumark_meta && typeof body.source_namumark_meta === "object"
           ? {
               ...body.source_namumark_meta,
+              renderedRevision: targetRevisionNo,
               editableContent: {
                 revisionNo: targetRevisionNo,
                 note: "Rendered from content_wikitext; captured source_wikitext and source_namumark_* remain unchanged.",
@@ -164,6 +165,7 @@ globalThis.fetch = async (input, init = undefined) => {
               englishLinkLocalization: targetEnglishLinkLocalization,
             }
           : {
+              renderedRevision: targetRevisionNo,
               editableContent: {
                 revisionNo: targetRevisionNo,
                 note: "Rendered from content_wikitext; captured source_wikitext and source_namumark_* remain unchanged.",
