@@ -195,7 +195,17 @@ function analyze(item) {
     enginePatchset !== EXPECTED_ENGINE_PATCHSET;
   const hasError = Boolean(meta.hasError) || rendered.parseError || !html;
   const leakCount = leaks.reduce((sum, entry) => sum + entry.count, 0);
-  const engineFailure = hasError || leakCount > 0 || missingYouTube.length > 0;
+  const structuralLoss = {
+    folding: Math.max(0, source.folding - rendered.details),
+    footnotes: Math.max(0, source.footnote - rendered.footnotes),
+    youtube: Math.max(0, source.youtube - rendered.youtube),
+  };
+  const structuralLossCount = Object.values(structuralLoss).reduce((sum, value) => sum + value, 0);
+  const engineFailure =
+    hasError ||
+    leakCount > 0 ||
+    missingYouTube.length > 0 ||
+    structuralLossCount > 0;
   const dependencyGap = missingTemplates.length > 0 || missingFiles.length > 0;
 
   return {
@@ -216,6 +226,8 @@ function analyze(item) {
     missingYouTube,
     leaks,
     leakCount,
+    structuralLoss,
+    structuralLossCount,
     engineFailure,
     dependencyGap,
     status: engineFailure ? "ENGINE_FAIL" : staleEngine ? "STALE_ENGINE" : dependencyGap ? "DEPENDENCY" : "OK",
@@ -235,6 +247,7 @@ function matrixRows(report) {
     "Missing Tpl": row.missingTemplates.length,
     "Missing Files": row.missingFiles.length,
     Leaks: row.leakCount,
+    Loss: row.structuralLossCount,
   }));
 }
 
@@ -275,6 +288,11 @@ async function main() {
       console.log(`\nENGINE FAIL ${row.title}`);
       if (row.hasError) console.log("  renderer hasError / missing render output");
       if (row.missingYouTube.length) console.log(`  youtube missing: ${row.missingYouTube.join(" | ")}`);
+      if (row.structuralLossCount > 0) {
+        console.log(
+          `  structural loss: folding=${row.structuralLoss.folding} footnotes=${row.structuralLoss.footnotes} youtube=${row.structuralLoss.youtube}`
+        );
+      }
       for (const leak of row.leaks) {
         console.log(`  leak ${leak.kind}: ${leak.count}`);
         for (const sample of leak.samples) console.log(`    - ${sample}`);
