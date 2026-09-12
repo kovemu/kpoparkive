@@ -2,7 +2,7 @@ function kpopDecodeLinkTitle(value) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
-const KPOP_CRAWL_POLICY_VERSION = 5;
+const KPOP_CRAWL_POLICY_VERSION = 6;
 
 const KPOP_SKIP_NAMESPACES = [
   "파일:", "File:", "틀:", "Template:", "분류:", "Category:", "사용자:", "User:",
