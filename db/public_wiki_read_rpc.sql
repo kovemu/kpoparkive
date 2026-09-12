@@ -110,3 +110,32 @@ revoke all on function public.get_public_wiki_meta(text) from public;
 
 grant execute on function public.get_public_wiki_page(text) to anon, authenticated;
 grant execute on function public.get_public_wiki_meta(text) to anon, authenticated;
+
+create or replace function public.get_public_wiki_index()
+returns table (
+  source_title text,
+  translated_title text,
+  published_at timestamptz,
+  published_revision_no integer
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $function$
+  select
+    d.source_title,
+    d.translated_title,
+    d.published_at,
+    d.published_revision_no
+  from public.source_documents d
+  where d.source = 'namu_mirror'
+    and coalesce(d.published_revision_no, 0) > 0
+    and d.published_namumark_html is not null
+    and length(d.published_namumark_html) > 0
+    and d.source_title not like '틀:%'
+  order by d.source_title;
+$function$;
+
+revoke all on function public.get_public_wiki_index() from public;
+grant execute on function public.get_public_wiki_index() to anon, authenticated;
