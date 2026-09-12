@@ -59,7 +59,7 @@ async function fetchDraft(title) {
   const rows = await db(
     "source_documents?source=eq.namu_mirror" +
       `&source_title=eq.${encodeURIComponent(title)}` +
-      "&select=id,source_title,translation_status,content_status,content_revision_no,content_wikitext,content_language,content_namumark_html,content_namumark_meta,content_namumark_engine,content_namumark_engine_version,content_namumark_rendered_at,published_revision_no" +
+      "&select=id,source_title,translated_title,translation_status,content_status,content_revision_no,content_wikitext,content_language,content_namumark_html,content_namumark_meta,content_namumark_engine,content_namumark_engine_version,content_namumark_rendered_at,published_revision_no" +
       "&limit=1",
   );
   return rows?.[0] || null;
@@ -68,6 +68,16 @@ async function fetchDraft(title) {
 function validateDraft(row) {
   if (!row) throw new Error("document not found");
   if (row.content_language !== "en") throw new Error("content_language is not en");
+
+  const isTemplateDocument = /^(?:틀|Template):/i.test(String(row.source_title || ""));
+  if (!isTemplateDocument) {
+    const translatedTitle = String(row.translated_title || "").normalize("NFKC").trim();
+    if (!translatedTitle) throw new Error("English title QA: translated_title is missing");
+    if (/[가-힣]/.test(translatedTitle)) {
+      throw new Error(`English title QA: translated_title still contains Korean: ${translatedTitle}`);
+    }
+  }
+
   if (!["translated_by_chatgpt", "reviewed"].includes(String(row.translation_status || ""))) {
     throw new Error(`translation_status=${row.translation_status || "null"} is not publishable`);
   }
