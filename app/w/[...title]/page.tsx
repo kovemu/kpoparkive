@@ -1,5 +1,5 @@
 import { parse } from "node-html-parser";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { buildNamuResolvedAssetMap } from "../../../lib/namuStoredAssets";
 import { createNamuAssetLookup } from "../../../lib/namuAssetLookup";
 import { stripNamuOperationalHtml } from "../../../lib/namuOperationalNotices";
@@ -54,6 +54,7 @@ async function db<T>(path: string): Promise<T> {
         response.status === 408 ||
         response.status === 429 ||
         response.status >= 502 ||
+        (response.status === 401 && /(?:PGRST303|JWT issued at future)/i.test(text)) ||
         (response.status === 500 && /(?:57014|statement timeout|canceling statement|PGRST002)/i.test(text));
 
       const error = new Error(`${response.status} ${text}`);
@@ -229,6 +230,7 @@ export default async function RawWikiPage({
   const source = docs[0];
 
   if (!source) {
+    if (process.env.NODE_ENV === "production") notFound();
     return (
       <main className="kpoparkiveRawWikiMissing">
         <h1>{sourceTitle}</h1>
@@ -266,6 +268,7 @@ export default async function RawWikiPage({
     : publishedContentHtml;
 
   if (!exactHtml) {
+    if (!isLocalDraftPreview) notFound();
     return (
       <main className="kpoparkiveRawWikiMissing">
         <h1>{source.source_title}</h1>
