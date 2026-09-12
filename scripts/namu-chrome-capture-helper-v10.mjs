@@ -216,7 +216,7 @@ v8 = mustReplace(v8, oldKnownAssets, newKnownAssets, "global known-media cache")
 v8 = mustReplace(
   v8,
   "const KPOP_CLONE_MAX_RETRIES = 2;",
-  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 4;",
+  "const KPOP_CLONE_MAX_RETRIES = 2;\nconst KPOP_CRAWL_POLICY_VERSION = 5;",
   "crawl policy version",
 );
 
@@ -316,16 +316,26 @@ function kpopSortCloneQueue() {
 }
 
 function kpopEnqueueLinks(links, depth) {
-  if (depth > kpopCloneState.maxDepth) return 0;
   const seen = new Set(kpopCloneState.seenUrls);
   let added = 0;
+
   for (const link of cleanInternalLinks(links)) {
     if (kpopCloneState.queue.length + kpopCloneState.processed + kpopCloneState.leases.length >= kpopCloneState.maxDocs * 4) break;
+
     const mode = kpopFallbackCrawlMode(link);
     if (mode === "skip") continue;
     if (mode === "leaf" && kpopCloneState.includeLeaf === false) continue;
+
+    const relation = String(link?.relation || "");
+    const scopeCritical = relation === "toc_document" || relation === "member";
+
+    // TOC scope is recursive and outranks the legacy depth guard. The document
+    // budget remains the hard safety cap against runaway graphs.
+    if (depth > kpopCloneState.maxDepth && !scopeCritical) continue;
+
     const url = kpopCleanCloneUrl(link.href);
     if (!url || seen.has(url)) continue;
+
     seen.add(url);
     kpopCloneState.seenUrls.push(url);
     kpopCloneState.queue.push({
@@ -336,12 +346,16 @@ function kpopEnqueueLinks(links, depth) {
       priority: Number(link?.priority || 0) || 0,
       importanceTier: kpopQueueImportance(link, mode),
       tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
-      relation: String(link?.relation || "").slice(0, 80),
+      relation: relation.slice(0, 80),
       queueOrder: kpopCloneState.seenUrls.length,
-      forceCapture: Boolean(kpopCloneState.refreshExisting),
+      forceCapture: Boolean(
+        kpopCloneState.refreshExisting ||
+        (kpopCloneState.policyRefresh && scopeCritical)
+      ),
     });
     added += 1;
   }
+
   kpopSortCloneQueue();
   return added;
 }`;
