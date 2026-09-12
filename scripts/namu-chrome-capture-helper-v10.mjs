@@ -444,11 +444,37 @@ async function kpopClaimCloneTask() {
   } finally {
     kpopClaimInFlight = Math.max(0, kpopClaimInFlight - 1);
     release();
+    // Completion is guarded while a claim is active. Re-check immediately
+    // after the final serialized claimant leaves, otherwise a reused 1/1 job
+    // can remain stuck in RUNNING with queue=0 and leases=0.
+    if (kpopClaimInFlight === 0) {
+      kpopFinalizeCloneIfDone();
+      kpopSaveCloneState();
+    }
   }
 }
 
 `;
 v8 = mustReplace(v8, takeLeaseMarker, serializedClaim + takeLeaseMarker, "serialized claim wrapper");
+const cloneStatusBefore = [
+  '    if (req.method === "GET" && url.pathname === "/clone/status") {',
+  "      kpopReleaseExpiredLeases();",
+  "      json(res, 200, { ok: true, job: kpopPublicCloneState() });",
+  "      return;",
+  "    }",
+].join("\n");
+const cloneStatusAfter = [
+  '    if (req.method === "GET" && url.pathname === "/clone/status") {',
+  "      kpopReleaseExpiredLeases();",
+  "      // Status polling must also close a fully processed/reused job.",
+  "      kpopFinalizeCloneIfDone();",
+  "      kpopSaveCloneState();",
+  "      json(res, 200, { ok: true, job: kpopPublicCloneState() });",
+  "      return;",
+  "    }",
+].join("\n");
+v8 = mustReplace(v8, cloneStatusBefore, cloneStatusAfter, "finalize completed clone on status poll");
+
 
 const oldSkip = String.raw`    if (existing?.source_browser_captured_at && existing?.source_browser_capture_version === DOCUMENT_CAPTURE_VERSION) {
       kpopCloneState.processed += 1;`;
