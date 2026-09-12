@@ -60,7 +60,9 @@ const dbRetryPatch = [
   '  "}",',
   '].join("\\n");',
   'combined = mustReplace(combined, oldDbWithNoRetry, newDbWithRetry, "Supabase transient outage retry/backoff");',
-  'combined = mustReplace(combined, "const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;", "const MAX_DOCUMENT_BYTES = 128 * 1024 * 1024;", "large browser-artifact payload limit");',
+  'if (combined.includes("const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;")) combined = combined.replace("const MAX_DOCUMENT_BYTES = 40 * 1024 * 1024;", "const MAX_DOCUMENT_BYTES = 256 * 1024 * 1024;");',
+  'else if (combined.includes("const MAX_DOCUMENT_BYTES = 128 * 1024 * 1024;")) combined = combined.replace("const MAX_DOCUMENT_BYTES = 128 * 1024 * 1024;", "const MAX_DOCUMENT_BYTES = 256 * 1024 * 1024;");',
+  'else if (!combined.includes("const MAX_DOCUMENT_BYTES = 256 * 1024 * 1024;")) throw new Error("v10 patch marker missing: large browser-artifact payload limit");',
   '',
 ].join("\n");
 
