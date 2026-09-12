@@ -40,6 +40,13 @@ export type PublicWikiMeta = {
   published_revision_no: number;
 };
 
+export type PublicWikiIndexRow = {
+  source_title: string;
+  translated_title: string | null;
+  published_at: string | null;
+  published_revision_no: number;
+};
+
 async function rpc<T>(name: string, body: Record<string, unknown>): Promise<T | null> {
   if (!SUPABASE_PUBLISHABLE_KEY) {
     throw new Error("Supabase publishable key is not configured");
@@ -92,6 +99,28 @@ async function rpc<T>(name: string, body: Record<string, unknown>): Promise<T | 
   throw lastError || new Error("Supabase public RPC request failed");
 }
 
+async function rpcList<T>(name: string, body: Record<string, unknown> = {}): Promise<T[]> {
+  if (!SUPABASE_PUBLISHABLE_KEY) {
+    throw new Error("Supabase publishable key is not configured");
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${response.status} ${text}`);
+  if (!text) return [];
+  const value = JSON.parse(text);
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 export async function getPublicWikiPage(sourceTitle: string) {
   return rpc<PublicWikiPagePayload>("get_public_wiki_page", {
     p_source_title: sourceTitle.normalize("NFKC").trim(),
@@ -102,4 +131,8 @@ export async function getPublicWikiMeta(sourceTitle: string) {
   return rpc<PublicWikiMeta>("get_public_wiki_meta", {
     p_source_title: sourceTitle.normalize("NFKC").trim(),
   });
+}
+
+export async function getPublicWikiIndex() {
+  return rpcList<PublicWikiIndexRow>("get_public_wiki_index");
 }
