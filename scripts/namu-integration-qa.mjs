@@ -9,7 +9,8 @@ const args = process.argv.slice(2);
 const rootTitle = String(args.find((arg) => !arg.startsWith("--")) || "RESCENE").normalize("NFKC").trim();
 const strict = args.includes("--strict");
 const json = args.includes("--json");
-const skipHttp = args.includes("--skip-http");
+const prepublish = args.includes("--prepublish");
+const skipHttp = args.includes("--skip-http") || prepublish;
 const expectedArg = args.find((arg) => arg.startsWith("--expected-count="));
 const expectedCount = expectedArg ? Number(expectedArg.split("=")[1]) : null;
 
@@ -179,7 +180,7 @@ for (const requirement of scope) {
     const missingCoreTargets = currentTargets.filter((target) => coreTitles.has(target) && !publishedCoreTitles.has(target));
     const outsideCoreTargets = currentTargets.filter((target) => !coreTitles.has(target));
     if (missingCoreTargets.length > 0) {
-      if (skipHttp) warnings.push("core_links_pending_publish:" + missingCoreTargets.length);
+      if (prepublish) warnings.push("core_links_pending_publish:" + missingCoreTargets.length);
       else blockers.push("core_links_unpublished:" + missingCoreTargets.length);
     }
     if (outsideCoreTargets.length > 0) warnings.push("outside_core_links:" + outsideCoreTargets.length);
@@ -208,7 +209,10 @@ for (const requirement of scope) {
   const published =
     Number(doc.published_revision_no || 0) > 0 &&
     textPresent(doc.published_namumark_html);
-  if (!published) blockers.push("not_published");
+  if (!published) {
+    if (prepublish) warnings.push("pending_publish");
+    else blockers.push("not_published");
+  }
 
   const translatedTitle = String(doc.translated_title || "").normalize("NFKC").trim();
   if (!translatedTitle) blockers.push("missing_translated_title");
@@ -257,13 +261,17 @@ const summary = {
     row.blockers.some((value) => value === "public_route_failed" || value === "unpublished_route_not_404")
   ).length,
   httpChecksSkipped: skipHttp,
+  prepublish,
 };
 
 if (json) {
   console.log(JSON.stringify({ summary, results }, null, 2));
 } else {
   console.log("Kpoparkive integration QA · " + rootTitle);
-  console.log("base=" + baseUrl + (skipHttp ? " (HTTP checks skipped)" : ""));
+  console.log(
+    "base=" + baseUrl +
+    (prepublish ? " (prepublish; HTTP checks skipped)" : skipHttp ? " (HTTP checks skipped)" : "")
+  );
   console.log(
     "scope=" + summary.scopeCount + (expectedCount == null ? "" : "/" + expectedCount) +
     " raw=" + summary.canonicalRaw + "/" + summary.scopeCount +
