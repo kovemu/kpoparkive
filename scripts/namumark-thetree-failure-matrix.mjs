@@ -12,6 +12,8 @@ const ROOT_TITLE = decodeURIComponent(
 const SHOULD_RENDER = process.argv.includes("--render");
 const JSON_ONLY = process.argv.includes("--json");
 const COMPAT_RENDERER = path.join(ROOT_DIR, "scripts", "namumark-thetree-compat-poc.mjs");
+const EXPECTED_COMPAT_VERSION = String(process.env.KPOPARKIVE_EXPECTED_COMPAT_VERSION || "modern-namu-compat-v7");
+const EXPECTED_ENGINE_PATCHSET = String(process.env.KPOPARKIVE_EXPECTED_ENGINE_PATCHSET || "modern-namu-v2");
 
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -86,7 +88,7 @@ function renderedFeatures(htmlValue) {
   return {
     tables: root.querySelectorAll("table").length,
     details: root.querySelectorAll("details").length,
-    footnotes: countMatches(html, /wiki-fn(?![-\w])/g),
+    footnotes: root.querySelectorAll(".wiki-fn-content").length,
     youtube: root.querySelectorAll('iframe[src*="youtube.com/embed/"],iframe[src*="youtube-nocookie.com/embed/"]').length,
     headings: root.querySelectorAll("h1,h2,h3,h4,h5,h6").length,
     parseError: false,
