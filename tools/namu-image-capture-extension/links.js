@@ -147,12 +147,6 @@ function kpopClassifyLink({ title, currentTitle, sectionTitle, context }) {
   if (KPOP_SKIP_EXACT_TITLES.has(normalizedTitle)) return { crawlMode: "skip", relation: "generic_concept" };
   if (KPOP_SKIP_CONTEXT_RE.test(`${section} ${contextText}`)) return { crawlMode: "skip", relation: "profile_attribute" };
 
-  // Rule #1: direct subdocuments stay first-class. This covers nested TOC
-  // documents even when the visual TOC markup is unusual.
-  if (normalizedTitle.startsWith(`${currentTitle}/`)) {
-    return { crawlMode: "expand", relation: "subdocument" };
-  }
-
   // Members are the only non-TOC body links that remain recursive for now.
   if (KPOP_MEMBER_SECTION_RE.test(section)) {
     return { crawlMode: "expand", relation: "member" };
