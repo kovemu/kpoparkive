@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v1";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v2";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -479,6 +479,8 @@ function kpopBuildInboundRelationMap(rows) {
         crawlMode: String(link?.crawlMode || ""),
         priority: Number(link?.priority || 0) || 0,
         tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+        sourceArea: String(link?.sourceArea || ""),
+        sectionTitle: String(link?.sectionTitle || ""),
       };
       const existing = map.get(title);
       if (
@@ -496,10 +498,75 @@ function kpopBuildInboundRelationMap(rows) {
   return map;
 }
 
-function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound) {
+
+function kpopBuildDirectRootRelationMap(rootRow, rows) {
+  const known = new Set(
+    (rows || [])
+      .map((row) => String(row?.source_title || "").normalize("NFKC").trim())
+      .filter(Boolean)
+  );
+  const map = new Map();
+  const links = Array.isArray(rootRow?.source_browser_capture_meta?.internalLinks)
+    ? rootRow.source_browser_capture_meta.internalLinks
+    : [];
+
+  for (const link of links) {
+    const title = String(link?.title || "").normalize("NFKC").trim();
+    if (!title || !known.has(title)) continue;
+    const candidate = {
+      relation: String(link?.relation || ""),
+      crawlMode: String(link?.crawlMode || ""),
+      priority: Number(link?.priority || 0) || 0,
+      tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
+      sourceArea: String(link?.sourceArea || ""),
+      sectionTitle: String(link?.sectionTitle || ""),
+    };
+    const existing = map.get(title);
+    if (
+      !existing ||
+      kpopRawRequirementRelationRank(candidate.relation) > kpopRawRequirementRelationRank(existing.relation) ||
+      (
+        kpopRawRequirementRelationRank(candidate.relation) === kpopRawRequirementRelationRank(existing.relation) &&
+        candidate.priority > existing.priority
+      )
+    ) {
+      map.set(title, candidate);
+    }
+  }
+  return map;
+}
+
+function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, directRoot) {
   const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
   const reasons = [];
   let score = 0;
+
+  const isRoot = sourceTitle === rootTitle;
+  const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
+  const directRelation = String(directRoot?.relation || "");
+  const directRelatedSectionLeaf = Boolean(
+    directRelation === "related" &&
+    String(directRoot?.crawlMode || "") === "leaf" &&
+    String(directRoot?.sourceArea || "") === "section" &&
+    Number.isFinite(Number(directRoot?.tocOrder)) &&
+    Number(directRoot.tocOrder) <= 20
+  );
+  const inTeamCoreScope = Boolean(
+    isRoot ||
+    isDirectSubdocument ||
+    ["subdocument", "member", "core_kpop_document"].includes(directRelation) ||
+    directRelatedSectionLeaf
+  );
+
+  if (!inTeamCoreScope) {
+    return {
+      status: "ignored",
+      score: 0,
+      priority: 0,
+      reasons: ["outside_team_core_scope"],
+      rawCapturedAt: null,
+    };
+  }
 
   if (kpopCanonicalRawCaptured(row)) {
     return {
@@ -511,8 +578,6 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound) {
     };
   }
 
-  const isRoot = sourceTitle === rootTitle;
-  const isDirectSubdocument = sourceTitle.startsWith(rootTitle + "/");
   const depth = Math.max(0, Number(row?.crawl_depth || 0) || 0);
   const captureMeta = row?.source_browser_capture_meta && typeof row.source_browser_capture_meta === "object"
     ? row.source_browser_capture_meta
@@ -694,15 +759,23 @@ async function kpopPlanRawRequirements(rootTitle) {
 
   const existingQueue = await db(
     "namu_raw_requirements?root_title=eq." + encodeURIComponent(title) +
-    "&select=source_title,status&limit=500"
+    "&select=source_title,status,reason_codes&limit=500"
   );
-  const ignored = new Set(
+  const manuallyIgnored = new Set(
     (Array.isArray(existingQueue) ? existingQueue : [])
-      .filter((row) => row?.status === "ignored")
+      .filter((row) =>
+        row?.status === "ignored" &&
+        Array.isArray(row?.reason_codes) &&
+        row.reason_codes.includes("manual_ignore")
+      )
       .map((row) => String(row?.source_title || ""))
   );
 
   const inboundMap = kpopBuildInboundRelationMap(docs);
+  const rootRow = docs.find(
+    (row) => String(row?.source_title || "").normalize("NFKC").trim() === title
+  ) || null;
+  const directRootMap = kpopBuildDirectRootRelationMap(rootRow, docs);
   const detectedAt = new Date().toISOString();
   const payload = docs.map((row) => {
     const sourceTitle = String(row?.source_title || "").normalize("NFKC").trim();
@@ -710,11 +783,15 @@ async function kpopPlanRawRequirements(rootTitle) {
       row,
       title,
       fallbackMap.get(String(row?.id || "")) || [],
-      inboundMap.get(sourceTitle) || null
+      inboundMap.get(sourceTitle) || null,
+      directRootMap.get(sourceTitle) || null
     );
-    const status = ignored.has(sourceTitle) && classified.status !== "captured"
+    const status = manuallyIgnored.has(sourceTitle) && classified.status !== "captured"
       ? "ignored"
       : classified.status;
+    const reasonCodes = manuallyIgnored.has(sourceTitle) && classified.status !== "captured"
+      ? ["manual_ignore"]
+      : classified.reasons;
     return {
       root_title: title,
       source_document_id: row.id,
@@ -722,7 +799,7 @@ async function kpopPlanRawRequirements(rootTitle) {
       status,
       priority: classified.priority,
       score: classified.score,
-      reason_codes: classified.reasons,
+      reason_codes: reasonCodes,
       detector_version: RAW_REQUIREMENT_DETECTOR_VERSION,
       detected_at: detectedAt,
       raw_captured_at: classified.rawCapturedAt,
@@ -786,7 +863,11 @@ async function kpopIgnoreRawRequirement(rootTitle, sourceTitle) {
     {
       method: "PATCH",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ status: "ignored", updated_at: new Date().toISOString() }),
+      body: JSON.stringify({
+        status: "ignored",
+        reason_codes: ["manual_ignore"],
+        updated_at: new Date().toISOString(),
+      }),
     }
   );
   return kpopListRawRequirements(root);
