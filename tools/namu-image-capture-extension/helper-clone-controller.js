@@ -891,9 +891,16 @@ async function kpopCaptureRawBundle({
 }
 
 async function kpopCaptureEditRawSource(options = {}) {
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const sourceTitle = kpopTitleFromDocumentUrl(activeTab?.url || "");
-  if (!activeTab?.url || !sourceTitle) throw new Error("Open the NamuWiki document (/w/...) you want to test first.");
+  const requestedTitle = String(options?.sourceTitle || "").normalize("NFKC").trim();
+  let sourceTitle = requestedTitle;
+
+  if (!sourceTitle) {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    sourceTitle = kpopTitleFromDocumentUrl(activeTab?.url || "");
+    if (!activeTab?.url || !sourceTitle) {
+      throw new Error("Open a NamuWiki document or provide sourceTitle for RAW capture.");
+    }
+  }
 
   const rootTitle = String(options.rootTitle || "").normalize("NFKC").trim() || sourceTitle;
 
@@ -916,6 +923,56 @@ async function kpopCaptureEditRawSource(options = {}) {
     templatesDiscovered: rootCapture.templatesDiscovered,
     templateFailures: rootCapture.templateFailures,
     capturedTemplates: rootCapture.capturedTemplates,
+  };
+}
+
+async function kpopRawNeedsStatus(options = {}) {
+  const rootTitle = String(options?.rootTitle || "").normalize("NFKC").trim();
+  if (!rootTitle) throw new Error("rootTitle is required");
+  return kpopControllerJson("/raw-needs?rootTitle=" + encodeURIComponent(rootTitle));
+}
+
+async function kpopPlanRawNeeds(options = {}) {
+  const rootTitle = String(options?.rootTitle || "").normalize("NFKC").trim();
+  if (!rootTitle) throw new Error("rootTitle is required");
+  return kpopControllerJson("/raw-needs/plan", {
+    method: "POST",
+    body: JSON.stringify({ rootTitle }),
+  });
+}
+
+async function kpopIgnoreRawNeed(options = {}) {
+  const rootTitle = String(options?.rootTitle || "").normalize("NFKC").trim();
+  const sourceTitle = String(options?.sourceTitle || "").normalize("NFKC").trim();
+  if (!rootTitle || !sourceTitle) throw new Error("rootTitle/sourceTitle are required");
+  return kpopControllerJson("/raw-needs/ignore", {
+    method: "POST",
+    body: JSON.stringify({ rootTitle, sourceTitle }),
+  });
+}
+
+async function kpopCaptureNextRequiredRaw(options = {}) {
+  const rootTitle = String(options?.rootTitle || "").normalize("NFKC").trim();
+  if (!rootTitle) throw new Error("rootTitle is required");
+
+  const plan = options?.replan === false
+    ? await kpopRawNeedsStatus({ rootTitle })
+    : await kpopPlanRawNeeds({ rootTitle });
+  const next = plan?.next || null;
+  if (!next?.source_title) {
+    return { ok: true, noWork: true, rawNeeds: plan, sourceTitle: null };
+  }
+
+  const capture = await kpopCaptureRawBundle({
+    rootTitle,
+    sourceTitle: String(next.source_title),
+  });
+  const refreshed = await kpopRawNeedsStatus({ rootTitle });
+  return {
+    ok: true,
+    noWork: false,
+    ...capture,
+    rawNeeds: refreshed,
   };
 }
 
@@ -986,6 +1043,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "kpoparkive-reset-helper-clone") {
     kpopResetHelperClone()
       .then((job) => sendResponse({ ok: true, job }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-plan-raw-needs") {
+    kpopPlanRawNeeds(message.options || {})
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-raw-needs-status") {
+    kpopRawNeedsStatus(message.options || {})
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-ignore-raw-need") {
+    kpopIgnoreRawNeed(message.options || {})
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "kpoparkive-capture-next-required-raw") {
+    kpopCaptureNextRequiredRaw(message.options || {})
+      .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }
