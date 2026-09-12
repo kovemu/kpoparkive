@@ -634,9 +634,10 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
     if (!element) return;
     const html = element.toString();
     const maxBytes = Number(options.maxBytes || 600000) || 600000;
-    if (html.length < 80 || html.length > maxBytes || seenHtml.has(html)) return;
+    if (html.length < 40 || html.length > maxBytes || seenHtml.has(html)) return;
     const text = normalizeVisibleText(element.innerText || element.text || "");
-    if (!text) return;
+    const imageCount = element.querySelectorAll?.("img")?.length || (String(element?.tagName || "").toLowerCase() === "img" ? 1 : 0);
+    if (!text && !(options.allowImageOnly && imageCount > 0)) return;
     seenHtml.add(html);
     candidates.push({
       html,
@@ -657,6 +658,52 @@ function extractTemplateDomFallback(articleHtml, templateTitle) {
     const text = normalizeVisibleText(table.innerText || table.text || "");
     if (!text.includes(label)) continue;
     pushCandidate(table, "table-full-label", 1000);
+  }
+
+  // Image-only utility templates (broadcast logos, service marks, navigation
+  // icons, etc.) often have no visible text at all. Chrome still preserves the
+  // canonical image alt text, so use that as a high-confidence anchor. Prefer
+  // the smallest wrapper that keeps a useful link/text sibling; otherwise the
+  // image node itself is a faithful fallback.
+  if (!candidates.length) {
+    const normalizedVariants = labelVariants.map((value) => normalizeVisibleText(value)).filter(Boolean);
+    for (const image of root.querySelectorAll("img[alt]")) {
+      const alt = normalizeVisibleText(image.getAttribute("alt") || "");
+      if (!alt) continue;
+      const matchesLabel = normalizedVariants.some((variant) =>
+        alt === variant ||
+        alt.startsWith(variant + " ") ||
+        alt.startsWith(variant + "(") ||
+        alt.includes(variant + " 로고") ||
+        (variant.length >= 4 && alt.includes(variant))
+      );
+      if (!matchesLabel) continue;
+
+      let picked = image;
+      let pickedText = "";
+      for (let depth = 0, current = image.parentNode; current && depth < 6; depth += 1, current = current.parentNode) {
+        const tag = String(current?.tagName || "").toLowerCase();
+        if (!["a", "span", "div", "td", "th"].includes(tag)) continue;
+        const text = normalizeVisibleText(current.innerText || current.text || "");
+        const imageCount = current.querySelectorAll?.("img")?.length || 0;
+        if (imageCount !== 1 || text.length > 500) continue;
+        picked = current;
+        pickedText = text;
+        if (text) break;
+      }
+
+      const tag = String(picked?.tagName || "").toLowerCase();
+      const score =
+        940 +
+        (pickedText ? 60 : 0) +
+        (tag === "a" ? 35 : 0) -
+        Math.min(120, Math.max(0, picked.toString().length - 20000) / 500);
+
+      pushCandidate(picked, "image-alt-anchor", score, {
+        allowImageOnly: true,
+        maxBytes: 300000,
+      });
+    }
   }
 
   // Navigation/profile templates commonly have a disambiguated title such as
@@ -1505,7 +1552,7 @@ async function main() {
     domFallbackMediaRewritten: Number(injectedFallbacks.mediaRewritten || 0),
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
-    fallbackExtractorVersion: 3,
+    fallbackExtractorVersion: 4,
     assetReconcilerVersion: 2,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
