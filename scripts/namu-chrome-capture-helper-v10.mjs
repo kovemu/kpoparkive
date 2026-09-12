@@ -13,7 +13,7 @@ function mustReplace(source, before, after, label) {
   return source.replace(before, after);
 }
 
-const oldEnsureQuery = [
+const legacyEnsureQuery = [
   "  const docs = await db(",
   "    `source_documents?source=eq.namu_mirror` +",
   "    `&root_title=eq.${encodeURIComponent(rootTitle)}` +",
@@ -21,14 +21,39 @@ const oldEnsureQuery = [
   "    `&select=id,source_title,root_title&limit=1`,",
   "  );",
 ].join("\n");
-const newEnsureQuery = [
+
+const templateAwareEnsureQuery = [
+  "  const docs = await db(",
+  "    `source_documents?source=eq.namu_mirror` +",
+  "    (isTemplate ? \"\" : `&root_title=eq.${encodeURIComponent(rootTitle)}`) +",
+  "    `&source_title=eq.${encodeURIComponent(normalizedSourceTitle)}` +",
+  "    `&select=id,source_title,root_title&order=raw_extracted_at.desc.nullslast&limit=1`,",
+  "  );",
+].join("\n");
+
+const globalEnsureLegacy = [
   "  const docs = await db(",
   "    `source_documents?source=eq.namu_mirror` +",
   "    `&source_title=eq.${encodeURIComponent(sourceTitle)}` +",
   "    `&select=id,source_title,root_title&limit=1`,",
   "  );",
 ].join("\n");
-combined = mustReplace(combined, oldEnsureQuery, newEnsureQuery, "global ensureSourceDocument lookup");
+
+const globalEnsureCurrent = [
+  "  const docs = await db(",
+  "    `source_documents?source=eq.namu_mirror` +",
+  "    `&source_title=eq.${encodeURIComponent(normalizedSourceTitle)}` +",
+  "    `&select=id,source_title,root_title&order=raw_extracted_at.desc.nullslast&limit=1`,",
+  "  );",
+].join("\n");
+
+if (combined.includes(templateAwareEnsureQuery)) {
+  combined = combined.replace(templateAwareEnsureQuery, globalEnsureCurrent);
+} else if (combined.includes(legacyEnsureQuery)) {
+  combined = combined.replace(legacyEnsureQuery, globalEnsureLegacy);
+} else if (!combined.includes(globalEnsureCurrent) && !combined.includes(globalEnsureLegacy)) {
+  throw new Error("v10 patch marker missing: global ensureSourceDocument lookup");
+}
 
 async function recordSourceDocumentCluster(rootTitle, sourceDocumentId, crawlDepth) {
   const keyRoot = String(rootTitle || "").normalize("NFKC").trim();
