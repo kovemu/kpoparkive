@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { findVisibleKoreanLinkLabels } from "./namu-english-link-localizer.mjs";
+import { findVisibleKoreanLinkLabels, findVisibleKoreanText } from "./namu-english-link-localizer.mjs";
 
 const DEFAULT_SUPABASE_URL = "https://hukrrzhltiyirtkxmotj.supabase.co";
 const DEFAULT_BASE_URL = "https://kpoparkive.vercel.app";
@@ -61,7 +61,7 @@ async function fetchDocuments(ids) {
     const filter = "(" + batch.join(",") + ")";
     const path =
       "source_documents?id=in." + enc(filter) +
-      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html,content_namumark_meta,published_namumark_meta";
+      "&select=id,source_title,root_title,source_wikitext,content_wikitext,content_language,content_status,translation_status,content_revision_no,published_revision_no,translated_title,content_namumark_html,published_namumark_html,content_namumark_meta,published_namumark_meta,content_namumark_rendered_at";
     rows.push(...await db(path));
   }
   return rows;
@@ -174,6 +174,7 @@ for (const requirement of scope) {
   if (doc.content_language !== "en" || !textPresent(doc.content_wikitext)) blockers.push("missing_english_revision");
   if (doc.translation_status === "failed") blockers.push("translation_failed");
   if (!textPresent(doc.content_namumark_html)) blockers.push("missing_current_render");
+  if (!doc.content_namumark_rendered_at) blockers.push("missing_current_render_timestamp");
 
   if (textPresent(doc.content_namumark_html)) {
     const currentTargets = internalWikiTargets(doc.content_namumark_html);
@@ -188,6 +189,12 @@ for (const requirement of scope) {
     const meta = doc.content_namumark_meta;
     if (!meta || typeof meta !== "object") blockers.push("missing_render_meta");
     else {
+      const renderedRevision = Number(meta?.editableContent?.revisionNo || 0) || 0;
+      const contentRevision = Number(doc.content_revision_no || 0) || 0;
+      if (!renderedRevision) blockers.push("missing_render_revision");
+      else if (renderedRevision !== contentRevision) {
+        blockers.push("stale_current_render:r" + renderedRevision + "->r" + contentRevision);
+      }
       if (meta.hasError === true) blockers.push("render_error");
       const missingFiles = metaCount(meta, "missingFileCount") || metaCount(meta, "missingFiles");
       const missingTemplates = metaCount(meta, "missingTemplateCount") || metaCount(meta, "missingTemplates");
@@ -203,6 +210,11 @@ for (const requirement of scope) {
     const visibleKoreanLinks = findVisibleKoreanLinkLabels(doc.content_namumark_html, { limit: 50 });
     if (visibleKoreanLinks.length > 0) {
       blockers.push("visible_korean_links:" + visibleKoreanLinks.length);
+    }
+
+    const visibleKoreanText = findVisibleKoreanText(doc.content_namumark_html, { limit: 50 });
+    if (visibleKoreanText.length > 0) {
+      blockers.push("visible_korean_text:" + visibleKoreanText.length);
     }
   }
 
@@ -251,6 +263,14 @@ const summary = {
   canonicalRaw: results.filter((row) => !row.blockers.includes("missing_canonical_raw")).length,
   englishRevision: results.filter((row) => !row.blockers.includes("missing_english_revision")).length,
   currentRender: results.filter((row) => !row.blockers.includes("missing_current_render")).length,
+  freshRender: results.filter((row) =>
+    !row.blockers.some((value) =>
+      value === "missing_current_render" ||
+      value === "missing_current_render_timestamp" ||
+      value === "missing_render_revision" ||
+      value.startsWith("stale_current_render:")
+    )
+  ).length,
   coreLinkFailures: results.filter((row) =>
     row.blockers.some((value) => value.startsWith("core_links_unpublished:"))
   ).length,
@@ -277,6 +297,7 @@ if (json) {
     " raw=" + summary.canonicalRaw + "/" + summary.scopeCount +
     " english=" + summary.englishRevision + "/" + summary.scopeCount +
     " render=" + summary.currentRender + "/" + summary.scopeCount +
+    " fresh=" + summary.freshRender + "/" + summary.scopeCount +
     " published=" + summary.published + "/" + summary.scopeCount +
     " pass=" + summary.pass + "/" + summary.scopeCount
   );
