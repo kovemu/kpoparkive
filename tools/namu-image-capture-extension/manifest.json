@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kpoparkive Namu Capture",
-  "version": "0.21.0",
-  "description": "Root TOC + members K-pop scope discovery with canonical RAW requirements, resolved-media reuse, persistent RAW queue, and one reusable RAW session tab.",
+  "version": "0.22.0",
+  "description": "Root TOC + members K-pop scope discovery with automatic persistent RAW queue, verification pause/resume, and resolved-media reuse.",
   "permissions": [
     "activeTab",
     "storage",
