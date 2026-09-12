@@ -344,7 +344,7 @@ function kpopEnqueueLinks(links, depth) {
       tocOrder: Number.isFinite(Number(link?.tocOrder)) ? Number(link.tocOrder) : null,
       relation: String(link?.relation || "").slice(0, 80),
       queueOrder: kpopCloneState.seenUrls.length,
-      forceCapture: Boolean(kpopCloneState.refreshExisting || (kpopCloneState.policyRefresh && mode === "expand")),
+      forceCapture: Boolean(kpopCloneState.refreshExisting),
     });
     added += 1;
   }
