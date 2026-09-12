@@ -170,8 +170,8 @@ for (const requirement of scope) {
   if (!published) blockers.push("not_published");
 
   const translatedTitle = String(doc.translated_title || "").normalize("NFKC").trim();
-  if (!translatedTitle) warnings.push("missing_translated_title");
-  else if (/[가-힣]/.test(translatedTitle)) warnings.push("translated_title_contains_hangul");
+  if (!translatedTitle) blockers.push("missing_translated_title");
+  else if (/[가-힣]/.test(translatedTitle)) blockers.push("translated_title_contains_hangul");
 
   const route = skipHttp ? null : await inspectRoute(doc.source_title, published);
   if (route && !route.ok) blockers.push(published ? "public_route_failed" : "unpublished_route_not_404");
