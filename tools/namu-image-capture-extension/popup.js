@@ -20,7 +20,7 @@ let pollTimer = null;
 let rawAssetPollTimer = null;
 let lastAutoPlannedCloneId = "";
 
-const ACTIVE_SCOPE_POLICY_VERSION = 4;
+const ACTIVE_SCOPE_POLICY_VERSION = 5;
 
 const CRAWL_PROFILES = {
   essential: { depth: 1, maxDocs: 20, crawlOrder: "smart", includeLeaf: false, refreshExisting: false },
