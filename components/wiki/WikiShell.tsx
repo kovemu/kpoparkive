@@ -5,6 +5,9 @@ function encodeWikiTitle(title: string) {
   return title.split("/").map((part) => encodeURIComponent(part)).join("/");
 }
 
+const PUBLIC_EDITING_ENABLED =
+  process.env.NEXT_PUBLIC_PUBLIC_EDITING_ENABLED === "true";
+
 export default function WikiShell({
   title,
   sourceTitle,
@@ -22,9 +25,11 @@ export default function WikiShell({
       <main className="wikiDocumentColumn">
         <header className="wikiDocumentHeader">
           <h1>{title}</h1>
-          <a className="wikiEditLink" href={"/edit/" + encodedTitle}>
-            Edit
-          </a>
+          {PUBLIC_EDITING_ENABLED ? (
+            <a className="wikiEditLink" href={"/edit/" + encodedTitle}>
+              Edit
+            </a>
+          ) : null}
         </header>
         <div className="wikiArticleFrame">{children}</div>
       </main>
