@@ -443,7 +443,7 @@ async function rawSourceStatus(sourceTitle) {
 }
 
 
-const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v5";
+const RAW_REQUIREMENT_DETECTOR_VERSION = "raw-required-v6";
 
 function kpopCanonicalRawCaptured(row) {
   return Boolean(
@@ -575,6 +575,22 @@ function kpopClassifyRawRequirement(row, rootTitle, fallbackRows, inbound, direc
       rawCapturedAt: row.raw_extracted_at || null,
     };
   }
+
+  // Kpoparkive's canonical content source is RAW NamuMark. A DOM capture is
+  // useful for scope discovery, fidelity comparison and asset recovery, but it
+  // does not mean the document source has been collected. Every in-scope
+  // document without verified canonical RAW therefore remains NEEDS_RAW.
+  const missingRawReasons = ["canonical_raw_missing"];
+  if (!row?.source_browser_captured_at) missingRawReasons.push("browser_dom_missing");
+
+  let canonicalPriority = isRoot ? 100 : directRelation === "toc_document" ? 95 : directRelation === "member" ? 90 : 85;
+  return {
+    status: "needs_raw",
+    score: 100,
+    priority: canonicalPriority,
+    reasons: missingRawReasons,
+    rawCapturedAt: null,
+  };
 
   const depth = Math.max(0, Number(row?.crawl_depth || 0) || 0);
   const captureMeta = row?.source_browser_capture_meta && typeof row.source_browser_capture_meta === "object"
