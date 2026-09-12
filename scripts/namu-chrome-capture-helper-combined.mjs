@@ -267,7 +267,7 @@ async function saveRawSource(payload) {
   // "RAW newer than render" condition and loops forever.
   const existingRows = await db(
     `source_documents?id=eq.${encodeURIComponent(doc.id)}` +
-    "&select=source_wikitext,raw_extracted_at,translation_status&limit=1",
+    "&select=source_wikitext,source_format,source_extraction_version,raw_extracted_at,translation_status&limit=1",
   );
   const existing = existingRows?.[0] || null;
   const existingRaw = typeof existing?.source_wikitext === "string"
@@ -276,6 +276,42 @@ async function saveRawSource(payload) {
   const bytes = Buffer.byteLength(raw, "utf8");
 
   if (existingRaw && existingRaw === raw) {
+    const canonicalExtractionVersion = String(payload?.extractionMethod || "").startsWith("normal-chrome-raw-page:")
+      ? "normal-chrome-raw-view-v1"
+      : "normal-chrome-edit-source-v1";
+    const provenanceNeedsUpgrade =
+      existing?.source_format !== "namuwiki_raw" ||
+      existing?.source_extraction_version !== canonicalExtractionVersion;
+
+    if (provenanceNeedsUpgrade) {
+      await db(`source_documents?id=eq.${encodeURIComponent(doc.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          source_format: "namuwiki_raw",
+          source_extraction_version: canonicalExtractionVersion,
+          raw_extracted_at: capturedAt,
+          discovered_links: internalLinks,
+          translation_status: shouldTranslate ? "pending_chatgpt" : (existing?.translation_status || "ready"),
+          translation_version: shouldTranslate ? "chatgpt-en-v1" : null,
+          updated_at: capturedAt,
+        }),
+      });
+      console.log(`RAW SOURCE VERIFIED ${sourceTitle} -> canonical provenance upgraded without changing source text`);
+      return {
+        ok: true,
+        status: "verified",
+        sourceTitle,
+        rootTitle,
+        charCount: raw.length,
+        bytes,
+        capturedAt,
+        sourceFormat: "namuwiki_raw",
+        internalLinkCount: internalLinks.length,
+        translation: shouldTranslate ? "pending_chatgpt" : (existing?.translation_status || "ready"),
+      };
+    }
+
     console.log(`RAW SOURCE UNCHANGED ${sourceTitle} -> ${(bytes / 1024).toFixed(1)} KB; keeping raw_extracted_at/status`);
     return {
       ok: true,
@@ -385,13 +421,13 @@ async function rawSourceStatus(sourceTitle) {
     `source_documents?source=eq.namu_mirror` +
     `&source_title=eq.${encodeURIComponent(title)}` +
     `&source_wikitext=not.is.null&raw_extracted_at=not.is.null` +
-    `&select=id,source_title,root_title,source_wikitext,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html,source_namumark_meta` +
+    `&select=id,source_title,root_title,source_wikitext,source_format,source_extraction_version,raw_extracted_at,translation_status,source_namumark_rendered_at,source_namumark_html,source_namumark_meta` +
     `&order=raw_extracted_at.desc.nullslast&limit=1`,
   );
   const row = rows?.[0] || null;
   return {
     exists: Boolean(row),
-    rawCaptured: Boolean(row?.source_wikitext && row?.raw_extracted_at),
+    rawCaptured: Boolean(row?.source_wikitext && row?.raw_extracted_at && row?.source_format === "namuwiki_raw" && /^normal-chrome-(?:raw-view|edit-source)-v1$/.test(String(row?.source_extraction_version || ""))),
     rawExtractedAt: row?.raw_extracted_at || null,
     sourceRenderedAt: row?.source_namumark_rendered_at || null,
     sourceRendered: Boolean(row?.source_namumark_html && row?.source_namumark_rendered_at),
