@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import WikiShell from "../../../components/wiki/WikiShell";
+import { getPublicWikiMeta } from "../../../lib/publicWikiRead";
 import "../shell.css";
 
 function sourceTitleFromSegments(segments: string[]) {
@@ -33,6 +34,21 @@ function canonicalUrlFor(sourceTitle: string) {
 }
 
 async function wikiMetaFor(sourceTitle: string): Promise<WikiMeta> {
+  if (process.env.NODE_ENV === "production") {
+    try {
+      const row = await getPublicWikiMeta(sourceTitle);
+      if (!row) return { title: sourceTitle, published: false };
+      const translated = row.translated_title?.normalize("NFKC").trim() || "";
+      return {
+        title: translated && !/[가-힣]/.test(translated) ? translated : row.source_title,
+        published: true,
+      };
+    } catch {
+      // Public metadata fails closed: noindex rather than leaking draft state.
+      return { title: sourceTitle, published: false };
+    }
+  }
+
   if (!SERVICE_ROLE_KEY) return { title: sourceTitle, published: false };
   try {
     const response = await fetch(
