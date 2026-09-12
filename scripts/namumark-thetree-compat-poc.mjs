@@ -8,7 +8,7 @@ process.env.KPOPARKIVE_THETREE_PATCHSET = process.env.KPOPARKIVE_THETREE_PATCHSE
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const compatibilityStats = {
-  version: "modern-namu-compat-v7",
+  version: "modern-namu-compat-v8",
   documentsSeen: 0,
   documentsChanged: 0,
   commentLinesRemoved: 0,
@@ -20,6 +20,9 @@ const compatibilityStats = {
   structuralNbspNormalized: 0,
   colorWhitespaceNormalized: 0,
   missingYouTubeIconIncludesExpanded: 0,
+  parentDocumentIncludesExpanded: 0,
+  importedDocumentIncludesExpanded: 0,
+  songDetailIncludesExpanded: 0,
   youtubeIconTemplateAvailable: false,
   charsBefore: 0,
   charsAfter: 0,
@@ -73,6 +76,104 @@ function parseSimpleIncludeParams(raw) {
     if (name) params.set(name, value);
   }
   return params;
+}
+
+
+function safeInlineWikiText(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\|/g, "／")
+    .replace(/\]\]/g, "］］")
+    .trim();
+}
+
+function englishUtilityLabel(value) {
+  const normalized = normalizeWikiTitleFragment(value);
+  const labels = new Map([
+    ["선공개", "Pre-release"],
+    ["타이틀", "TITLE"],
+    ["타이틀곡", "TITLE"],
+  ]);
+  return labels.get(normalized) || safeInlineWikiText(value);
+}
+
+function expandKnownUtilityIncludes(source, title, local, options = {}) {
+  const availableTemplates = options.availableTemplateTitles instanceof Set
+    ? options.availableTemplateTitles
+    : new Set();
+  const english = Boolean(options.renderContent);
+  const currentTitle = normalizeWikiTitleFragment(title);
+
+  return String(source || "").replace(
+    /\[include\(\s*((?:틀|Template)\s*:\s*[^,\)\]\r\n]+)((?:,[^\]\r\n]*?)?)\)\]/gi,
+    (full, rawTitle, rawParams) => {
+      const template = normalizeWikiTitleFragment(rawTitle)
+        .replace(/^(틀|Template)\s*:\s*/i, (_match, namespace) => `${namespace}:`);
+      if (availableTemplates.has(template)) return full;
+
+      const params = parseSimpleIncludeParams(rawParams);
+      const lower = template.toLowerCase();
+
+      if (lower === "틀:상위 문서" || lower === "template:상위 문서") {
+        const explicit = safeInlineWikiText(params.get("문서명1") || "");
+        const slash = currentTitle.lastIndexOf("/");
+        const inferred = slash > 0 ? currentTitle.slice(0, slash) : "";
+        const parent = explicit || inferred;
+        if (!parent) return full;
+        local.parentDocumentIncludesExpanded += 1;
+        const prefix = english ? "Parent document" : "상위 문서";
+        return `{{{-2 ↑ '''${prefix}:''' [[${parent}]]}}}`;
+      }
+
+      if (lower === "틀:문서 가져옴" || lower === "template:문서 가져옴") {
+        const sourceTitle = safeInlineWikiText(params.get("title") || params.get("문서명") || "");
+        const version = safeInlineWikiText(params.get("version") || "");
+        const uuid = safeInlineWikiText(params.get("uuid") || "");
+        if (!sourceTitle) return full;
+        local.importedDocumentIncludesExpanded += 1;
+
+        const revision = version ? ` r${version}` : "";
+        const historyUrl = uuid
+          ? `https://namu.wiki/history/${encodeURIComponent(sourceTitle)}?commit=${encodeURIComponent(uuid)}`
+          : "";
+        if (english) {
+          const history = historyUrl ? ` [${historyUrl} View earlier history]` : "";
+          return `{{{-2 This document incorporates material from [[${sourceTitle}]] revision${revision} on NamuWiki.${history}}}}`;
+        }
+        const history = historyUrl ? ` [${historyUrl} 이전 역사 보러 가기]` : "";
+        return `{{{-2 이 문서는 [[${sourceTitle}]] 문서의${revision} 판에서 가져왔습니다.${history}}}}`;
+      }
+
+      if (lower === "틀:노래 세부사항" || lower === "template:노래 세부사항" ||
+          lower === "틀:노래 세부사항2" || lower === "template:노래 세부사항2") {
+        const documentTitle = safeInlineWikiText(params.get("문서명") || currentTitle);
+        const titleAnchor = safeInlineWikiText(params.get("앵커_타이틀") || "");
+        const anchor = titleAnchor || safeInlineWikiText(params.get("앵커") || params.get("곡명") || "");
+        const track = safeInlineWikiText(params.get("트랙번호") || "");
+        const duration = safeInlineWikiText(params.get("재생시간") || "");
+        const info = safeInlineWikiText(params.get("정보") || "");
+        const info2 = safeInlineWikiText(params.get("정보2") || "");
+        if (!anchor && !track && !duration) return full;
+
+        local.songDetailIncludesExpanded += 1;
+        const visibleTitle = titleAnchor ? `'''${anchor}'''` : anchor;
+        const target = documentTitle && anchor ? `${documentTitle}#${anchor}` : documentTitle;
+        const firstLine = target && visibleTitle ? `[[${target}|${visibleTitle}]]` : visibleTitle;
+        const badges = [info, info2]
+          .filter(Boolean)
+          .map((value) => english ? englishUtilityLabel(value) : value);
+        const detail = [
+          track ? `'''${track}'''` : "",
+          duration,
+          ...badges,
+        ].filter(Boolean).join("　");
+        return [firstLine, detail ? `[br]{{{-4 ${detail}}}}` : ""].join("");
+      }
+
+      return full;
+    },
+  );
 }
 
 function expandMissingYouTubeIconIncludes(source, local) {
@@ -270,6 +371,9 @@ function applyCompatibility(raw, title, options = {}) {
     structuralNbspNormalized: 0,
     colorWhitespaceNormalized: 0,
     missingYouTubeIconIncludesExpanded: 0,
+    parentDocumentIncludesExpanded: 0,
+    importedDocumentIncludesExpanded: 0,
+    songDetailIncludesExpanded: 0,
   };
 
   const whitespaceNormalizedSource = normalizeStructuralNbsp(source, local);
@@ -288,6 +392,8 @@ function applyCompatibility(raw, title, options = {}) {
   if (options.expandMissingYouTubeIconTemplate) {
     result = expandMissingYouTubeIconIncludes(result, local);
   }
+
+  result = expandKnownUtilityIncludes(result, title, local, options);
 
   compatibilityStats.documentsSeen += 1;
   compatibilityStats.charsBefore += source.length;
@@ -339,9 +445,12 @@ globalThis.fetch = async (input, init = undefined) => {
     const rows = await response.json();
     if (!Array.isArray(rows)) return responseWithJson(rows, response);
 
-    const hasYouTubeIconTemplate = rows.some((row) => (
-      normalizeWikiTitleFragment(row?.source_title || "").toLowerCase() === "틀:유튜브 아이콘"
-    ));
+    const availableTemplateTitles = new Set(
+      rows
+        .map((row) => normalizeWikiTitleFragment(row?.source_title || ""))
+        .filter((value) => /^(?:틀|Template):/i.test(value)),
+    );
+    const hasYouTubeIconTemplate = availableTemplateTitles.has("틀:유튜브 아이콘");
     compatibilityStats.youtubeIconTemplateAvailable = hasYouTubeIconTemplate;
 
     const transformed = rows.map((row) => ({
@@ -349,6 +458,8 @@ globalThis.fetch = async (input, init = undefined) => {
       source_wikitext: typeof row?.source_wikitext === "string"
         ? applyCompatibility(row.source_wikitext, row.source_title || "", {
           expandMissingYouTubeIconTemplate: !hasYouTubeIconTemplate,
+          availableTemplateTitles,
+          renderContent: Boolean(process.env.KPOPARKIVE_RENDER_CONTENT),
         })
         : row?.source_wikitext,
     }));
@@ -367,7 +478,7 @@ globalThis.fetch = async (input, init = undefined) => {
         compatibility: {
           ...compatibilityStats,
           enginePatchset: process.env.KPOPARKIVE_THETREE_PATCHSET,
-          note: "Canonical source_wikitext unchanged; renderer input normalized, missing standard YouTube icon includes may be expanded only when that template document is absent, and local cached The Tree is patched at runtime.",
+          note: "Canonical source_wikitext unchanged; renderer input normalized. Missing reusable utility templates (parent-document, imported-document attribution, song-detail cells, and the standard YouTube icon) are expanded only when no canonical template RAW is available. Local cached The Tree is patched at runtime.",
         },
       };
       body.source_namumark_engine = "thetree-modern-namu-compat-poc";
