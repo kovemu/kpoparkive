@@ -197,10 +197,12 @@ function dimensionsFromBytes(bytes, contentType) {
 }
 
 const queueCache = new Map();
-async function loadQueue(rootTitle, force = false) {
-  const cacheKey = String(rootTitle || "").normalize("NFKC").trim();
-  if (!cacheKey) throw new Error("rootTitle is required for asset queue lookup");
+async function loadQueue(rootTitle, sourceTitle = "", force = false) {
+  const root = String(rootTitle || "").normalize("NFKC").trim();
+  const source = String(sourceTitle || "").normalize("NFKC").trim();
+  if (!root) throw new Error("rootTitle is required for asset queue lookup");
 
+  const cacheKey = root + "\u0000" + (source || "*");
   const cached = queueCache.get(cacheKey);
   const age = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
   if (cached && (!force && age < CACHE_TTL_MS)) return cached;
@@ -208,11 +210,14 @@ async function loadQueue(rootTitle, force = false) {
 
   const rows = [];
   for (let offset = 0; offset < 20000; offset += 1000) {
-    const batch = await db(
-      `source_asset_queue?root_title=eq.${encodeURIComponent(cacheKey)}&asset_type=eq.image` +
+    let query =
+      `source_asset_queue?root_title=eq.${encodeURIComponent(root)}&asset_type=eq.image`;
+    if (source) query += `&source_title=eq.${encodeURIComponent(source)}`;
+    query +=
       `&select=id,root_title,source_title,source_ref,label,status,metadata` +
-      `&order=id.asc&limit=1000&offset=${offset}`,
-    );
+      `&order=id.asc&limit=1000&offset=${offset}`;
+
+    const batch = await db(query);
     rows.push(...batch);
     if (batch.length < 1000) break;
   }
@@ -457,7 +462,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (meta.visual?.valid === false) throw new Error(meta.visual.reason || "browser visual validation failed");
 
-    let cache = await loadQueue(meta.rootTitle);
+    let cache = await loadQueue(meta.rootTitle, meta.sourceTitle);
     let fileKey = canonicalFileKey(meta.fileName);
     let rows = isAnonymousName(meta.fileName) ? [] : (cache.byKey.get(fileKey) || []);
     let matchMethod = rows.length ? "semantic-filename-exact" : null;
@@ -466,8 +471,26 @@ const server = http.createServer(async (req, res) => {
     let matchHint = meta.semanticFileName || meta.alt || meta.title || null;
 
     if (!rows.length) {
-      cache = await loadQueue(meta.rootTitle, true);
+      cache = await loadQueue(meta.rootTitle, meta.sourceTitle, true);
       if (!isAnonymousName(meta.fileName)) rows = cache.byKey.get(fileKey) || [];
+    }
+
+    // Current-page rows are normally sufficient and are indexed to a few ms.
+    // Fall back to the root cache only when the page queue genuinely lacks the
+    // file, preserving cross-document reuse without paying the cost per image.
+    if (!rows.length) {
+      const rootCache = await loadQueue(meta.rootTitle);
+      if (!isAnonymousName(meta.fileName)) {
+        rows = rootCache.byKey.get(fileKey) || [];
+        if (rows.length) {
+          cache = rootCache;
+          matchMethod = "root-filename-exact";
+          confidence = 0.995;
+          inferredFileName = representativeLabel(rows, meta.fileName);
+        }
+      } else {
+        cache = rootCache;
+      }
     }
 
     if (!rows.length && isAnonymousName(meta.fileName)) {
