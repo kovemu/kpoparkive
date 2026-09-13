@@ -1354,7 +1354,7 @@ async function main() {
 
   const loadedRawRows = await dbAll(
     "source_documents?source=eq.namu_mirror&source_wikitext=not.is.null" +
-      "&select=id,source_title,root_title,source_wikitext,source_format,raw_extracted_at,source_browser_captured_at,source_fidelity_meta,source_render_manifest&order=id.asc",
+      "&select=id,source_title,root_title,source_wikitext,source_format,raw_extracted_at,source_browser_captured_at,source_fidelity_meta,source_render_manifest,content_wikitext,content_language,content_status,translation_status&order=id.asc",
   );
   const browserCaptureByTitle = new Map(
     (loadedRawRows || [])
@@ -1394,9 +1394,22 @@ async function main() {
   const referencedTemplates = uniqueNormalizedStrings(
     extractIncludeTitles(target.source_wikitext).filter((item) => /^틀:/i.test(item))
   );
+  const forceDomFallbackForUntranslatedTemplates =
+    String(process.env.KPOPARKIVE_FORCE_DOM_FALLBACK_UNTRANSLATED || "") === "1";
   const availableRawTitles = new Set(
     (rawRows || [])
-      .filter((row) => row?.source_wikitext)
+      .filter((row) => {
+        if (!row?.source_wikitext) return false;
+        if (!forceDomFallbackForUntranslatedTemplates) return true;
+        const rowTitle = normalizeTitle(row.source_title);
+        if (!/^틀:/i.test(rowTitle)) return true;
+        const hasReviewedEnglish =
+          typeof row?.content_wikitext === "string" &&
+          row.content_wikitext.length > 0 &&
+          row?.content_language === "en" &&
+          ["translated_by_chatgpt", "reviewed"].includes(String(row?.translation_status || ""));
+        return hasReviewedEnglish;
+      })
       .map((row) => normalizeTitle(row.source_title))
   );
   const missingTemplatesBeforeFallback = referencedTemplates.filter(
