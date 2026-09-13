@@ -1,4 +1,5 @@
 name: BTS31 Rerender QA
+# rerun: rawless-template-support-v1
 on:
   push:
     branches: [main]
