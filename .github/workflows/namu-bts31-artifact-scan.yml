@@ -77,6 +77,14 @@ jobs:
             anchors.push({file:row.label||row.source_ref,url:m.key,index:m.idx,via:m.via});
           }
           anchors.sort((a,b)=>a.index-b.index);
+          const rawHtml=b.toString("utf8");
+          const anchorPos=rawHtml.indexOf("알엠");
+          console.log("ANCHOR_SNIPPET", anchorPos>=0 ? rawHtml.slice(Math.max(0,anchorPos-2200),anchorPos+2600) : "not-found");
+          console.log("FIRST_IMGS", JSON.stringify(imgs.slice(0,12).map((img,i)=>({
+            i,
+            html:img.toString().slice(0,800),
+            parent:img.parentNode?.toString?.().slice(0,1200)||""
+          })),null,2));
           console.log("PROBE",JSON.stringify({
             requiredFiles:req.length,
             htmlImgElements:imgs.length,
