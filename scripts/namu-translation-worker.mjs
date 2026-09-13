@@ -44,10 +44,18 @@ const runId = valueArg("run");
 const workerId =
   valueArg("worker-id") ||
   "translate-" + process.pid + "-" + crypto.randomBytes(3).toString("hex");
-const model =
+const forcedModel =
   valueArg("model") ||
   process.env.KPOPARKIVE_TRANSLATION_MODEL ||
-  DEFAULT_MODEL;
+  "";
+
+function modelForAttempt(attempt) {
+  if (forcedModel) return forcedModel;
+  const value = Number(attempt || 1);
+  if (value <= 1) return "gpt-5.6-luna";
+  if (value === 2) return "gpt-5.6-terra";
+  return "gpt-5.6-sol";
+}
 const chunkChars = Math.max(
   4000,
   Number(valueArg("chunk-chars") || process.env.KPOPARKIVE_TRANSLATION_CHUNK_CHARS || DEFAULT_CHUNK_CHARS) ||
@@ -246,6 +254,7 @@ async function translateChunk({
   chunkIndex,
   chunkTotal,
   currentTranslatedTitle,
+  requestModel,
   retryFeedback = "",
 }) {
   if (!openaiApiKey) throw new Error("OPENAI_API_KEY is required.");
@@ -284,7 +293,7 @@ async function translateChunk({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: requestModel,
       instructions,
       input,
       store: false,
@@ -432,6 +441,7 @@ async function saveRevision({
   document,
   translatedTitle,
   translatedWikitext,
+  translationModelLabel,
 }) {
   const latest = await fetchDocument(document.id);
   if (!latest) throw new Error("source document disappeared");
@@ -457,7 +467,7 @@ async function saveRevision({
       p_content_wikitext: translatedWikitext,
       p_content_language: "en",
       p_summary: "Automated English translation from canonical NamuMark",
-      p_editor_label: "pipeline:" + model,
+      p_editor_label: "pipeline:" + translationModelLabel,
     }),
   });
 
@@ -474,7 +484,7 @@ async function saveRevision({
     body: JSON.stringify({
       translated_title: translatedTitle || document.source_title,
       translation_status: "translated_by_chatgpt",
-      translation_version: TRANSLATION_VERSION + ":" + model,
+      translation_version: TRANSLATION_VERSION + ":" + translationModelLabel,
       translated_at: now,
       translation_source_hash: latestSourceHash,
       updated_at: now,
@@ -485,6 +495,7 @@ async function saveRevision({
 }
 
 async function processJob(job) {
+  const requestModel = modelForAttempt(job.attempt);
   const document = await fetchDocument(job.source_document_id);
   if (!document) throw new Error("source_document_not_found");
   if (!document.source_wikitext) throw new Error("missing_canonical_raw");
@@ -519,7 +530,7 @@ async function processJob(job) {
     checkpoint: {
       ...checkpoint,
       sourceHash,
-      model,
+      model: requestModel,
       chunkChars,
       chunkTotal: chunks.length,
       workspace: path.relative(dataRoot, dir),
@@ -558,6 +569,7 @@ async function processJob(job) {
         chunkIndex: index,
         chunkTotal: chunks.length,
         currentTranslatedTitle: translatedTitle,
+        requestModel,
         retryFeedback: lastValidation
           ? lastValidation.errors.join(", ")
           : "",
@@ -593,7 +605,7 @@ async function processJob(job) {
 
     checkpoint = {
       sourceHash,
-      model,
+      model: requestModel,
       chunkChars,
       chunkTotal: chunks.length,
       completedChunks: index + 1,
@@ -640,10 +652,19 @@ async function processJob(job) {
     "utf8",
   );
 
+  const modelsUsed = [
+    ...new Set([
+      ...(Array.isArray(checkpoint.modelsUsed) ? checkpoint.modelsUsed : []),
+      requestModel,
+    ]),
+  ];
+
   const revision = await saveRevision({
     document,
     translatedTitle,
     translatedWikitext,
+    translationModelLabel:
+      modelsUsed.length === 1 ? modelsUsed[0] : "mixed(" + modelsUsed.join(",") + ")",
   });
 
   await updateJob(job.id, {
@@ -656,6 +677,7 @@ async function processJob(job) {
       translatedTitle,
       inputTokens,
       outputTokens,
+      modelsUsed,
       revision,
       completedAt: new Date().toISOString(),
     },
@@ -673,7 +695,7 @@ async function processJob(job) {
       " · chunks=" +
       chunks.length +
       " · model=" +
-      model +
+      (modelsUsed.length === 1 ? modelsUsed[0] : modelsUsed.join("+")) +
       " · tokens=" +
       inputTokens +
       "/" +
@@ -756,8 +778,8 @@ if (recovered > 0) {
 console.log(
   "Kpoparkive Translation Worker · " +
     workerId +
-    " · model=" +
-    model +
+    " · model-policy=" +
+    (forcedModel || "Luna->Terra->Sol") +
     " · run=" +
     runId,
 );
