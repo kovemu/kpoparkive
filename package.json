@@ -34,7 +34,8 @@
     "namu:source-worker": "node scripts/namu-source-worker.mjs",
     "namu:publish-worker": "node scripts/namu-publish-worker.mjs",
     "namu:integration-worker": "node scripts/namu-integration-worker.mjs",
-    "namu:scope": "node scripts/namu-scope.mjs"
+    "namu:scope": "node scripts/namu-scope.mjs",
+    "namu:raw-worker": "node scripts/namu-raw-worker.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
