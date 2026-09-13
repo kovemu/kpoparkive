@@ -18,6 +18,7 @@ jobs:
     env:
       NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
       KPOPARKIVE_BASE_URL: "https://kpoparkive.vercel.app"
+      KPOPARKIVE_FORCE_DOM_FALLBACK_UNTRANSLATED: "1"
 
     steps:
       - uses: actions/checkout@v4
