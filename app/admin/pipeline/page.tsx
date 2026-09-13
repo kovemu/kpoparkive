@@ -1,0 +1,568 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+const ADMIN_KEY_STORAGE = "kpoparkive:namu-admin-key";
+
+type RootRow = {
+  rootTitle: string;
+  updatedAt?: string | null;
+};
+
+type CollectionCheck = {
+  rootTitle: string;
+  clusterDocuments: number;
+  coreCount: number;
+  templateDependencyCount: number;
+  needsRawCount: number;
+  missingRaw?: Array<{
+    title: string;
+    priority: number;
+    reasons?: string[];
+  }>;
+};
+
+type RunStatus = {
+  id: string;
+  root_title: string;
+  status: string;
+  scope_count: number;
+  completed_count: number;
+  failed_count: number;
+  review_count: number;
+  runner_id?: string | null;
+  heartbeat_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+type StatusResponse = {
+  run?: RunStatus | null;
+  jobsSummary?: {
+    byStage?: Record<string, Record<string, number>>;
+    review?: Array<{
+      id: string;
+      source_title: string;
+      stage: string;
+      status: string;
+      attempt: number;
+      max_attempts: number;
+      chunk_current: number;
+      chunk_total: number;
+      last_error?: string | null;
+    }>;
+  };
+  logTail?: string;
+};
+
+const stageOrder = [
+  "source_render",
+  "translation",
+  "en_render",
+  "publish",
+  "integration_qa",
+];
+
+const stageLabel: Record<string, string> = {
+  source_render: "원문 렌더",
+  translation: "영문 번역",
+  en_render: "영문 렌더",
+  publish: "게시",
+  integration_qa: "최종 QA",
+};
+
+function countStage(values?: Record<string, number>) {
+  if (!values) return 0;
+  return Object.values(values).reduce((sum, value) => sum + Number(value || 0), 0);
+}
+
+export default function PipelineAdminPage() {
+  const [adminKey, setAdminKey] = useState("");
+  const [rootTitle, setRootTitle] = useState("");
+  const [roots, setRoots] = useState<RootRow[]>([]);
+  const [collection, setCollection] = useState<CollectionCheck | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [message, setMessage] = useState("확장프로그램 수집 완료 후 팀을 선택하세요.");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(ADMIN_KEY_STORAGE);
+      if (saved) setAdminKey(saved);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!adminKey) return;
+    try {
+      window.localStorage.setItem(ADMIN_KEY_STORAGE, adminKey);
+    } catch {}
+  }, [adminKey]);
+
+  const headers = useMemo(
+    () => ({
+      "Content-Type": "application/json",
+      "x-admin-key": adminKey,
+    }),
+    [adminKey],
+  );
+
+  async function api(path: string, init: RequestInit = {}) {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        ...headers,
+        ...(init.headers || {}),
+      },
+      cache: "no-store",
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      const error = new Error(result.error || "Request failed") as Error & {
+        payload?: any;
+        status?: number;
+      };
+      error.payload = result;
+      error.status = response.status;
+      throw error;
+    }
+
+    return result;
+  }
+
+  async function loadRoots() {
+    if (!adminKey) return;
+
+    try {
+      const result = await api("/api/admin/pipeline-control");
+      setRoots(Array.isArray(result.roots) ? result.roots : []);
+
+      if (!rootTitle && result.roots?.[0]?.rootTitle) {
+        setRootTitle(result.roots[0].rootTitle);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "팀 목록 조회 실패");
+    }
+  }
+
+  async function refreshStatus() {
+    if (!adminKey || !rootTitle) return;
+
+    try {
+      const result = await api(
+        "/api/admin/pipeline-control?root=" + encodeURIComponent(rootTitle),
+      );
+      setStatus(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "상태 조회 실패");
+    }
+  }
+
+  useEffect(() => {
+    void loadRoots();
+  }, [adminKey]);
+
+  useEffect(() => {
+    setCollection(null);
+    setStatus(null);
+    if (!adminKey || !rootTitle) return;
+
+    void refreshStatus();
+
+    const timer = window.setInterval(() => {
+      void refreshStatus();
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [adminKey, rootTitle]);
+
+  async function runAction(action: "check" | "start" | "retry" | "stop") {
+    if (!rootTitle || !adminKey) return;
+
+    setBusy(true);
+
+    try {
+      if (action === "check") {
+        setMessage("수집된 DOM/RAW 상태를 검사하는 중...");
+      } else if (action === "start") {
+        setMessage("후처리 자동화를 시작하는 중...");
+      } else if (action === "retry") {
+        setMessage("REVIEW 문서를 다시 큐에 넣는 중...");
+      } else {
+        setMessage("로컬 pipeline을 중지하는 중...");
+      }
+
+      const result = await api("/api/admin/pipeline-control", {
+        method: "POST",
+        body: JSON.stringify({ action, rootTitle }),
+      });
+
+      if (result.collection) setCollection(result.collection);
+
+      if (action === "check") {
+        setMessage(
+          result.ready
+            ? "수집 완료. 자동 처리를 시작할 수 있습니다."
+            : "수집이 덜 끝났습니다. 누락 RAW를 확장프로그램에서 먼저 수집하세요.",
+        );
+      } else if (action === "start") {
+        setMessage(
+          result.alreadyRunning
+            ? "이미 실행 중입니다."
+            : "자동 처리를 시작했습니다. 이제 번역 → 렌더 → 게시 → QA가 자동 진행됩니다.",
+        );
+      } else if (action === "retry") {
+        setMessage("REVIEW 문서를 재시도하도록 시작했습니다.");
+      } else {
+        setMessage("pipeline을 일시 중지했습니다.");
+      }
+
+      await refreshStatus();
+    } catch (error: any) {
+      if (error?.payload?.collection) {
+        setCollection(error.payload.collection);
+      }
+
+      if (error?.payload?.code === "COLLECTION_REQUIRED") {
+        setMessage(
+          "수집 불완전: 아래 누락 RAW를 확장프로그램에서 수집한 뒤 다시 확인하세요.",
+        );
+      } else {
+        setMessage(error instanceof Error ? error.message : "작업 실패");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const run = status?.run || null;
+  const byStage = status?.jobsSummary?.byStage || {};
+  const review = status?.jobsSummary?.review || [];
+
+  const collectionReady =
+    collection != null && Number(collection.needsRawCount || 0) === 0;
+
+  const progress =
+    run && Number(run.scope_count || 0) > 0
+      ? Math.round(
+          (Number(run.completed_count || 0) / Number(run.scope_count || 1)) *
+            100,
+        )
+      : 0;
+
+  function forgetAdminKey() {
+    try {
+      window.localStorage.removeItem(ADMIN_KEY_STORAGE);
+    } catch {}
+    setAdminKey("");
+    setRoots([]);
+    setCollection(null);
+    setStatus(null);
+    setMessage("저장된 Admin key를 지웠습니다.");
+  }
+
+  return (
+    <main className="adminShell">
+      <section className="adminPanel">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
+          <div>
+            <h1>Kpoparkive 자동 처리</h1>
+            <p className="adminIntro">
+              NamuWiki 수집은 기존 Chrome 확장프로그램에서 직접 시작합니다.
+              이 화면은 수집 완료 후 번역·QA·렌더·게시만 자동 처리합니다.
+            </p>
+          </div>
+          <a href="/admin/namu-import">Importer</a>
+        </div>
+
+        <div
+          style={{
+            padding: 14,
+            border: "1px solid rgba(127,127,127,.3)",
+            borderRadius: 10,
+            marginBottom: 18,
+          }}
+        >
+          <strong>운영 순서</strong>
+          <div style={{ marginTop: 8, lineHeight: 1.7 }}>
+            ① 확장프로그램으로 DOM/RAW 수집 → ② 여기서 수집 상태 확인 →
+            ③ 자동 처리 시작 → ④ REVIEW가 생긴 문서만 확인
+          </div>
+        </div>
+
+        <div className="adminForm">
+          <label>
+            Admin key
+            <input
+              type="password"
+              value={adminKey}
+              onChange={(event) => setAdminKey(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+
+          <button type="button" disabled={!adminKey} onClick={forgetAdminKey}>
+            저장된 key 지우기
+          </button>
+
+          <label>
+            수집 완료된 팀
+            <input
+              list="pipeline-roots"
+              value={rootTitle}
+              onChange={(event) => setRootTitle(event.target.value)}
+              placeholder="예: BLACKPINK"
+            />
+            <datalist id="pipeline-roots">
+              {roots.map((item) => (
+                <option key={item.rootTitle} value={item.rootTitle} />
+              ))}
+            </datalist>
+          </label>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={busy || !adminKey || !rootTitle}
+              onClick={() => void runAction("check")}
+            >
+              수집 상태 확인
+            </button>
+
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !adminKey ||
+                !rootTitle ||
+                !collectionReady ||
+                run?.status === "running"
+              }
+              onClick={() => void runAction("start")}
+            >
+              자동 처리 시작
+            </button>
+
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !adminKey ||
+                !rootTitle ||
+                !["paused", "failed"].includes(String(run?.status || ""))
+              }
+              onClick={() => void runAction("retry")}
+            >
+              REVIEW 재시도
+            </button>
+
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !adminKey ||
+                !rootTitle ||
+                run?.status !== "running"
+              }
+              onClick={() => void runAction("stop")}
+            >
+              일시 중지
+            </button>
+          </div>
+        </div>
+
+        <pre className="adminStatus" style={{ whiteSpace: "pre-wrap" }}>
+          {message}
+        </pre>
+
+        {collection && (
+          <section style={{ marginTop: 22 }}>
+            <h2>수집 상태</h2>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: 10,
+              }}
+            >
+              {[
+                ["수집 문서", collection.clusterDocuments],
+                ["Core 문서", collection.coreCount],
+                ["Template 의존성", collection.templateDependencyCount],
+                ["누락 RAW", collection.needsRawCount],
+              ].map(([label, value]) => (
+                <div
+                  key={String(label)}
+                  style={{
+                    border: "1px solid rgba(127,127,127,.3)",
+                    borderRadius: 10,
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ opacity: 0.7, fontSize: 13 }}>{label}</div>
+                  <div style={{ fontSize: 26, fontWeight: 800 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {Number(collection.needsRawCount || 0) > 0 && (
+              <details open style={{ marginTop: 14 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                  확장프로그램에서 추가 수집해야 할 RAW
+                </summary>
+                <ul>
+                  {(collection.missingRaw || []).slice(0, 60).map((item) => (
+                    <li key={item.title}>
+                      {item.title}
+                      {item.reasons?.length
+                        ? " · " + item.reasons.join(", ")
+                        : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </section>
+        )}
+
+        <section style={{ marginTop: 26 }}>
+          <h2>자동 처리 진행률</h2>
+
+          {!run ? (
+            <p>아직 pipeline run이 없습니다.</p>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginBottom: 8,
+                }}
+              >
+                <strong>
+                  {run.status.toUpperCase()} · {run.completed_count}/
+                  {run.scope_count}
+                </strong>
+                <span>
+                  REVIEW {run.review_count} · FAILED {run.failed_count}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  height: 10,
+                  borderRadius: 999,
+                  overflow: "hidden",
+                  background: "rgba(127,127,127,.2)",
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    width: progress + "%",
+                    minWidth: progress > 0 ? 4 : 0,
+                    height: "100%",
+                    background: "currentColor",
+                    transition: "width .2s ease",
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                {stageOrder.map((stage) => {
+                  const values = byStage[stage] || {};
+                  const total = countStage(values);
+                  const pass = Number(values.pass || 0);
+                  const active =
+                    Number(values.running || 0) +
+                    Number(values.queued || 0) +
+                    Number(values.retry || 0);
+
+                  return (
+                    <div
+                      key={stage}
+                      style={{
+                        border: "1px solid rgba(127,127,127,.3)",
+                        borderRadius: 10,
+                        padding: 14,
+                      }}
+                    >
+                      <div style={{ fontWeight: 700 }}>
+                        {stageLabel[stage] || stage}
+                      </div>
+                      <div style={{ marginTop: 7 }}>
+                        {pass}/{total || 0} PASS
+                      </div>
+                      <small style={{ opacity: 0.7 }}>
+                        진행/대기 {active}
+                      </small>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+
+        {review.length > 0 && (
+          <section style={{ marginTop: 26 }}>
+            <h2>사람 확인 필요</h2>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th align="left">문서</th>
+                    <th align="left">단계</th>
+                    <th align="left">상태</th>
+                    <th align="left">오류</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {review.map((job) => (
+                    <tr key={job.id}>
+                      <td style={{ padding: "8px 6px" }}>{job.source_title}</td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {stageLabel[job.stage] || job.stage}
+                      </td>
+                      <td style={{ padding: "8px 6px" }}>{job.status}</td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {job.last_error || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        <details style={{ marginTop: 26 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+            로컬 worker 로그
+          </summary>
+          <pre
+            className="adminStatus"
+            style={{
+              marginTop: 10,
+              maxHeight: 420,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {status?.logTail || "로그 없음"}
+          </pre>
+        </details>
+      </section>
+    </main>
+  );
+}
