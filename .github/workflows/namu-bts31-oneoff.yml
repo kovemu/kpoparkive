@@ -38,19 +38,14 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           ln -s /tmp/kpop-deps/node_modules node_modules
 
-      - name: Acquire GitHub OIDC token for Supabase render proxy
-        shell: bash
-        run: |
-          set -euo pipefail
-          token_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
-          token="$(printf '%s' "$token_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
-          echo "::add-mask::$token"
-          echo "SUPABASE_SERVICE_ROLE_KEY=$token" >> "$GITHUB_ENV"
-
       - name: Render canonical source for 31 articles
         shell: bash
         run: |
           set -euo pipefail
+          fresh_token() {
+            curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31" |
+              node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))'
+          }
           titles=(
           "A.R.M.Y"
           "RM"
@@ -86,13 +81,19 @@ jobs:
           )
           for title in "${titles[@]}"; do
             echo "=== SOURCE RENDER: $title ==="
-            npm run namu:engine-thetree-compat -- "$title"
+            token="$(fresh_token)"
+            echo "::add-mask::$token"
+            SUPABASE_SERVICE_ROLE_KEY="$token" npm run namu:engine-thetree-compat -- "$title"
           done
 
       - name: Render English content for 31 articles
         shell: bash
         run: |
           set -euo pipefail
+          fresh_token() {
+            curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31" |
+              node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))'
+          }
           titles=(
           "A.R.M.Y"
           "RM"
@@ -128,14 +129,34 @@ jobs:
           )
           for title in "${titles[@]}"; do
             echo "=== ENGLISH RENDER: $title ==="
-            npm run namu:engine-thetree-content -- "$title"
+            token="$(fresh_token)"
+            echo "::add-mask::$token"
+            SUPABASE_SERVICE_ROLE_KEY="$token" npm run namu:engine-thetree-content -- "$title"
           done
 
       - name: Prepublish integration QA
-        run: npm run namu:integration-qa -- 방탄소년단 --prepublish --strict --expected-count=31
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
+          token="$(printf '%s' "$token_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
+          echo "::add-mask::$token"
+          SUPABASE_SERVICE_ROLE_KEY="$token" npm run namu:integration-qa -- 방탄소년단 --prepublish --strict --expected-count=31
 
       - name: Publish 31-article BTS scope
-        run: npm run namu:publish -- --root=방탄소년단
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
+          token="$(printf '%s' "$token_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
+          echo "::add-mask::$token"
+          SUPABASE_SERVICE_ROLE_KEY="$token" npm run namu:publish -- --root=방탄소년단
 
       - name: Final integration QA
-        run: npm run namu:integration-qa -- 방탄소년단 --strict --expected-count=31
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
+          token="$(printf '%s' "$token_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
+          echo "::add-mask::$token"
+          SUPABASE_SERVICE_ROLE_KEY="$token" npm run namu:integration-qa -- 방탄소년단 --strict --expected-count=31
