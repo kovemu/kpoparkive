@@ -266,6 +266,7 @@ async function translateChunk({
     "Preserve NamuMark structure exactly.",
     "Never change internal-link targets. You may translate only the visible label after |.",
     "Never change file/image targets, URLs, template/include names, YouTube IDs, CSS, HTML attributes, table delimiters, folding syntax, anchors, or control syntax.",
+    "Never change template parameter names or placeholders such as @name@, @1@, {{{#...}}}, or other substitution tokens. Translate only their user-visible values when appropriate.",
     "Translate all user-visible Korean text, including headings, tables, folding content, footnotes, captions, labels, program/place/person display values, and visible template parameter values.",
     "If an internal link has a Korean target with no explicit label and would render Korean visibly, preserve the target and add an English visible label using [[target|English label]].",
     "Use established official English names and romanizations for K-pop artists, releases, companies, broadcasts, venues, and fandoms when known.",
@@ -530,6 +531,9 @@ async function processJob(job) {
   if (!document) throw new Error("source_document_not_found");
   if (!document.source_wikitext) throw new Error("missing_canonical_raw");
 
+  const templateDocument = /^(?:틀|Template):/i.test(
+    String(document.source_title || ""),
+  );
   const sourceHash = document.source_hash || sha256(document.source_wikitext);
   const chunks = makeChunks(document.source_wikitext, chunkChars);
   const dir = jobDir(job);
@@ -538,6 +542,21 @@ async function processJob(job) {
 
   let checkpoint =
     job.checkpoint && typeof job.checkpoint === "object" ? job.checkpoint : {};
+
+  if (checkpoint.forceRetranslate === true) {
+    for (const name of fs.readdirSync(chunksDir)) {
+      if (name.endsWith(".txt")) {
+        fs.unlinkSync(path.join(chunksDir, name));
+      }
+    }
+
+    checkpoint = {
+      ...checkpoint,
+      completedChunks: 0,
+      forceRetranslate: false,
+      forcedAt: new Date().toISOString(),
+    };
+  }
 
   if (
     checkpoint.sourceHash &&
@@ -549,8 +568,17 @@ async function processJob(job) {
     checkpoint = {};
   }
 
-  let translatedTitle =
-    String(checkpoint.translatedTitle || document.translated_title || "").trim();
+  let translatedTitle = templateDocument
+    ? String(document.source_title || "").trim()
+    : String(
+        checkpoint.translatedTitle ||
+          document.translated_title ||
+          "",
+      ).trim();
+
+  const downstreamFeedback = Array.isArray(checkpoint.renderFeedback)
+    ? checkpoint.renderFeedback.join(", ")
+    : String(checkpoint.renderFeedback || "").trim();
   let inputTokens = Number(checkpoint.inputTokens || 0);
   let outputTokens = Number(checkpoint.outputTokens || 0);
   let modelsUsed = [
@@ -613,7 +641,7 @@ async function processJob(job) {
         requestModel,
         retryFeedback: lastValidation
           ? lastValidation.errors.join(", ")
-          : "",
+          : downstreamFeedback,
       });
 
       const validation = validateStructure(
@@ -698,7 +726,9 @@ async function processJob(job) {
 
   const revision = await saveRevision({
     document,
-    translatedTitle,
+    translatedTitle: templateDocument
+      ? document.source_title
+      : translatedTitle,
     translatedWikitext,
     translationModelLabel:
       modelsUsed.length === 1 ? modelsUsed[0] : "mixed(" + modelsUsed.join(",") + ")",
