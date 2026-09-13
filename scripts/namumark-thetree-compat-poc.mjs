@@ -90,6 +90,54 @@ function safeInlineWikiText(value) {
     .trim();
 }
 
+function cleanEnglishDisplayLabel(value) {
+  const label = safeInlineWikiText(value)
+    .replace(/^'''|'''$/g, "")
+    .replace(/^''|''$/g, "")
+    .trim();
+  if (!label || /[가-힣]/.test(label)) return "";
+  if (/\[\[|\]\]|\{\{\{|\}\}\}|\[include\(/i.test(label)) return "";
+  return label;
+}
+
+function buildEnglishDisplayLabelMap(rows = []) {
+  const map = new Map([
+    ["대한민국", "South Korea"],
+    ["일본", "Japan"],
+    ["미국", "United States"],
+    ["중국", "China"],
+    ["영국", "United Kingdom"],
+    ["필리핀", "Philippines"],
+    ["싱가포르", "Singapore"],
+    ["태국", "Thailand"],
+    ["인도네시아", "Indonesia"],
+    ["멕시코", "Mexico"],
+    ["네덜란드", "Netherlands"],
+    ["마카오", "Macau"],
+  ]);
+
+  const set = (target, label) => {
+    const key = normalizeWikiTitleFragment(target).replace(/^:/, "").split("#")[0];
+    const english = cleanEnglishDisplayLabel(label);
+    if (!key || !english || map.has(key)) return;
+    map.set(key, english);
+  };
+
+  for (const row of rows || []) {
+    set(row?.source_title, row?.translated_title);
+    const source = String(row?.source_wikitext || "");
+    const re = /\[\[([^\[\]|#]+)(?:#[^\]|]*)?\|([^\[\]]+)\]\]/g;
+    let match;
+    while ((match = re.exec(source))) set(match[1], match[2]);
+  }
+  return map;
+}
+
+function englishDisplayLabel(target, labelMap) {
+  const key = normalizeWikiTitleFragment(target).replace(/^:/, "").split("#")[0];
+  return cleanEnglishDisplayLabel(labelMap?.get(key)) || "";
+}
+
 function englishUtilityLabel(value) {
   const normalized = normalizeWikiTitleFragment(value);
   const labels = new Map([
@@ -125,7 +173,9 @@ function expandKnownUtilityIncludes(source, title, local, options = {}) {
         if (!parent) return full;
         local.parentDocumentIncludesExpanded += 1;
         const prefix = english ? "Parent document" : "상위 문서";
-        return `{{{-2 ↑ '''${prefix}:''' [[${parent}]]}}}`;
+        const parentLabel = english ? englishDisplayLabel(parent, options.englishDisplayLabelMap) : "";
+        const parentLink = parentLabel ? `[[${parent}|${parentLabel}]]` : `[[${parent}]]`;
+        return `{{{-2 ↑ '''${prefix}:''' ${parentLink}}}}`;
       }
 
       if (lower === "틀:문서 가져옴" || lower === "template:문서 가져옴") {
@@ -141,7 +191,9 @@ function expandKnownUtilityIncludes(source, title, local, options = {}) {
           : "";
         if (english) {
           const history = historyUrl ? ` [${historyUrl} View earlier history]` : "";
-          return `{{{-2 This document incorporates material from [[${sourceTitle}]] revision${revision} on NamuWiki.${history}}}}`;
+          const sourceLabel = englishDisplayLabel(sourceTitle, options.englishDisplayLabelMap);
+          const sourceLink = sourceLabel ? `[[${sourceTitle}|${sourceLabel}]]` : `[[${sourceTitle}]]`;
+          return `{{{-2 This document incorporates material from ${sourceLink} revision${revision} on NamuWiki.${history}}}}`;
         }
         const history = historyUrl ? ` [${historyUrl} 이전 역사 보러 가기]` : "";
         return `{{{-2 이 문서는 [[${sourceTitle}]] 문서의${revision} 판에서 가져왔습니다.${history}}}}`;
@@ -452,6 +504,7 @@ globalThis.fetch = async (input, init = undefined) => {
         .map((row) => normalizeWikiTitleFragment(row?.source_title || ""))
         .filter((value) => /^(?:틀|Template):/i.test(value)),
     );
+    const englishDisplayLabelMap = buildEnglishDisplayLabelMap(rows);
     const hasYouTubeIconTemplate = availableTemplateTitles.has("틀:유튜브 아이콘");
     compatibilityStats.youtubeIconTemplateAvailable = hasYouTubeIconTemplate;
 
@@ -464,6 +517,7 @@ globalThis.fetch = async (input, init = undefined) => {
         ? applyCompatibility(row.source_wikitext, row.source_title || "", {
           expandMissingYouTubeIconTemplate: !hasYouTubeIconTemplate,
           availableTemplateTitles,
+          englishDisplayLabelMap,
           renderContent: Boolean(process.env.KPOPARKIVE_RENDER_CONTENT),
         })
         : row?.source_wikitext,
