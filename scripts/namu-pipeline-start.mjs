@@ -23,21 +23,16 @@ const rootTitle = (
 
 const resumeRunId = valueArg("resume");
 const dryRun = args.includes("--dry-run");
-const skipImport = args.includes("--skip-import");
 const skipHttp = args.includes("--skip-http");
-const refreshImport = args.includes("--refresh-import");
 const retryReview = args.includes("--retry-review");
 const runnerId =
   valueArg("runner-id") ||
   "runner-" + process.pid + "-" + Date.now().toString(36);
 
-const maxDepth = Math.max(0, Math.min(4, Number(valueArg("max-depth") || 2) || 2));
-const maxDocuments = Math.max(
-  10,
-  Math.min(200, Number(valueArg("max-documents") || 80) || 80),
+const maxCore = Math.max(
+  5,
+  Math.min(60, Number(valueArg("max-core") || 40) || 40),
 );
-const maxCore = Math.max(5, Math.min(60, Number(valueArg("max-core") || 40) || 40));
-
 const translateWorkers = Math.max(
   1,
   Math.min(20, Number(valueArg("translate-workers") || 5) || 5),
@@ -57,7 +52,7 @@ const integrationWorkers = Math.max(
 
 if (!rootTitle && !resumeRunId) {
   console.error(
-    'Usage: npm run namu:pipeline:start -- --root="BLACKPINK" [--dry-run]',
+    'Usage: npm run namu:pipeline:start -- --root="BLACKPINK"',
   );
   console.error(
     "   or: npm run namu:pipeline:start -- --resume=<pipeline-run-id>",
@@ -69,8 +64,6 @@ requireServiceRole();
 
 const children = new Map();
 let stopping = false;
-let ownedNext = null;
-let ownedCaptureHelper = null;
 let activeRunId = resumeRunId || "";
 let activeRootTitle = rootTitle || "";
 let lastProgressLine = "";
@@ -79,38 +72,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJson(url, init = {}) {
-  const response = await fetch(url, {
-    ...init,
-    cache: "no-store",
-  });
-  const text = await response.text();
-  let body = {};
-  try {
-    body = text ? JSON.parse(text) : {};
-  } catch {
-    body = { raw: text };
-  }
-  if (!response.ok) {
-    throw new Error(
-      "HTTP " +
-        response.status +
-        " " +
-        url +
-        ": " +
-        String(body?.error || body?.raw || text).slice(0, 1200),
-    );
-  }
-  return body;
-}
-
-function spawnNode(label, script, scriptArgs = [], env = {}) {
+function spawnNode(label, script, scriptArgs = []) {
   const child = spawn(
     process.execPath,
     [path.resolve(ROOT, script), ...scriptArgs],
     {
       cwd: ROOT,
-      env: { ...process.env, ...env },
+      env: process.env,
       stdio: ["ignore", "inherit", "inherit"],
     },
   );
@@ -120,6 +88,7 @@ function spawnNode(label, script, scriptArgs = [], env = {}) {
   child.on("exit", (code, signal) => {
     if (children.get(label) === child) children.delete(label);
     if (stopping) return;
+
     console.warn(
       "WORKER EXIT " +
         label +
@@ -131,9 +100,7 @@ function spawnNode(label, script, scriptArgs = [], env = {}) {
 
     if ((code ?? 0) !== 0) {
       setTimeout(() => {
-        if (!stopping && activeRunId) {
-          startManagedWorker(label);
-        }
+        if (!stopping && activeRunId) startManagedWorker(label);
       }, 3000).unref();
     }
   });
@@ -142,9 +109,6 @@ function spawnNode(label, script, scriptArgs = [], env = {}) {
 }
 
 function workerSpec(label) {
-  if (label === "raw-1") {
-    return ["scripts/namu-raw-worker.mjs", ["--run=" + activeRunId]];
-  }
   if (label.startsWith("source-")) {
     return ["scripts/namu-source-worker.mjs", ["--run=" + activeRunId]];
   }
@@ -170,159 +134,6 @@ function startManagedWorker(label) {
   if (!spec) return null;
   if (children.has(label)) return children.get(label);
   return spawnNode(label, spec[0], spec[1]);
-}
-
-async function helperAlive() {
-  try {
-    const response = await fetch("http://127.0.0.1:43117/clone/status", {
-      cache: "no-store",
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureCaptureHelper() {
-  if (await helperAlive()) {
-    console.log("Capture helper: already running");
-    return;
-  }
-
-  console.log("Capture helper: starting");
-  ownedCaptureHelper = spawnNode(
-    "__capture-helper__",
-    "scripts/namu-capture-helper-all.mjs",
-    [],
-  );
-
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (await helperAlive()) return;
-    await sleep(500);
-  }
-  throw new Error("capture helper did not become ready on 127.0.0.1:43117");
-}
-
-async function nextAlive() {
-  try {
-    const response = await fetch("http://127.0.0.1:3000/", {
-      redirect: "manual",
-      cache: "no-store",
-    });
-    return response.status >= 200 && response.status < 500;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureNextDev() {
-  if (await nextAlive()) {
-    console.log("Next.js: already running on :3000");
-    return;
-  }
-
-  const nextBin = path.resolve(
-    ROOT,
-    "node_modules",
-    "next",
-    "dist",
-    "bin",
-    "next",
-  );
-
-  console.log("Next.js: starting local dev server for admin import");
-  ownedNext = spawnNode("__next-dev__", nextBin, ["dev"]);
-
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    if (await nextAlive()) return;
-    await sleep(500);
-  }
-
-  throw new Error("local Next.js did not become ready on :3000");
-}
-
-async function rootDocuments() {
-  if (!activeRootTitle) return [];
-  return (
-    (await pipelineDb(
-      "source_documents?root_title=eq." +
-        encodeURIComponent(activeRootTitle) +
-        "&select=id,source_title,crawl_depth,source_wikitext,raw_extracted_at" +
-        "&order=crawl_depth.asc,source_title.asc",
-    )) || []
-  );
-}
-
-async function bootstrapImport() {
-  const existing = await rootDocuments();
-  if (existing.length > 0 && !refreshImport) {
-    console.log(
-      "Initial import: reuse " +
-        existing.length +
-        " existing source document(s) for " +
-        activeRootTitle,
-    );
-    return;
-  }
-
-  if (skipImport) {
-    if (!existing.length) {
-      throw new Error(
-        "No source_documents exist for " +
-          activeRootTitle +
-          " and --skip-import was supplied.",
-      );
-    }
-    return;
-  }
-
-  const adminKey = process.env.KPOPARKIVE_ADMIN_KEY || "";
-  if (!adminKey) {
-    throw new Error(
-      "KPOPARKIVE_ADMIN_KEY is required for automatic initial import.",
-    );
-  }
-
-  await ensureNextDev();
-
-  console.log(
-    "Initial import: " +
-      activeRootTitle +
-      " depth=" +
-      maxDepth +
-      " maxDocs=" +
-      maxDocuments,
-  );
-
-  const result = await fetchJson(
-    "http://127.0.0.1:3000/api/admin/namu-import",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": adminKey,
-      },
-      body: JSON.stringify({
-        rootTitle: activeRootTitle,
-        maxDepth,
-        maxDocuments,
-      }),
-    },
-  );
-
-  console.log(
-    "Initial import complete: fetched=" +
-      Number(result?.fetched || 0) +
-      " errors=" +
-      Number(result?.errors || 0) +
-      " queuedImages=" +
-      Number(result?.queuedImages || 0),
-  );
-
-  const after = await rootDocuments();
-  if (!after.length) {
-    throw new Error("Initial import returned but no source documents exist.");
-  }
 }
 
 function runNodeCapture(script, scriptArgs = []) {
@@ -363,7 +174,8 @@ function runNodeCapture(script, scriptArgs = []) {
 }
 
 async function generateScope() {
-  console.log("Core scope: generating deterministic release scope");
+  console.log("Collection check: building core scope from captured documents");
+
   const stdout = await runNodeCapture("scripts/namu-scope.mjs", [
     "--root=" + encodeURIComponent(activeRootTitle),
     "--max-core=" + maxCore,
@@ -372,14 +184,45 @@ async function generateScope() {
   ]);
 
   const parsed = JSON.parse(stdout);
+
   console.log(
-    "Core scope: " +
+    "Collection check: core=" +
       parsed.coreCount +
-      " article(s), template dependencies=" +
+      " templates=" +
       parsed.templateDependencyCount +
-      ", needsRaw=" +
+      " missingRAW=" +
       parsed.needsRawCount,
   );
+
+  if (Number(parsed.needsRawCount || 0) > 0) {
+    const missing = (
+      await pipelineDb(
+        "namu_raw_requirements?root_title=eq." +
+          encodeURIComponent(activeRootTitle) +
+          "&status=eq.needs_raw" +
+          "&select=source_title,priority,reason_codes" +
+          "&order=priority.desc,source_title.asc" +
+          "&limit=100",
+      )
+    ) || [];
+
+    console.error("");
+    console.error(
+      "COLLECTION_REQUIRED " +
+        activeRootTitle +
+        " · missing RAW=" +
+        parsed.needsRawCount,
+    );
+
+    for (const row of missing.slice(0, 30)) {
+      console.error("- " + row.source_title);
+    }
+
+    const error = new Error("manual_extension_collection_incomplete");
+    error.exitCode = 4;
+    throw error;
+  }
+
   return parsed;
 }
 
@@ -389,9 +232,42 @@ async function createPersistentRun() {
     "--persist",
     "--json",
   ]);
+
   const parsed = JSON.parse(stdout);
   const runId = parsed?.summary?.persistedRunId || "";
-  if (!runId) throw new Error("Pipeline controller did not return persistedRunId");
+  if (!runId) {
+    throw new Error("Pipeline controller did not return persistedRunId");
+  }
+
+  const rawJobs = (
+    await pipelineDb(
+      "pipeline_jobs?run_id=eq." +
+        encodeURIComponent(runId) +
+        "&stage=eq.raw&status=eq.queued&select=id,source_title&limit=100",
+    )
+  ) || [];
+
+  if (rawJobs.length > 0) {
+    await pipelineDb(
+      "pipeline_runs?id=eq." + encodeURIComponent(runId),
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          status: "cancelled",
+          finished_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+      },
+    );
+
+    const error = new Error(
+      "manual_extension_collection_incomplete_after_scope",
+    );
+    error.exitCode = 4;
+    throw error;
+  }
+
   return { runId, snapshot: parsed };
 }
 
@@ -424,6 +300,7 @@ async function claimRunLease(runId) {
       p_stale_seconds: 120,
     }),
   });
+
   if (typeof result === "boolean") return result;
   if (Array.isArray(result)) return Boolean(result[0]);
   return Boolean(result);
@@ -448,6 +325,7 @@ async function heartbeatRun(runId) {
 
 async function releaseRunLease(runId) {
   if (!runId) return;
+
   await pipelineDb(
     "pipeline_runs?id=eq." +
       encodeURIComponent(runId) +
@@ -470,7 +348,7 @@ async function recoverInterruptedJobs(runId) {
     "pipeline_jobs?run_id=eq." +
       encodeURIComponent(runId) +
       "&status=eq.running" +
-      "&select=id,source_title,stage",
+      "&select=id",
   );
 
   if (!rows?.length) return 0;
@@ -502,6 +380,7 @@ async function retryReviewJobs(runId) {
       "&status=in.(needs_review,failed)" +
       "&select=id",
   );
+
   if (!rows?.length) return 0;
 
   await pipelineDb(
@@ -520,12 +399,14 @@ async function retryReviewJobs(runId) {
       }),
     },
   );
+
   return rows.length;
 }
 
 async function setRunRunning(runId) {
   const current = await fetchRun(runId);
   const now = new Date().toISOString();
+
   await pipelineDb(
     "pipeline_runs?id=eq." +
       encodeURIComponent(runId) +
@@ -562,8 +443,6 @@ async function jobSummary(runId) {
 }
 
 function startWorkers() {
-  startManagedWorker("raw-1");
-
   for (let index = 1; index <= sourceWorkers; index += 1) {
     startManagedWorker("source-" + index);
   }
@@ -585,11 +464,13 @@ async function updatePausedIfStalled(run, jobs) {
   const runnable = jobs.filter((job) =>
     ["queued", "running", "retry"].includes(job.status),
   ).length;
+
   const reviewDocs = new Set(
     jobs
       .filter((job) => job.status === "needs_review")
       .map((job) => job.source_document_id),
   );
+
   const failedDocs = new Set(
     jobs
       .filter((job) => job.status === "failed")
@@ -601,16 +482,20 @@ async function updatePausedIfStalled(run, jobs) {
     Number(run.completed_count || 0) < Number(run.scope_count || 0) &&
     (reviewDocs.size > 0 || failedDocs.size > 0)
   ) {
-    await pipelineDb("pipeline_runs?id=eq." + encodeURIComponent(run.id), {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({
-        status: "paused",
-        review_count: reviewDocs.size,
-        failed_count: failedDocs.size,
-        updated_at: new Date().toISOString(),
-      }),
-    });
+    await pipelineDb(
+      "pipeline_runs?id=eq." + encodeURIComponent(run.id),
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          status: "paused",
+          review_count: reviewDocs.size,
+          failed_count: failedDocs.size,
+          updated_at: new Date().toISOString(),
+        }),
+      },
+    );
+
     return true;
   }
 
@@ -620,16 +505,18 @@ async function updatePausedIfStalled(run, jobs) {
 async function monitorRun() {
   while (!stopping) {
     const run = await fetchRun(activeRunId);
-    if (!run) throw new Error("pipeline run disappeared: " + activeRunId);
+    if (!run) {
+      throw new Error("pipeline run disappeared: " + activeRunId);
+    }
+
     if (run.runner_id && run.runner_id !== runnerId) {
-      throw new Error(
-        "pipeline runner lease lost to " + run.runner_id,
-      );
+      throw new Error("pipeline runner lease lost to " + run.runner_id);
     }
 
     await heartbeatRun(activeRunId);
 
     const { jobs, counts } = await jobSummary(activeRunId);
+
     const progressLine =
       "RUN " +
       activeRootTitle +
@@ -670,6 +557,7 @@ async function monitorRun() {
       const review = jobs.filter((job) =>
         ["needs_review", "failed"].includes(job.status),
       );
+
       console.log("");
       console.log(
         "PIPELINE PAUSED " +
@@ -677,6 +565,7 @@ async function monitorRun() {
           " · human review required=" +
           review.length,
       );
+
       for (const job of review.slice(0, 30)) {
         console.log(
           job.status.toUpperCase() +
@@ -687,6 +576,7 @@ async function monitorRun() {
             (job.last_error ? " · " + job.last_error : ""),
         );
       }
+
       return 3;
     }
 
@@ -700,9 +590,7 @@ function stopAll() {
   if (stopping) return;
   stopping = true;
 
-  for (const [label, child] of children.entries()) {
-    if (label === "__next-dev__" && child !== ownedNext) continue;
-    if (label === "__capture-helper__" && child !== ownedCaptureHelper) continue;
+  for (const child of children.values()) {
     try {
       child.kill("SIGTERM");
     } catch {}
@@ -713,6 +601,7 @@ process.on("SIGINT", () => {
   stopAll();
   setTimeout(() => process.exit(130), 200).unref();
 });
+
 process.on("SIGTERM", () => {
   stopAll();
   setTimeout(() => process.exit(143), 200).unref();
@@ -720,18 +609,10 @@ process.on("SIGTERM", () => {
 
 try {
   if (dryRun) {
-    console.log("Kpoparkive Pipeline Plan · DRY RUN");
+    console.log("Kpoparkive Post-Collection Pipeline · DRY RUN");
     console.log("root=" + (activeRootTitle || "(resume mode)"));
     console.log(
-      "import depth=" +
-        maxDepth +
-        " maxDocs=" +
-        maxDocuments +
-        " maxCore=" +
-        maxCore,
-    );
-    console.log(
-      "workers raw=1 source=" +
+      "workers source=" +
         sourceWorkers +
         " translate=" +
         translateWorkers +
@@ -740,13 +621,13 @@ try {
         " publish=1 integration=" +
         integrationWorkers,
     );
-    console.log("No database rows or source documents were modified.");
+    console.log("NamuWiki collection is not performed by this command.");
     process.exit(0);
   }
 
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
-      "OPENAI_API_KEY is required before production translation workers can start.",
+      "OPENAI_API_KEY is required before translation workers can start.",
     );
   }
 
@@ -754,12 +635,16 @@ try {
 
   if (resumeRunId) {
     const run = await fetchRun(resumeRunId);
-    if (!run) throw new Error("Pipeline run not found: " + resumeRunId);
+    if (!run) {
+      throw new Error("Pipeline run not found: " + resumeRunId);
+    }
+
     activeRunId = run.id;
     activeRootTitle = run.root_title;
     resumingExisting = true;
   } else {
     const existingRun = await findActiveRun(activeRootTitle);
+
     if (existingRun) {
       if (existingRun.status === "paused" && !retryReview) {
         console.error(
@@ -778,7 +663,6 @@ try {
   }
 
   if (!resumingExisting) {
-    await bootstrapImport();
     await generateScope();
 
     const created = await createPersistentRun();
@@ -792,6 +676,7 @@ try {
     );
   } else {
     const run = await fetchRun(activeRunId);
+
     console.log(
       "RESUME " +
         activeRootTitle +
@@ -803,6 +688,7 @@ try {
   }
 
   const leased = await claimRunLease(activeRunId);
+
   if (!leased) {
     const run = await fetchRun(activeRunId);
     throw new Error(
@@ -816,6 +702,7 @@ try {
     if (recovered > 0) {
       console.log("Recovered " + recovered + " interrupted job(s).");
     }
+
     if (retryReview) {
       const retried = await retryReviewJobs(activeRunId);
       if (retried > 0) {
@@ -825,18 +712,21 @@ try {
   }
 
   await setRunRunning(activeRunId);
-  await ensureCaptureHelper();
   startWorkers();
 
   const exitCode = await monitorRun();
+
   await releaseRunLease(activeRunId);
   stopAll();
   process.exitCode = exitCode;
 } catch (error) {
   console.error(
-    "PIPELINE FATAL · " + String(error?.stack || error?.message || error),
+    "PIPELINE FATAL · " +
+      String(error?.stack || error?.message || error),
   );
+
   await releaseRunLease(activeRunId);
   stopAll();
-  process.exitCode = 1;
+
+  process.exitCode = Number(error?.exitCode || 1);
 }
