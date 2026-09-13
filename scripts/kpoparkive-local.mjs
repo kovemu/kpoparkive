@@ -59,9 +59,11 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 console.log("Kpoparkive local workspace");
-console.log("- Next.js: http://localhost:3000");
-console.log("- Namu capture + draft renderer: starting");
-console.log("- Ctrl+C stops everything");
+console.log("- Home: http://localhost:3000");
+console.log("- Manual Namu collection: existing Chrome extension + local capture helper");
+console.log("- Post-collection GUI: http://localhost:3000/admin/pipeline");
+console.log("- Import/debug page: http://localhost:3000/admin/namu-import");
+console.log("- Ctrl+C stops Next.js + capture helper. Detached pipeline runs are controlled from the GUI.");
 
 startNpm(["run", "dev"], "Next.js dev");
 startNpm(["run", "namu:capture-helper"], "Namu capture helper");
