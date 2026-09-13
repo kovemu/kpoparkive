@@ -26,7 +26,8 @@
     "namu:repair-assets": "node scripts/namu-browser-image-worker-safe.mjs --renderer-missing",
     "namu:capture-helper:watch": "node scripts/namu-capture-helper-all.mjs --assistant-publish",
     "namu:assistant-publish": "node scripts/namu-assistant-publish-worker.mjs",
-    "namu:template-audit": "node scripts/namu-template-scope-audit.mjs"
+    "namu:template-audit": "node scripts/namu-template-scope-audit.mjs",
+    "namu:pipeline": "node scripts/namu-pipeline.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
