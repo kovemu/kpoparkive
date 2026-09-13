@@ -235,11 +235,23 @@ for (const requirement of scope) {
     const visibleKoreanLinks = findVisibleKoreanLinkLabels(doc.content_namumark_html, { limit: 50 });
     if (visibleKoreanLinks.length > 0) {
       blockers.push("visible_korean_links:" + visibleKoreanLinks.length);
+      if (process.env.KPOPARKIVE_QA_SAMPLES === "1") {
+        console.log(
+          "KOREAN_LINK_SAMPLES " + doc.source_title + " " +
+          JSON.stringify(visibleKoreanLinks.slice(0, 12))
+        );
+      }
     }
 
     const visibleKoreanText = findVisibleKoreanText(doc.content_namumark_html, { limit: 50 });
     if (visibleKoreanText.length > 0) {
       blockers.push("visible_korean_text:" + visibleKoreanText.length);
+      if (process.env.KPOPARKIVE_QA_SAMPLES === "1") {
+        console.log(
+          "KOREAN_TEXT_SAMPLES " + doc.source_title + " " +
+          JSON.stringify(visibleKoreanText.slice(0, 12))
+        );
+      }
     }
   }
 
