@@ -116,6 +116,42 @@ function runSourceRenderer(title) {
   });
 }
 
+async function recoverTemplateSourceFromCapturedDom(doc) {
+  if (!/^(?:틀|Template):/i.test(String(doc?.source_title || ""))) {
+    return doc;
+  }
+
+  const fallbacks =
+    (await pipelineDb(
+      "template_dom_fallbacks?template_title=eq." +
+        encodeURIComponent(doc.source_title) +
+        "&source_html=not.is.null" +
+        "&select=id,source_title,template_title,recovery_status,updated_at" +
+        "&order=updated_at.desc&limit=1",
+    )) || [];
+
+  const fallback = fallbacks[0];
+
+  if (!fallback?.source_title) {
+    return doc;
+  }
+
+  console.log(
+    "SOURCE RECOVER template from captured DOM · " +
+      doc.source_title +
+      " · owner=" +
+      fallback.source_title,
+  );
+
+  await runNodeScript(
+    "scripts/namu-dom-template-recover.mjs",
+    [fallback.source_title, doc.source_title],
+    [0, 2],
+  );
+
+  return (await fetchDocument(doc.id)) || doc;
+}
+
 async function repairFromCapturedArtifacts(doc) {
   let current = doc;
   let meta = current?.source_namumark_meta || {};
@@ -250,9 +286,20 @@ while (true) {
   }
 
   try {
-    const before = await fetchDocument(job.source_document_id);
+    let before = await fetchDocument(job.source_document_id);
+
+    if (!before) {
+      throw new Error("source_document_not_found");
+    }
+
+    if (!before.source_wikitext) {
+      before = await recoverTemplateSourceFromCapturedDom(before);
+    }
+
     if (!before?.source_wikitext) {
-      throw new Error("missing_canonical_raw_requires_manual_collection");
+      throw new Error(
+        "missing_canonical_raw_requires_manual_collection",
+      );
     }
 
     console.log(
