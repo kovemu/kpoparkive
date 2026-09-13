@@ -33,6 +33,13 @@ jobs:
           session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
           echo "::add-mask::$session"
           echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
+      - name: Rerender final publish blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for title in "방탄소년단" "방탄소년단/수상" "슈가(방탄소년단)"; do
+            npm run namu:engine-thetree-content -- "$title"
+          done
       - name: Publish BTS31
         run: npm run namu:publish -- --root=방탄소년단
       - name: Final integration QA
