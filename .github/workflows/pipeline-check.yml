@@ -16,9 +16,16 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co"
+      SUPABASE_SERVICE_ROLE_KEY: "pipeline-check-placeholder"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - run: npm run namu:pipeline:check
+      - name: Smoke test one-team runner
+        run: node scripts/namu-pipeline-start.mjs --root=PIPELINE_TEST --dry-run
+      - name: Smoke test batch runner
+        run: node scripts/namu-batch.mjs --teams=PIPELINE_TEST_A,PIPELINE_TEST_B --dry-run
