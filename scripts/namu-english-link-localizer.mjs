@@ -1,6 +1,6 @@
 import { parse } from "node-html-parser";
 
-export const ENGLISH_LINK_LOCALIZER_VERSION = 2;
+export const ENGLISH_LINK_LOCALIZER_VERSION = 3;
 
 const SAFE_CANONICAL_FALLBACKS = new Map([
   ["대한민국", "South Korea"],
@@ -268,11 +268,46 @@ function resolveDetailLabel(target, currentTitle, index) {
   return "";
 }
 
+function resolveInternalLabel(target, currentTitle, index) {
+  const key = normalize(String(target || "").replace(/^:/, "").split("#")[0]);
+  if (!key || /^(?:파일|File|분류|Category|틀|Template):/i.test(key)) return "";
+  const exact = cleanEnglishLabel(index?.exact?.get(key));
+  if (exact) return exact;
+  const suffix = cleanEnglishLabel(index?.suffix?.get(lastPathSegment(key)));
+  if (suffix) return suffix;
+  return "";
+}
+
+function localizeSimpleInternalLinks(source, currentTitle, index, stats) {
+  return String(source || "").replace(
+    /\[\[([^\[\]|]+?)(#[^\[\]|]*)?(?:\|([^\[\]]+))?\]\]/g,
+    (full, rawTarget, rawAnchor = "", rawLabel = undefined) => {
+      const target = normalize(rawTarget);
+      if (!target || /^(?:https?:|ftp:|mailto:|tel:)/i.test(target)) return full;
+      if (/^(?:파일|File|분류|Category|틀|Template):/i.test(target)) return full;
+
+      const english = resolveInternalLabel(target, currentTitle, index);
+      if (!english) return full;
+
+      const label = rawLabel == null ? "" : normalize(rawLabel);
+      const needsLabel = rawLabel == null
+        ? hasHangul(target)
+        : hasHangul(label);
+
+      if (!needsLabel) return full;
+
+      stats.internalLabelsLocalized += 1;
+      return `[[${rawTarget}${rawAnchor || ""}|${english}]]`;
+    },
+  );
+}
+
 export function localizeEnglishTemplateLabels(source, { currentTitle = "", index } = {}) {
   const stats = {
     version: ENGLISH_LINK_LOCALIZER_VERSION,
     flagOutputsAdded: 0,
     detailLabelsAdded: 0,
+    internalLabelsLocalized: 0,
     unresolved: [],
   };
 
@@ -326,7 +361,10 @@ export function localizeEnglishTemplateLabels(source, { currentTitle = "", index
     return full;
   });
 
-  return { text, stats };
+  return {
+    text: localizeSimpleInternalLinks(text, currentTitle, index, stats),
+    stats,
+  };
 }
 
 export function findVisibleKoreanLinkLabels(html, { limit = 30 } = {}) {
