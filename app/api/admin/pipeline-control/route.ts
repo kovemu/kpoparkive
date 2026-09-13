@@ -238,6 +238,38 @@ async function recentRoots() {
   return roots;
 }
 
+async function captureHelperStatus() {
+  try {
+    const response = await fetch(
+      "http://127.0.0.1:43117/clone/status",
+      { cache: "no-store" },
+    );
+
+    if (!response.ok) {
+      return {
+        available: false,
+        error: "helper_http_" + response.status,
+      };
+    }
+
+    const body = await response.json();
+
+    return {
+      available: true,
+      job: body?.job || body || null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : String(error),
+    };
+  }
+}
+
+
 function startRunner(rootTitle: string, retryReview = false) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
@@ -359,6 +391,7 @@ export async function GET(request: Request) {
         ok: true,
         localOnly: true,
         roots: await recentRoots(),
+        capture: await captureHelperStatus(),
       });
     }
 
@@ -373,6 +406,7 @@ export async function GET(request: Request) {
       run,
       jobsSummary: summarizeJobs(jobs),
       control,
+      capture: await captureHelperStatus(),
       logTail: tailFile(logPath(rootTitle)),
     });
   } catch (error) {
@@ -413,6 +447,26 @@ export async function POST(request: Request) {
     }
 
     if (action === "start" || action === "retry") {
+      const capture = await captureHelperStatus();
+      const captureJob = capture?.job || null;
+
+      if (
+        capture?.available &&
+        captureJob?.running === true &&
+        normalizeRoot(captureJob?.rootTitle) === rootTitle
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "The Chrome extension is still collecting this team. Finish collection first.",
+            code: "COLLECTION_RUNNING",
+            rootTitle,
+            capture,
+          },
+          { status: 409 },
+        );
+      }
+
       const collection = await runScopeCheck(rootTitle);
 
       if (Number(collection?.needsRawCount || 0) > 0) {
