@@ -25,7 +25,7 @@ function hasHangul(value) {
 
 function visibleTextOnly(node) {
   const fragment = parse(`<div>${String(node?.innerHTML || "")}</div>`);
-  for (const selector of ["img", "picture", "source", "svg", "video", "audio", "canvas"]) {
+  for (const selector of ["script", "style", "noscript", "template", "img", "picture", "source", "svg", "video", "audio", "canvas"]) {
     for (const media of fragment.querySelectorAll(selector)) media.remove();
   }
   return normalize(fragment.innerText || fragment.text || "");
