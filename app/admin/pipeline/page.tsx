@@ -38,6 +38,20 @@ type RunStatus = {
 
 type StatusResponse = {
   run?: RunStatus | null;
+  capture?: {
+    available?: boolean;
+    job?: {
+      running?: boolean;
+      done?: boolean;
+      rootTitle?: string;
+      processed?: number;
+      captured?: number;
+      failed?: number;
+      queued?: number;
+      current?: string[];
+    } | null;
+    error?: string;
+  };
   jobsSummary?: {
     byStage?: Record<string, Record<string, number>>;
     review?: Array<{
@@ -225,7 +239,11 @@ export default function PipelineAdminPage() {
         setCollection(error.payload.collection);
       }
 
-      if (error?.payload?.code === "COLLECTION_REQUIRED") {
+      if (error?.payload?.code === "COLLECTION_RUNNING") {
+        setMessage(
+          "이 팀은 확장프로그램에서 아직 수집 중입니다. 수집 완료 후 자동 처리를 시작하세요.",
+        );
+      } else if (error?.payload?.code === "COLLECTION_REQUIRED") {
         setMessage(
           "수집 불완전: 아래 누락 RAW를 확장프로그램에서 수집한 뒤 다시 확인하세요.",
         );
@@ -238,6 +256,14 @@ export default function PipelineAdminPage() {
   }
 
   const run = status?.run || null;
+  const capture = status?.capture || null;
+  const captureJob = capture?.job || null;
+  const sameTeamCollecting =
+    capture?.available === true &&
+    captureJob?.running === true &&
+    String(captureJob?.rootTitle || "").normalize("NFKC").trim() ===
+      rootTitle.normalize("NFKC").trim();
+
   const byStage = status?.jobsSummary?.byStage || {};
   const review = status?.jobsSummary?.review || [];
 
@@ -338,6 +364,7 @@ export default function PipelineAdminPage() {
                 !adminKey ||
                 !rootTitle ||
                 !collectionReady ||
+                sameTeamCollecting ||
                 run?.status === "running"
               }
               onClick={() => void runAction("start")}
@@ -376,6 +403,49 @@ export default function PipelineAdminPage() {
         <pre className="adminStatus" style={{ whiteSpace: "pre-wrap" }}>
           {message}
         </pre>
+
+        <section style={{ marginTop: 18 }}>
+          <h2>확장프로그램 수집</h2>
+          <div
+            style={{
+              border: "1px solid rgba(127,127,127,.3)",
+              borderRadius: 10,
+              padding: 14,
+            }}
+          >
+            {!capture?.available ? (
+              <div>
+                Capture helper 연결 안 됨
+                {capture?.error ? " · " + capture.error : ""}
+              </div>
+            ) : !captureJob?.rootTitle ? (
+              <div>현재 수집 작업 없음</div>
+            ) : (
+              <>
+                <div style={{ fontWeight: 700 }}>
+                  {captureJob.rootTitle} ·{" "}
+                  {captureJob.running
+                    ? "수집 중"
+                    : captureJob.done
+                      ? "수집 완료"
+                      : "대기"}
+                </div>
+                <div style={{ marginTop: 6, opacity: 0.8 }}>
+                  처리 {captureJob.processed ?? 0} · 캡처{" "}
+                  {captureJob.captured ?? 0} · 대기{" "}
+                  {captureJob.queued ?? 0} · 실패{" "}
+                  {captureJob.failed ?? 0}
+                </div>
+                {sameTeamCollecting && (
+                  <div style={{ marginTop: 8, fontWeight: 700 }}>
+                    현재 선택한 팀을 수집 중입니다. 자동 처리는 수집 완료 후
+                    시작됩니다.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
 
         {collection && (
           <section style={{ marginTop: 22 }}>
