@@ -1,0 +1,76 @@
+name: BTS31 Source Rerender
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/namu-bts31-source-rerender.yml"]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  source-rerender:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - name: Install renderer dependency
+        run: |
+          mkdir -p /tmp/kpop-deps && cd /tmp/kpop-deps
+          npm init -y >/dev/null 2>&1
+          npm install node-html-parser@7.0.1 --no-audit --no-fund
+          cd "$GITHUB_WORKSPACE"
+          ln -s /tmp/kpop-deps/node_modules node_modules
+      - name: Acquire proxy session
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
+          oidc="$(printf '%s' "$oidc_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
+          session_json="$(curl -fsSL -X POST -H "Authorization: Bearer $oidc" "$NEXT_PUBLIC_SUPABASE_URL/session")"
+          session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
+          echo "::add-mask::$session"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
+      - name: Render source 31
+        shell: bash
+        run: |
+          set -euo pipefail
+          titles=(
+          "A.R.M.Y"
+          "RM"
+          "방탄소년단"
+          "방탄소년단/공연 및 행사"
+          "방탄소년단/관련 장소"
+          "방탄소년단/광고 및 캐릭터 상품"
+          "방탄소년단/굿즈"
+          "방탄소년단/기록"
+          "방탄소년단/논란 및 사건 사고"
+          "방탄소년단/대중매체"
+          "방탄소년단/멤버 간 케미"
+          "방탄소년단/세계관"
+          "방탄소년단/수상"
+          "방탄소년단/여담"
+          "방탄소년단/연혁"
+          "방탄소년단/영화 및 다큐"
+          "방탄소년단/위상 및 인기"
+          "방탄소년단/음반"
+          "방탄소년단/음악 방송 직캠"
+          "방탄소년단/응원법"
+          "방탄소년단/콘텐츠"
+          "뷔"
+          "빌보드 200"
+          "빌보드 핫 100"
+          "슈가(방탄소년단)"
+          "오피셜 싱글 차트"
+          "오피셜 차트"
+          "정국"
+          "제이홉"
+          "지민"
+          "진(방탄소년단)"
+          )
+          for title in "${titles[@]}"; do
+            echo "=== SOURCE RENDER: $title ==="
+            npm run namu:engine-thetree -- "$title"
+          done
