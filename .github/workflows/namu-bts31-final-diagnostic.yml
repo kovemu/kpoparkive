@@ -1,4 +1,5 @@
 name: BTS31 Final Diagnostic
+# rerun: visible-link-noscript-fix
 on:
   push:
     branches: [main]
