@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { parse } from "node-html-parser";
 import { findVisibleKoreanLinkLabels, findVisibleKoreanText } from "./namu-english-link-localizer.mjs";
 
 const DEFAULT_SUPABASE_URL = "https://hukrrzhltiyirtkxmotj.supabase.co";
@@ -87,6 +88,16 @@ function internalWikiTargets(html) {
 }
 
 function inspectHtml(html) {
+  // Next.js serializes route data into script/RSC payloads. Those payloads can
+  // legitimately contain the original NamuMark source even when none of it is
+  // rendered to the page. Route QA must inspect the visible DOM, not hidden
+  // framework serialization.
+  const root = parse(String(html || ""));
+  for (const selector of ["script", "style", "noscript", "template"]) {
+    for (const node of root.querySelectorAll(selector)) node.remove();
+  }
+  const visibleHtml = root.toString();
+
   const leaks = [];
   const checks = [
     ["raw-link", /\[\[[^\]]+\]\]/],
@@ -94,15 +105,15 @@ function inspectHtml(html) {
     ["wiki-directive", /\{\{\{#!(?:wiki|folding|if)/i],
     ["raw-table", /(?:^|[>\n])\|\|[^<\n]{1,300}\|\|/m],
   ];
-  for (const [name, pattern] of checks) if (pattern.test(html)) leaks.push(name);
+  for (const [name, pattern] of checks) if (pattern.test(visibleHtml)) leaks.push(name);
 
   return {
     leaks,
-    externalNamuLinks: (html.match(/href=["']https:\/\/namu\.wiki\/w\//gi) || []).length,
-    loadingImages: (html.match(/\bwiki-image-loading\b/g) || []).length,
+    externalNamuLinks: (visibleHtml.match(/href=["']https:\/\/namu\.wiki\/w\//gi) || []).length,
+    loadingImages: (visibleHtml.match(/\bwiki-image-loading\b/g) || []).length,
     koreanUi: [
-      />\s*목차\s*</.test(html) ? "목차" : null,
-      />\s*편집\s*</.test(html) ? "편집" : null,
+      />\s*목차\s*</.test(visibleHtml) ? "목차" : null,
+      />\s*편집\s*</.test(visibleHtml) ? "편집" : null,
     ].filter(Boolean),
   };
 }
