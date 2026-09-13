@@ -1,5 +1,5 @@
 name: BTS31 Final Diagnostic
-# rerun: visible-link-noscript-fix
+# qa-only: korean-visible-samples-v2
 on:
   push:
     branches: [main]
@@ -10,42 +10,21 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
+      KPOPARKIVE_QA_SAMPLES: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "24" }
-
-      - name: Test Namu RAW reachability
-        shell: bash
-        run: |
-          set -euo pipefail
-          title="틀:보이그룹 팬덤"
-          encoded="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$title")"
-          url="https://namu.wiki/raw/$encoded"
-          echo "RAW_URL=$url"
-          code="$(curl -L -sS -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/152 Safari/537.36' -o /tmp/namu-raw.html -w '%{http_code}' "$url" || true)"
-          echo "HTTP_STATUS=$code"
-          echo "BYTES=$(wc -c </tmp/namu-raw.html 2>/dev/null || echo 0)"
-          node - <<'NODE'
-          const fs=require('fs');
-          const s=fs.existsSync('/tmp/namu-raw.html')?fs.readFileSync('/tmp/namu-raw.html','utf8'):'';
-          console.log('HAS_TEXTAREA='+/<textarea/i.test(s));
-          console.log('HAS_NAMUMARK='+(s.includes('[[')||s.includes('[include(')||s.includes('||')));
-          console.log('CHALLENGE='+(/just a moment|attention required|challenge-platform|cf-turnstile|비정상적인 접근|사람인지 확인/i.test(s)));
-          console.log('TITLE='+(s.match(/<title[^>]*>(.*?)<\/title>/is)?.[1]||'').replace(/\s+/g,' ').slice(0,180));
-          NODE
-
-      - name: Install renderer dependency
+      - name: Install QA dependency
         run: |
           mkdir -p /tmp/kpop-deps && cd /tmp/kpop-deps
           npm init -y >/dev/null 2>&1
           npm install node-html-parser@7.0.1 --no-audit --no-fund
           cd "$GITHUB_WORKSPACE"
           ln -s /tmp/kpop-deps/node_modules node_modules
-
       - name: Acquire proxy session
         shell: bash
         run: |
@@ -56,19 +35,7 @@ jobs:
           session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
           echo "::add-mask::$session"
           echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
-
-      - name: Render latest stale English docs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for title in "RM" "방탄소년단/기록" "뷔"; do
-            echo "=== ENGLISH RENDER: $title ==="
-            npm run namu:engine-thetree-content -- "$title"
-          done
-
       - name: Prepublish QA with Korean samples
-        env:
-          KPOPARKIVE_QA_SAMPLES: "1"
         shell: bash
         run: |
           set +e
