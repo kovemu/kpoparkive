@@ -13,7 +13,11 @@ const SUPABASE_URL = String(
 ).replace(/\/$/, "");
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY || "";
-const CONTROL_DIR = path.join(ROOT, ".kpoparkive-data", "pipeline-control");
+const DATA_ROOT = path.resolve(
+  process.env.KPOPARKIVE_DATA_DIR ||
+    path.join(ROOT, ".kpoparkive-data"),
+);
+const CONTROL_DIR = path.join(DATA_ROOT, "pipeline-control");
 
 function isLocalRequest(request: Request) {
   if (process.env.KPOPARKIVE_ALLOW_LOCAL_PIPELINE === "1") return true;
@@ -118,6 +122,167 @@ function tailFile(filePath: string, maxChars = 24000) {
     return value.slice(-maxChars);
   } catch {
     return "";
+  }
+}
+
+function normalizeRoots(value: unknown) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[\n,]+/);
+
+  return [
+    ...new Set(
+      raw.map(normalizeRoot).filter(Boolean),
+    ),
+  ];
+}
+
+function batchKey(roots: string[]) {
+  return Buffer.from(roots.join("\n"), "utf8")
+    .toString("base64url")
+    .slice(0, 32);
+}
+
+function batchControlPath() {
+  return path.join(CONTROL_DIR, "batch-current.json");
+}
+
+function batchLogPath(key: string) {
+  return path.join(CONTROL_DIR, "batch-" + key + ".log");
+}
+
+function batchStatePath(roots: string[]) {
+  return path.join(
+    DATA_ROOT,
+    "batches",
+    "batch-" + batchKey(roots) + ".json",
+  );
+}
+
+function readBatchStatus() {
+  const control = readJson(batchControlPath());
+
+  if (!control) {
+    return {
+      control: null,
+      state: null,
+      logTail: "",
+    };
+  }
+
+  return {
+    control,
+    state: readJson(
+      control.statePath ||
+        batchStatePath(
+          Array.isArray(control.roots) ? control.roots : [],
+        ),
+    ),
+    logTail: tailFile(
+      control.logPath ||
+        batchLogPath(String(control.batchKey || "current")),
+    ),
+  };
+}
+
+function startBatchRunner(roots: string[]) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "OPENAI_API_KEY is missing in local .env.local.",
+    );
+  }
+
+  fs.mkdirSync(CONTROL_DIR, { recursive: true });
+  fs.mkdirSync(path.join(DATA_ROOT, "batches"), {
+    recursive: true,
+  });
+
+  const key = batchKey(roots);
+  const outputPath = batchLogPath(key);
+  const statePath = batchStatePath(roots);
+  const outFd = fs.openSync(outputPath, "a");
+
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "namu-batch.mjs"),
+      "--teams=" + encodeURIComponent(roots.join(",")),
+      "--team-concurrency=2",
+      "--translate-workers=4",
+    ],
+    {
+      cwd: ROOT,
+      env: process.env,
+      detached: true,
+      stdio: ["ignore", outFd, outFd],
+    },
+  );
+
+  child.unref();
+  fs.closeSync(outFd);
+
+  const control = {
+    batchKey: key,
+    roots,
+    pid: child.pid,
+    startedAt: new Date().toISOString(),
+    logPath: outputPath,
+    statePath,
+  };
+
+  fs.writeFileSync(
+    batchControlPath(),
+    JSON.stringify(control, null, 2) + "\n",
+    "utf8",
+  );
+
+  return control;
+}
+
+function stopBatchRunner() {
+  const control = readJson(batchControlPath());
+  const pid = Number(control?.pid || 0);
+
+  if (!pid) {
+    return {
+      stopped: false,
+      reason: "No local batch runner PID found.",
+    };
+  }
+
+  try {
+    if (process.platform === "win32") {
+      const result = spawnSync(
+        "taskkill",
+        ["/PID", String(pid), "/T", "/F"],
+        { encoding: "utf8" },
+      );
+
+      return {
+        stopped: result.status === 0,
+        pid,
+        output: String(
+          result.stdout || result.stderr || "",
+        ).trim(),
+      };
+    }
+
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      process.kill(pid, "SIGTERM");
+    }
+
+    return { stopped: true, pid };
+  } catch (error) {
+    return {
+      stopped: false,
+      pid,
+      reason:
+        error instanceof Error
+          ? error.message
+          : String(error),
+    };
   }
 }
 
@@ -446,6 +611,7 @@ export async function GET(request: Request) {
         localOnly: true,
         roots: await recentRoots(),
         capture: await captureHelperStatus(),
+        batch: readBatchStatus(),
       });
     }
 
@@ -464,6 +630,7 @@ export async function GET(request: Request) {
       ),
       control,
       capture: await captureHelperStatus(),
+      batch: readBatchStatus(),
       logTail: tailFile(logPath(rootTitle)),
     });
   } catch (error) {
@@ -484,6 +651,82 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const action = String(body?.action || "");
     const rootTitle = normalizeRoot(body?.rootTitle);
+
+    if (action === "batch_start") {
+      const requestedRoots = normalizeRoots(body?.roots);
+
+      if (!requestedRoots.length) {
+        return NextResponse.json(
+          { error: "At least one team is required." },
+          { status: 400 },
+        );
+      }
+
+      const capture = await captureHelperStatus();
+      const collectingRoot =
+        capture?.available && capture?.job?.running
+          ? normalizeRoot(capture.job.rootTitle)
+          : "";
+
+      const roots = requestedRoots.filter(
+        (root) => root !== collectingRoot,
+      );
+      const deferredRoots = requestedRoots.filter(
+        (root) => root === collectingRoot,
+      );
+
+      if (!roots.length) {
+        return NextResponse.json(
+          {
+            error:
+              "Every selected team is still being collected.",
+            code: "COLLECTION_RUNNING",
+            deferredRoots,
+            capture,
+          },
+          { status: 409 },
+        );
+      }
+
+      const currentBatch = readBatchStatus();
+      const currentState = currentBatch?.state;
+      const currentRunning = Object.values(
+        currentState?.teams || {},
+      ).some(
+        (item: any) => item?.status === "running",
+      );
+
+      if (currentRunning) {
+        return NextResponse.json(
+          {
+            error: "A batch is already running.",
+            code: "BATCH_RUNNING",
+            batch: currentBatch,
+          },
+          { status: 409 },
+        );
+      }
+
+      const control = startBatchRunner(roots);
+
+      return NextResponse.json({
+        ok: true,
+        roots,
+        deferredRoots,
+        control,
+        batch: readBatchStatus(),
+      });
+    }
+
+    if (action === "batch_stop") {
+      const stop = stopBatchRunner();
+
+      return NextResponse.json({
+        ok: true,
+        stop,
+        batch: readBatchStatus(),
+      });
+    }
 
     if (!rootTitle) {
       return NextResponse.json(
