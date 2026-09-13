@@ -1,0 +1,26 @@
+name: Pipeline GUI Check
+
+on:
+  push:
+    paths:
+      - "app/admin/pipeline/**"
+      - "app/api/admin/pipeline-control/**"
+      - "scripts/kpoparkive-local.mjs"
+      - ".github/workflows/pipeline-gui-check.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co"
+      SUPABASE_SERVICE_ROLE_KEY: "build-placeholder"
+      KPOPARKIVE_ADMIN_KEY: "build-placeholder"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
