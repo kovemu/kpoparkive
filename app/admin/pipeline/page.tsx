@@ -14,6 +14,7 @@ type CollectionCheck = {
   clusterDocuments: number;
   coreCount: number;
   templateDependencyCount: number;
+  reusableFallbackCount?: number;
   needsRawCount: number;
   missingRaw?: Array<{
     title: string;
@@ -28,6 +29,9 @@ type RunStatus = {
   status: string;
   scope_count: number;
   completed_count: number;
+  config?: {
+    dependencyCount?: number;
+  } | null;
   failed_count: number;
   review_count: number;
   runner_id?: string | null;
@@ -54,6 +58,13 @@ type StatusResponse = {
   };
   jobsSummary?: {
     byStage?: Record<string, Record<string, number>>;
+    coreByStage?: Record<string, Record<string, number>>;
+    dependencyByStage?: Record<string, Record<string, number>>;
+    dependencyProgress?: {
+      total: number;
+      ready: number;
+      waiting: number;
+    };
     review?: Array<{
       id: string;
       source_title: string;
@@ -64,6 +75,7 @@ type StatusResponse = {
       chunk_current: number;
       chunk_total: number;
       last_error?: string | null;
+      dependency?: boolean;
     }>;
   };
   logTail?: string;
@@ -264,7 +276,23 @@ export default function PipelineAdminPage() {
     String(captureJob?.rootTitle || "").normalize("NFKC").trim() ===
       rootTitle.normalize("NFKC").trim();
 
-  const byStage = status?.jobsSummary?.byStage || {};
+  const byStage = status?.jobsSummary?.coreByStage || {};
+  const dependencyByStage =
+    status?.jobsSummary?.dependencyByStage || {};
+  const dependencyProgress =
+    status?.jobsSummary?.dependencyProgress || {
+      total: Number(
+        run?.config?.dependencyCount ||
+          collection?.templateDependencyCount ||
+          0,
+      ),
+      ready: 0,
+      waiting: Number(
+        run?.config?.dependencyCount ||
+          collection?.templateDependencyCount ||
+          0,
+      ),
+    };
   const review = status?.jobsSummary?.review || [];
 
   const collectionReady =
@@ -461,6 +489,7 @@ export default function PipelineAdminPage() {
                 ["수집 문서", collection.clusterDocuments],
                 ["Core 문서", collection.coreCount],
                 ["Template 의존성", collection.templateDependencyCount],
+                ["DOM fallback 재사용", collection.reusableFallbackCount ?? 0],
                 ["누락 RAW", collection.needsRawCount],
               ].map(([label, value]) => (
                 <div
@@ -542,6 +571,9 @@ export default function PipelineAdminPage() {
                 />
               </div>
 
+              <h3 style={{ marginTop: 20, marginBottom: 10 }}>
+                Core 공개 문서
+              </h3>
               <div
                 style={{
                   display: "grid",
@@ -580,6 +612,84 @@ export default function PipelineAdminPage() {
                   );
                 })}
               </div>
+
+              {dependencyProgress.total > 0 && (
+                <>
+                  <h3 style={{ marginTop: 24, marginBottom: 10 }}>
+                    Template dependency · {dependencyProgress.ready}/
+                    {dependencyProgress.total} 준비
+                  </h3>
+
+                  <div
+                    style={{
+                      height: 8,
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      background: "rgba(127,127,127,.2)",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width:
+                          Math.round(
+                            (dependencyProgress.ready /
+                              Math.max(1, dependencyProgress.total)) *
+                              100,
+                          ) + "%",
+                        height: "100%",
+                        background: "currentColor",
+                        opacity: 0.6,
+                        transition: "width .2s ease",
+                      }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(150px, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    {["source_render", "translation", "en_render"].map(
+                      (stage) => {
+                        const values =
+                          dependencyByStage[stage] || {};
+                        const total = countStage(values);
+                        const pass = Number(values.pass || 0);
+                        const active =
+                          Number(values.running || 0) +
+                          Number(values.queued || 0) +
+                          Number(values.retry || 0);
+
+                        return (
+                          <div
+                            key={"dependency-" + stage}
+                            style={{
+                              border:
+                                "1px solid rgba(127,127,127,.3)",
+                              borderRadius: 10,
+                              padding: 14,
+                            }}
+                          >
+                            <div style={{ fontWeight: 700 }}>
+                              {stageLabel[stage] || stage}
+                            </div>
+                            <div style={{ marginTop: 7 }}>
+                              {pass}/{total || 0} PASS
+                            </div>
+                            <small style={{ opacity: 0.7 }}>
+                              진행/대기 {active}
+                            </small>
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </section>
@@ -600,7 +710,10 @@ export default function PipelineAdminPage() {
                 <tbody>
                   {review.map((job) => (
                     <tr key={job.id}>
-                      <td style={{ padding: "8px 6px" }}>{job.source_title}</td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {job.source_title}
+                        {job.dependency ? " · Template" : ""}
+                      </td>
                       <td style={{ padding: "8px 6px" }}>
                         {stageLabel[job.stage] || job.stage}
                       </td>
