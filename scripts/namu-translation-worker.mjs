@@ -422,7 +422,7 @@ async function enqueueStage(job, stage) {
     {
       method: "POST",
       headers: {
-        Prefer: "resolution=ignore-duplicates,return=minimal",
+        Prefer: "resolution=merge-duplicates,return=minimal",
       },
       body: JSON.stringify({
         run_id: job.run_id,
@@ -432,7 +432,14 @@ async function enqueueStage(job, stage) {
         status: "queued",
         attempt: 0,
         max_attempts: 3,
+        chunk_current: 0,
+        chunk_total: 0,
         checkpoint: {},
+        last_error: null,
+        locked_by: null,
+        locked_at: null,
+        started_at: null,
+        finished_at: null,
         updated_at: new Date().toISOString(),
       }),
     },
