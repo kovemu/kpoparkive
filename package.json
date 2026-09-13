@@ -27,7 +27,8 @@
     "namu:capture-helper:watch": "node scripts/namu-capture-helper-all.mjs --assistant-publish",
     "namu:assistant-publish": "node scripts/namu-assistant-publish-worker.mjs",
     "namu:template-audit": "node scripts/namu-template-scope-audit.mjs",
-    "namu:pipeline": "node scripts/namu-pipeline.mjs"
+    "namu:pipeline": "node scripts/namu-pipeline.mjs",
+    "namu:pipeline:queue": "node scripts/namu-pipeline-queue.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
