@@ -1,5 +1,5 @@
 name: BTS31 Final Diagnostic
-# qa-only: korean-visible-samples-v2
+# rerender-affected: final-label-asset-fixes
 on:
   push:
     branches: [main]
@@ -10,7 +10,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
       KPOPARKIVE_QA_SAMPLES: "1"
@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "24" }
-      - name: Install QA dependency
+      - name: Install renderer dependency
         run: |
           mkdir -p /tmp/kpop-deps && cd /tmp/kpop-deps
           npm init -y >/dev/null 2>&1
@@ -35,6 +35,31 @@ jobs:
           session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
           echo "::add-mask::$session"
           echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
+      - name: Rerender affected English docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          titles=(
+            "A.R.M.Y"
+            "방탄소년단"
+            "방탄소년단/공연 및 행사"
+            "방탄소년단/광고 및 캐릭터 상품"
+            "방탄소년단/기록"
+            "방탄소년단/논란 및 사건 사고"
+            "방탄소년단/대중매체"
+            "방탄소년단/세계관"
+            "방탄소년단/수상"
+            "방탄소년단/콘텐츠"
+            "뷔"
+            "빌보드 200"
+            "빌보드 핫 100"
+            "지민"
+            "진(방탄소년단)"
+          )
+          for title in "${titles[@]}"; do
+            echo "=== ENGLISH RENDER: $title ==="
+            npm run namu:engine-thetree-content -- "$title"
+          done
       - name: Prepublish QA with Korean samples
         shell: bash
         run: |
