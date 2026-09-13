@@ -33,7 +33,8 @@
     "namu:render-worker": "node scripts/namu-render-worker.mjs",
     "namu:source-worker": "node scripts/namu-source-worker.mjs",
     "namu:publish-worker": "node scripts/namu-publish-worker.mjs",
-    "namu:integration-worker": "node scripts/namu-integration-worker.mjs"
+    "namu:integration-worker": "node scripts/namu-integration-worker.mjs",
+    "namu:scope": "node scripts/namu-scope.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
