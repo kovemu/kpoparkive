@@ -391,13 +391,12 @@ export default function PipelineAdminPage() {
                 busy ||
                 !adminKey ||
                 !rootTitle ||
-                !collectionReady ||
                 sameTeamCollecting ||
                 run?.status === "running"
               }
               onClick={() => void runAction("start")}
             >
-              자동 처리 시작
+              수집 후 자동 처리 시작
             </button>
 
             <button
