@@ -199,5 +199,9 @@ globalThis.fetch = async (input, init = undefined) => {
 
 process.env.KPOPARKIVE_RENDER_CONTENT = "1";
 process.env.KPOPARKIVE_RENDER_LANGUAGE = "en";
+// English rendering must never silently fall back to Korean template RAW.
+// Templates without reviewed English content are treated as DOM-fallback
+// candidates; reviewed English fallback HTML is injected by the base renderer.
+process.env.KPOPARKIVE_FORCE_DOM_FALLBACK_UNTRANSLATED = "1";
 console.log(`Kpoparkive editable-content render: ${targetTitle}`);
 await import("./namumark-thetree-compat-poc.mjs");
