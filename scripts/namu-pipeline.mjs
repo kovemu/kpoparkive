@@ -342,10 +342,21 @@ function assessDocument(requirement, doc, { dependency = false } = {}) {
   let nextAction = "none";
   let blockers = [];
 
+  const fallbackReady =
+    isTemplate &&
+    Array.isArray(requirement?.reason_codes) &&
+    requirement.reason_codes.includes("captured_dom_fallback");
+
   if (!hasRaw) {
-    stage = "RAW";
-    nextAction = "capture_raw";
-    blockers = ["missing_canonical_raw"];
+    if (fallbackReady) {
+      stage = "SOURCE_RENDER";
+      nextAction = "recover_template_from_captured_dom";
+      blockers = ["captured_dom_fallback_recovery"];
+    } else {
+      stage = "RAW";
+      nextAction = "capture_raw";
+      blockers = ["missing_canonical_raw"];
+    }
   } else if (!source.pass) {
     stage = "SOURCE_RENDER";
     nextAction = "repair_or_render_source";
