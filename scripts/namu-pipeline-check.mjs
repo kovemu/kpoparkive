@@ -11,6 +11,7 @@ const files = [
   "scripts/namu-pipeline.mjs",
   "scripts/namu-pipeline-queue.mjs",
   "scripts/namu-pipeline-start.mjs",
+  "scripts/namu-batch.mjs",
   "scripts/namu-scope.mjs",
   "scripts/namu-raw-worker.mjs",
   "scripts/namu-source-worker.mjs",
@@ -23,6 +24,7 @@ const files = [
 const requiredScripts = [
   "namu:pipeline",
   "namu:pipeline:start",
+  "namu:batch",
   "namu:pipeline:queue",
   "namu:scope",
   "namu:raw-worker",
