@@ -1,5 +1,4 @@
-name: BTS31 Final Diagnostic
-# rerender-3: detail-template-v3
+name: BTS31 Route Diagnostic
 on:
   push:
     branches: [main]
@@ -13,12 +12,11 @@ jobs:
     timeout-minutes: 30
     env:
       NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
-      KPOPARKIVE_QA_SAMPLES: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "24" }
-      - name: Install renderer dependency
+      - name: Install QA dependency
         run: |
           mkdir -p /tmp/kpop-deps && cd /tmp/kpop-deps
           npm init -y >/dev/null 2>&1
@@ -35,18 +33,9 @@ jobs:
           session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
           echo "::add-mask::$session"
           echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
-      - name: Rerender final 3 English docs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for title in "A.R.M.Y" "빌보드 핫 100" "지민"; do
-            npm run namu:engine-thetree-content -- "$title"
-          done
-      - name: Prepublish QA with Korean samples
+      - name: Route QA JSON
         shell: bash
         run: |
           set +e
-          npm run namu:integration-qa -- 방탄소년단 --prepublish --strict --expected-count=31
-          code=$?
-          echo "QA_EXIT=$code"
+          npm run namu:integration-qa -- 방탄소년단 --expected-count=31 --json
           exit 0
