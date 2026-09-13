@@ -175,7 +175,7 @@ async function latestRun(rootTitle: string) {
   const rows = await db(
     "pipeline_runs?root_title=eq." +
       encodeURIComponent(rootTitle) +
-      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,runner_id,heartbeat_at,created_at,started_at,updated_at,finished_at" +
+      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,config,runner_id,heartbeat_at,created_at,started_at,updated_at,finished_at" +
       "&order=created_at.desc&limit=1",
   );
 
@@ -195,21 +195,75 @@ async function runJobs(runId: string) {
   );
 }
 
-function summarizeJobs(jobs: any[]) {
+function summarizeJobs(
+  jobs: any[],
+  dependencyTotal = 0,
+) {
   const byStage: Record<string, Record<string, number>> = {};
+  const coreByStage: Record<string, Record<string, number>> = {};
+  const dependencyByStage: Record<string, Record<string, number>> = {};
   const review: any[] = [];
+  const dependencyDocs = new Set<string>();
+  const dependencyReadyDocs = new Set<string>();
+
+  function add(
+    target: Record<string, Record<string, number>>,
+    stage: string,
+    status: string,
+  ) {
+    if (!target[stage]) target[stage] = {};
+    target[stage][status] =
+      (target[stage][status] || 0) + 1;
+  }
 
   for (const job of jobs) {
-    if (!byStage[job.stage]) byStage[job.stage] = {};
-    byStage[job.stage][job.status] =
-      (byStage[job.stage][job.status] || 0) + 1;
+    const dependency = /^(?:틀|Template):/i.test(
+      String(job.source_title || ""),
+    );
+
+    add(byStage, job.stage, job.status);
+
+    if (dependency) {
+      add(dependencyByStage, job.stage, job.status);
+      dependencyDocs.add(job.source_title);
+
+      if (
+        job.stage === "en_render" &&
+        job.status === "pass"
+      ) {
+        dependencyReadyDocs.add(job.source_title);
+      }
+    } else {
+      add(coreByStage, job.stage, job.status);
+    }
 
     if (["needs_review", "failed"].includes(job.status)) {
-      review.push(job);
+      review.push({ ...job, dependency });
     }
   }
 
-  return { byStage, review };
+  const total = Math.max(
+    Number(dependencyTotal || 0),
+    dependencyDocs.size,
+  );
+  const alreadyReady = Math.max(
+    0,
+    total - dependencyDocs.size,
+  );
+  const dependencyReady =
+    alreadyReady + dependencyReadyDocs.size;
+
+  return {
+    byStage,
+    coreByStage,
+    dependencyByStage,
+    dependencyProgress: {
+      total,
+      ready: Math.min(total, dependencyReady),
+      waiting: Math.max(0, total - dependencyReady),
+    },
+    review,
+  };
 }
 
 async function recentRoots() {
@@ -404,7 +458,10 @@ export async function GET(request: Request) {
       localOnly: true,
       rootTitle,
       run,
-      jobsSummary: summarizeJobs(jobs),
+      jobsSummary: summarizeJobs(
+        jobs,
+        Number(run?.config?.dependencyCount || 0),
+      ),
       control,
       capture: await captureHelperStatus(),
       logTail: tailFile(logPath(rootTitle)),
