@@ -558,7 +558,7 @@ const reusableFallbackCount = [...requiredTemplates].filter(
 
 const placeholderDependencyCount = missingDocumentTitles.length;
 
-const reusableFallbackRows = rows.filter(
+const reusableFallbackRowCount = rows.filter(
   (row) =>
     row.status === "captured" &&
     row.reason_codes.includes("captured_dom_fallback"),
