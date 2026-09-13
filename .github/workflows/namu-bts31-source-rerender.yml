@@ -72,5 +72,5 @@ jobs:
           )
           for title in "${titles[@]}"; do
             echo "=== SOURCE RENDER: $title ==="
-            npm run namu:engine-thetree -- "$title"
+            npm run namu:engine-thetree-compat -- "$title"
           done
