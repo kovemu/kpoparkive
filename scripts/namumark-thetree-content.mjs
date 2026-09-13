@@ -62,6 +62,16 @@ function responseWithJson(value, original) {
 
 function withContentColumns(rawUrl) {
   const url = new URL(rawUrl);
+  // English template revisions may legitimately exist without canonical RAW
+  // (for example when an upstream template was unavailable during capture).
+  // Keep canonical source_wikitext untouched, but let the English renderer
+  // load those rows so reviewed content_wikitext can serve as the dependency.
+  if (url.searchParams.get("source_wikitext") === "not.is.null") {
+    url.searchParams.delete("source_wikitext");
+    const existingOr = String(url.searchParams.get("or") || "").trim();
+    const contentOr = "(source_wikitext.not.is.null,content_wikitext.not.is.null)";
+    if (!existingOr) url.searchParams.set("or", contentOr);
+  }
   const select = String(url.searchParams.get("select") || "");
   if (!select) return url.toString();
   const fields = new Set(select.split(",").map((item) => item.trim()).filter(Boolean));
