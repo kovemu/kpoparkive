@@ -1,0 +1,23 @@
+name: Pipeline Check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/namu-pipeline*.mjs"
+      - "scripts/namu-*-worker.mjs"
+      - "scripts/namu-scope.mjs"
+      - "scripts/lib/pipeline-db.mjs"
+      - "package.json"
+      - ".github/workflows/pipeline-check.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm run namu:pipeline:check
