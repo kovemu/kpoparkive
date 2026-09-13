@@ -1,0 +1,479 @@
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROOT = process.cwd();
+const SUPABASE_URL = String(
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    "https://hukrrzhltiyirtkxmotj.supabase.co",
+).replace(/\/$/, "");
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const ADMIN_KEY = process.env.KPOPARKIVE_ADMIN_KEY || "";
+const CONTROL_DIR = path.join(ROOT, ".kpoparkive-data", "pipeline-control");
+
+function isLocalRequest(request: Request) {
+  if (process.env.KPOPARKIVE_ALLOW_LOCAL_PIPELINE === "1") return true;
+  const host = String(
+    request.headers.get("x-forwarded-host") ||
+      request.headers.get("host") ||
+      "",
+  ).toLowerCase();
+
+  return (
+    host.startsWith("localhost:") ||
+    host === "localhost" ||
+    host.startsWith("127.0.0.1:") ||
+    host === "127.0.0.1"
+  );
+}
+
+function unauthorized(request: Request) {
+  if (!isLocalRequest(request)) {
+    return NextResponse.json(
+      {
+        error:
+          "Pipeline control is local-only. Open this page from localhost.",
+      },
+      { status: 403 },
+    );
+  }
+
+  if (!ADMIN_KEY || request.headers.get("x-admin-key") !== ADMIN_KEY) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!SERVICE_ROLE_KEY) {
+    return NextResponse.json(
+      { error: "SUPABASE_SERVICE_ROLE_KEY is not configured." },
+      { status: 500 },
+    );
+  }
+
+  return null;
+}
+
+function headers(extra: Record<string, string> = {}) {
+  return {
+    apikey: SERVICE_ROLE_KEY,
+    Authorization: "Bearer " + SERVICE_ROLE_KEY,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
+async function db(pathname: string, init: RequestInit = {}) {
+  const response = await fetch(SUPABASE_URL + "/rest/v1/" + pathname, {
+    ...init,
+    headers: {
+      ...headers(),
+      ...(init.headers || {}),
+    },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      "Supabase " + response.status + ": " + text.slice(0, 1200),
+    );
+  }
+
+  return text ? JSON.parse(text) : null;
+}
+
+function normalizeRoot(value: unknown) {
+  return String(value || "").normalize("NFKC").trim();
+}
+
+function rootKey(rootTitle: string) {
+  return Buffer.from(rootTitle, "utf8").toString("base64url").slice(0, 100);
+}
+
+function controlPath(rootTitle: string) {
+  return path.join(CONTROL_DIR, rootKey(rootTitle) + ".json");
+}
+
+function logPath(rootTitle: string) {
+  return path.join(CONTROL_DIR, rootKey(rootTitle) + ".log");
+}
+
+function readJson(filePath: string) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function tailFile(filePath: string, maxChars = 24000) {
+  try {
+    if (!fs.existsSync(filePath)) return "";
+    const value = fs.readFileSync(filePath, "utf8");
+    return value.slice(-maxChars);
+  } catch {
+    return "";
+  }
+}
+
+function runScopeCheck(rootTitle: string) {
+  return new Promise<any>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        path.join(ROOT, "scripts", "namu-scope.mjs"),
+        "--root=" + encodeURIComponent(rootTitle),
+        "--json",
+      ],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.once("error", reject);
+
+    child.once("exit", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            stderr.trim() ||
+              stdout.trim() ||
+              "Collection scope check failed.",
+          ),
+        );
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(new Error("Scope check returned invalid JSON."));
+      }
+    });
+  });
+}
+
+async function latestRun(rootTitle: string) {
+  const rows = await db(
+    "pipeline_runs?root_title=eq." +
+      encodeURIComponent(rootTitle) +
+      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,runner_id,heartbeat_at,created_at,started_at,updated_at,finished_at" +
+      "&order=created_at.desc&limit=1",
+  );
+
+  return rows?.[0] || null;
+}
+
+async function runJobs(runId: string) {
+  if (!runId) return [];
+
+  return (
+    (await db(
+      "pipeline_jobs?run_id=eq." +
+        encodeURIComponent(runId) +
+        "&select=id,source_title,stage,status,attempt,max_attempts,chunk_current,chunk_total,last_error,updated_at" +
+        "&order=source_title.asc,stage.asc",
+    )) || []
+  );
+}
+
+function summarizeJobs(jobs: any[]) {
+  const byStage: Record<string, Record<string, number>> = {};
+  const review: any[] = [];
+
+  for (const job of jobs) {
+    if (!byStage[job.stage]) byStage[job.stage] = {};
+    byStage[job.stage][job.status] =
+      (byStage[job.stage][job.status] || 0) + 1;
+
+    if (["needs_review", "failed"].includes(job.status)) {
+      review.push(job);
+    }
+  }
+
+  return { byStage, review };
+}
+
+async function recentRoots() {
+  const rows =
+    (await db(
+      "source_documents?select=root_title,source_title,updated_at" +
+        "&root_title=not.is.null" +
+        "&order=updated_at.desc&limit=1000",
+    )) || [];
+
+  const seen = new Set<string>();
+  const roots: any[] = [];
+
+  for (const row of rows) {
+    const root = normalizeRoot(row.root_title);
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    roots.push({
+      rootTitle: root,
+      sourceTitle: row.source_title,
+      updatedAt: row.updated_at,
+    });
+    if (roots.length >= 80) break;
+  }
+
+  return roots;
+}
+
+function startRunner(rootTitle: string, retryReview = false) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "OPENAI_API_KEY is missing in local .env.local.",
+    );
+  }
+
+  fs.mkdirSync(CONTROL_DIR, { recursive: true });
+
+  const outputPath = logPath(rootTitle);
+  const outFd = fs.openSync(outputPath, "a");
+
+  const args = [
+    path.join(ROOT, "scripts", "namu-pipeline-start.mjs"),
+    "--root=" + encodeURIComponent(rootTitle),
+  ];
+
+  if (retryReview) args.push("--retry-review");
+
+  const child = spawn(process.execPath, args, {
+    cwd: ROOT,
+    env: process.env,
+    detached: true,
+    stdio: ["ignore", outFd, outFd],
+  });
+
+  child.unref();
+  fs.closeSync(outFd);
+
+  const control = {
+    rootTitle,
+    pid: child.pid,
+    startedAt: new Date().toISOString(),
+    retryReview,
+    logPath: outputPath,
+  };
+
+  fs.writeFileSync(
+    controlPath(rootTitle),
+    JSON.stringify(control, null, 2) + "\n",
+    "utf8",
+  );
+
+  return control;
+}
+
+function stopRunner(rootTitle: string) {
+  const control = readJson(controlPath(rootTitle));
+  const pid = Number(control?.pid || 0);
+
+  if (!pid) {
+    return { stopped: false, reason: "No local runner PID found." };
+  }
+
+  try {
+    if (process.platform === "win32") {
+      const result = spawnSync(
+        "taskkill",
+        ["/PID", String(pid), "/T", "/F"],
+        { encoding: "utf8" },
+      );
+
+      return {
+        stopped: result.status === 0,
+        pid,
+        output: String(result.stdout || result.stderr || "").trim(),
+      };
+    }
+
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      process.kill(pid, "SIGTERM");
+    }
+
+    return { stopped: true, pid };
+  } catch (error) {
+    return {
+      stopped: false,
+      pid,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function markRunPaused(rootTitle: string) {
+  const run = await latestRun(rootTitle);
+  if (!run?.id || !["queued", "running"].includes(run.status)) return run;
+
+  const now = new Date().toISOString();
+
+  await db(
+    "pipeline_runs?id=eq." + encodeURIComponent(run.id),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "paused",
+        runner_id: null,
+        heartbeat_at: null,
+        updated_at: now,
+      }),
+    },
+  );
+
+  return latestRun(rootTitle);
+}
+
+export async function GET(request: Request) {
+  const denied = unauthorized(request);
+  if (denied) return denied;
+
+  try {
+    const url = new URL(request.url);
+    const rootTitle = normalizeRoot(url.searchParams.get("root"));
+
+    if (!rootTitle) {
+      return NextResponse.json({
+        ok: true,
+        localOnly: true,
+        roots: await recentRoots(),
+      });
+    }
+
+    const run = await latestRun(rootTitle);
+    const jobs = run?.id ? await runJobs(run.id) : [];
+    const control = readJson(controlPath(rootTitle));
+
+    return NextResponse.json({
+      ok: true,
+      localOnly: true,
+      rootTitle,
+      run,
+      jobsSummary: summarizeJobs(jobs),
+      control,
+      logTail: tailFile(logPath(rootTitle)),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  const denied = unauthorized(request);
+  if (denied) return denied;
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const action = String(body?.action || "");
+    const rootTitle = normalizeRoot(body?.rootTitle);
+
+    if (!rootTitle) {
+      return NextResponse.json(
+        { error: "rootTitle is required." },
+        { status: 400 },
+      );
+    }
+
+    if (action === "check") {
+      const collection = await runScopeCheck(rootTitle);
+
+      return NextResponse.json({
+        ok: true,
+        rootTitle,
+        collection,
+        ready: Number(collection?.needsRawCount || 0) === 0,
+      });
+    }
+
+    if (action === "start" || action === "retry") {
+      const collection = await runScopeCheck(rootTitle);
+
+      if (Number(collection?.needsRawCount || 0) > 0) {
+        return NextResponse.json(
+          {
+            error: "Collection is incomplete.",
+            code: "COLLECTION_REQUIRED",
+            rootTitle,
+            collection,
+          },
+          { status: 409 },
+        );
+      }
+
+      const current = await latestRun(rootTitle);
+
+      if (
+        current?.status === "running" &&
+        current?.heartbeat_at &&
+        Date.now() - Date.parse(current.heartbeat_at) < 120000
+      ) {
+        return NextResponse.json({
+          ok: true,
+          alreadyRunning: true,
+          rootTitle,
+          run: current,
+        });
+      }
+
+      const control = startRunner(rootTitle, action === "retry");
+
+      return NextResponse.json({
+        ok: true,
+        rootTitle,
+        collection,
+        control,
+      });
+    }
+
+    if (action === "stop") {
+      const stop = stopRunner(rootTitle);
+      const run = await markRunPaused(rootTitle);
+
+      return NextResponse.json({
+        ok: true,
+        rootTitle,
+        stop,
+        run,
+      });
+    }
+
+    return NextResponse.json(
+      { error: "Unsupported action." },
+      { status: 400 },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
+  }
+}
