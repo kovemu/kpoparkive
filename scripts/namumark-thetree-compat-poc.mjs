@@ -114,6 +114,14 @@ function buildEnglishDisplayLabelMap(rows = []) {
     ["멕시코", "Mexico"],
     ["네덜란드", "Netherlands"],
     ["마카오", "Macau"],
+    ["벨기에", "Belgium"],
+    ["콜롬비아", "Colombia"],
+    ["사우디아라비아", "Saudi Arabia"],
+    ["아랍에미리트", "United Arab Emirates"],
+    ["방탄소년단/음반 목록", "BTS / Discography List"],
+    ["RM/논란 및 사건 사고", "RM / Controversies and Incidents"],
+    ["빌보드 차트/기록", "Billboard Charts / Records"],
+    ["틀:HYBE", "HYBE"],
   ]);
 
   const set = (target, label) => {
