@@ -43,9 +43,30 @@ async function fetchDocument(id) {
   const rows = await pipelineDb(
     "source_documents?id=eq." +
       encodeURIComponent(id) +
-      "&select=id,source_title,source_wikitext,source_namumark_meta,source_namumark_rendered_at&limit=1",
+      "&select=id,root_title,source_title,source_wikitext,source_namumark_meta,source_namumark_rendered_at&limit=1",
   );
   return rows?.[0] || null;
+}
+
+function runNodeScript(script, scriptArgs = [], acceptableCodes = [0]) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [path.resolve(ROOT, script), ...scriptArgs],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (acceptableCodes.includes(Number(code ?? 0))) resolve(Number(code ?? 0));
+      else reject(new Error(
+        script + " exited code=" + String(code) + " signal=" + String(signal || "none")
+      ));
+    });
+  });
 }
 
 function runSourceRenderer(title) {
@@ -65,6 +86,63 @@ function runSourceRenderer(title) {
       else reject(new Error("source renderer exited code=" + String(code) + " signal=" + String(signal || "none")));
     });
   });
+}
+
+async function repairDependencies(doc) {
+  let current = doc;
+  let meta = current?.source_namumark_meta || {};
+  const missingFiles = Array.isArray(meta?.missingFiles) ? meta.missingFiles : [];
+  const missingTemplates = Array.isArray(meta?.missingTemplates) ? meta.missingTemplates : [];
+
+  if (missingFiles.length > 0 && current?.root_title) {
+    console.log("SOURCE REPAIR files=" + missingFiles.length + " · " + current.source_title);
+    await runNodeScript(
+      "scripts/namu-browser-image-worker-safe.mjs",
+      ["--root", current.root_title, "--renderer-missing"],
+      [0],
+    ).catch((error) => {
+      console.warn("ASSET REPAIR WARN " + String(error?.message || error));
+    });
+
+    await runNodeScript(
+      "scripts/namu-dom-video-recover.mjs",
+      [current.source_title],
+      [0, 3],
+    ).catch((error) => {
+      console.warn("VIDEO REPAIR WARN " + String(error?.message || error));
+    });
+
+    await runSourceRenderer(current.source_title);
+    current = await fetchDocument(current.id);
+    meta = current?.source_namumark_meta || {};
+  }
+
+  const unresolvedTemplates = Array.isArray(meta?.missingTemplates)
+    ? meta.missingTemplates
+    : missingTemplates;
+
+  for (const templateTitle of unresolvedTemplates.slice(0, 30)) {
+    console.log("SOURCE REPAIR template=" + templateTitle + " · owner=" + current.source_title);
+    await runNodeScript(
+      "scripts/namu-dom-template-recover.mjs",
+      [current.source_title, String(templateTitle)],
+      [0, 2],
+    ).catch((error) => {
+      console.warn(
+        "TEMPLATE REPAIR WARN " +
+          String(templateTitle) +
+          " · " +
+          String(error?.message || error),
+      );
+    });
+  }
+
+  if (unresolvedTemplates.length > 0) {
+    await runSourceRenderer(current.source_title);
+    current = await fetchDocument(current.id);
+  }
+
+  return current;
 }
 
 function validateSource(doc) {
@@ -122,8 +200,19 @@ while (true) {
     console.log("SOURCE RENDER " + before.source_title + " · attempt=" + job.attempt + "/" + job.max_attempts);
     await runSourceRenderer(before.source_title);
 
-    const after = await fetchDocument(job.source_document_id);
-    const blockers = validateSource(after);
+    let after = await fetchDocument(job.source_document_id);
+    let blockers = validateSource(after);
+
+    if (
+      blockers.some((value) =>
+        value.startsWith("source_missing_files:") ||
+        value.startsWith("source_missing_templates:")
+      )
+    ) {
+      after = await repairDependencies(after);
+      blockers = validateSource(after);
+    }
+
     if (blockers.length) throw new Error("source_qa_failed:" + blockers.join("|"));
 
     await enqueuePipelineStage(job, "translation");
