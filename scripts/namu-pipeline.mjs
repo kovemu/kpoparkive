@@ -42,6 +42,7 @@ const rootTitle = decodeURIComponent(
   .normalize("NFKC")
   .trim();
 const json = args.includes("--json");
+const persist = args.includes("--persist");
 const expectedArg = args.find((arg) => arg.startsWith("--expected-count="));
 const expectedCount = expectedArg ? Number(expectedArg.split("=")[1]) : null;
 
@@ -75,11 +76,14 @@ function metaCount(meta, countKey, arrayKey = countKey) {
   return Array.isArray(meta[arrayKey]) ? meta[arrayKey].length : 0;
 }
 
-async function db(pathname) {
+async function db(pathname, init = {}) {
   const response = await fetch(`${supabaseUrl}/rest/v1/${pathname}`, {
+    ...init,
     headers: {
       apikey: serviceRoleKey,
       Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
     },
     cache: "no-store",
   });
@@ -457,7 +461,7 @@ const stageCounts = Object.fromEntries(
 
 const summary = {
   rootTitle,
-  mode: "status-only",
+  mode: persist ? "status+persist" : "status-only",
   scopeCount: results.length,
   expectedCount,
   scopeCountMatches:
@@ -468,11 +472,77 @@ const summary = {
   generatedAt: new Date().toISOString(),
 };
 
+let persistedRun = null;
+if (persist) {
+  const runRows = await db("pipeline_runs", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      root_title: rootTitle,
+      status: "queued",
+      scope_count: results.length,
+      config: {
+        controllerVersion: 1,
+        createdFrom: "namu:pipeline --persist",
+        snapshotAt: summary.generatedAt,
+      },
+    }),
+  });
+  persistedRun = runRows?.[0] || null;
+  if (!persistedRun?.id) {
+    throw new Error("Failed to create pipeline run");
+  }
+
+  const stageMap = {
+    RAW: "raw",
+    SOURCE_RENDER: "source_render",
+    TRANSLATION: "translation",
+    EN_RENDER: "en_render",
+    PUBLISH: "publish",
+    COMPLETE: "integration_qa",
+  };
+
+  const jobs = results.map((row) => ({
+    run_id: persistedRun.id,
+    source_document_id: row.sourceDocumentId,
+    source_title: row.sourceTitle,
+    stage: stageMap[row.stage] || "raw",
+    status: "queued",
+    attempt: 0,
+    max_attempts: 3,
+    chunk_current: 0,
+    chunk_total: 0,
+    checkpoint: {
+      controllerStage: row.stage,
+      controllerStatus: row.status,
+      blockers: row.blockers,
+      contentRevision: row.contentRevision || 0,
+      publishedRevision: row.publishedRevision || 0,
+      snapshotAt: summary.generatedAt,
+    },
+  }));
+
+  if (jobs.length > 0) {
+    await db(
+      "pipeline_jobs?on_conflict=run_id,source_document_id,stage",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body: JSON.stringify(jobs),
+      },
+    );
+  }
+
+  summary.persistedRunId = persistedRun.id;
+}
+
 if (json) {
   console.log(JSON.stringify({ summary, results }, null, 2));
 } else {
   console.log("");
-  console.log("Kpoparkive Pipeline Controller · STATUS ONLY");
+  console.log("Kpoparkive Pipeline Controller · " + (persist ? "PERSIST" : "STATUS ONLY"));
   console.log("root=" + rootTitle);
   console.log(
     "scope=" +
@@ -508,9 +578,14 @@ if (json) {
   }
 
   console.log("");
-  console.log(
-    "This command is read-only. It does not translate, render, publish, or modify database rows.",
-  );
+  if (persistedRun?.id) {
+    console.log("Persistent run created: " + persistedRun.id);
+    console.log("Only pipeline_runs/pipeline_jobs were written; source documents were not modified.");
+  } else {
+    console.log(
+      "This command is read-only. It does not translate, render, publish, or modify database rows.",
+    );
+  }
 }
 
 const countMismatch =
