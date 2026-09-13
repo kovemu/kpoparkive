@@ -351,6 +351,51 @@ async function reconcileExactStagedAssets(target, renderSource, existingRows) {
       "&select=id,root_title,source_title,file_name,canonical_key,storage_path,content_type,byte_length,width,height,captured_at,metadata" +
       "&order=captured_at.desc",
   );
+  // Parameterized templates such as 틀:국기 create concrete file
+  // names only during The Tree rendering (e.g. @국명@ -> 영국 국기.svg).
+  // Those names are therefore absent from the pre-render source scan. Browser
+  // capture still records the exact SVG alt, so preload exact, non-truncated
+  // anonymous SVG captures from the same root as virtual file documents.
+  for (const row of stagedRows || []) {
+    if (normalizeTitle(row?.root_title || "") !== normalizeTitle(target.root_title || target.source_title || "")) continue;
+    const fileName = String(row?.file_name || "");
+    if (!/^__anonymous__/i.test(fileName)) continue;
+    if (!/\.svg$/i.test(String(row?.storage_path || ""))) continue;
+
+    const rawAlt = normalizeTitle(row?.metadata?.alt || "").trim();
+    if (!rawAlt || /(?:\.\.\.|…)$/.test(rawAlt)) continue;
+    const inferredName = /\.svg$/i.test(rawAlt) ? rawAlt : `${rawAlt}.svg`;
+    const inferredKey = canonicalAssetKey(inferredName);
+    if (!inferredKey || resolvedKeys.has(inferredKey)) continue;
+
+    const resolvedUrl = stagedAssetPublicUrl(row);
+    if (!resolvedUrl) continue;
+    const metadata = {
+      ...(row.metadata && typeof row.metadata === "object" ? row.metadata : {}),
+      content_type: row.content_type || "image/svg+xml",
+      bytes: Number(row.byte_length || 0) || 0,
+      width: Number(row.width || 0) || 0,
+      height: Number(row.height || 0) || 0,
+      resolved_from: "captured-dom-staging-anonymous-svg-alt",
+      browser_capture_at: row.captured_at || null,
+      browser_match_method: "staging-anonymous-svg-alt-exact",
+    };
+
+    output.push({
+      id: `staging-alt:${row.id}`,
+      root_title: target.root_title || target.source_title,
+      source_title: target.source_title,
+      source_ref: `파일:${inferredName}`,
+      label: inferredName,
+      status: "resolved",
+      resolved_url: resolvedUrl,
+      storage_path: row.storage_path,
+      confidence: 0.998,
+      metadata,
+    });
+    resolvedKeys.add(inferredKey);
+  }
+
   const stagedByKey = new Map();
   const stagedByAlt = new Map();
   for (const row of stagedRows || []) {
@@ -1668,7 +1713,7 @@ async function main() {
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
     fallbackExtractorVersion: 5,
-    assetReconcilerVersion: 4,
+    assetReconcilerVersion: 5,
     assetDependencyTemplateCount: reachableAssetSource.templateCount,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
