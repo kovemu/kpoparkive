@@ -7,6 +7,7 @@ on:
       - "scripts/namu-pipeline*.mjs"
       - "scripts/namu-*-worker.mjs"
       - "scripts/namu-scope.mjs"
+      - "scripts/namu-batch.mjs"
       - "scripts/lib/pipeline-db.mjs"
       - "package.json"
       - ".github/workflows/pipeline-check.yml"
