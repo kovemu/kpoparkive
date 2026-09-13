@@ -542,6 +542,39 @@ function extractIncludeTitles(rawValue) {
   return output;
 }
 
+function collectReachableTemplateAssetSource(renderSource, rawRows = []) {
+  const byTitle = new Map(
+    (rawRows || [])
+      .filter((row) => row?.source_title && typeof row?.source_wikitext === "string" && row.source_wikitext.length > 0)
+      .map((row) => [normalizeTitle(row.source_title), String(row.source_wikitext)])
+  );
+  const chunks = [String(renderSource || "")];
+  const queue = extractIncludeTitles(renderSource)
+    .map((title) => normalizeTitle(title))
+    .filter((title) => /^틀:/i.test(title));
+  const visited = new Set();
+
+  while (queue.length) {
+    const title = queue.shift();
+    if (!title || visited.has(title)) continue;
+    visited.add(title);
+
+    const source = byTitle.get(title);
+    if (!source) continue;
+    chunks.push(source);
+
+    for (const nested of extractIncludeTitles(source)) {
+      const normalized = normalizeTitle(nested);
+      if (/^틀:/i.test(normalized) && !visited.has(normalized)) queue.push(normalized);
+    }
+  }
+
+  return {
+    source: chunks.join("\n"),
+    templateCount: visited.size,
+  };
+}
+
 function findIncludeRanges(rawValue) {
   const raw = String(rawValue || "");
   const lines = raw.split(/\r?\n/);
@@ -1478,7 +1511,8 @@ async function main() {
     "source_asset_queue?asset_type=eq.image&status=eq.resolved" +
       "&select=id,root_title,source_title,source_ref,label,status,resolved_url,storage_path,metadata&order=id.asc",
   );
-  const assetRows = await reconcileExactStagedAssets(target, renderSource, loadedAssetRows || []);
+  const reachableAssetSource = collectReachableTemplateAssetSource(renderSource, rawRows || []);
+  const assetRows = await reconcileExactStagedAssets(target, reachableAssetSource.source, loadedAssetRows || []);
 
   const virtualWiki = makeVirtualWiki(rawRows || [], assetRows || []);
   const targetDoc = virtualWiki.byFullTitle.get(fullTitle(parseDocumentName(title)));
@@ -1602,7 +1636,8 @@ async function main() {
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
     fallbackExtractorVersion: 5,
-    assetReconcilerVersion: 2,
+    assetReconcilerVersion: 3,
+    assetDependencyTemplateCount: reachableAssetSource.templateCount,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
     virtualDocuments: virtualWiki.docs.length,
