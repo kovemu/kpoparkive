@@ -83,7 +83,7 @@ export async function enqueuePipelineStage(job, stage, maxAttempts = 3) {
     "pipeline_jobs?on_conflict=run_id,source_document_id,stage",
     {
       method: "POST",
-      headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
         run_id: job.run_id,
         source_document_id: job.source_document_id,
@@ -92,7 +92,14 @@ export async function enqueuePipelineStage(job, stage, maxAttempts = 3) {
         status: "queued",
         attempt: 0,
         max_attempts: maxAttempts,
+        chunk_current: 0,
+        chunk_total: 0,
         checkpoint: {},
+        last_error: null,
+        locked_by: null,
+        locked_at: null,
+        started_at: null,
+        finished_at: null,
         updated_at: new Date().toISOString(),
       }),
     },
