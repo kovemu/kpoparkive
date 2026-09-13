@@ -329,16 +329,48 @@ async function templateDependenciesReady(rootTitle) {
     }
   }
 
+  const terminalJobs =
+    ids.length > 0
+      ? (
+          (await pipelineDb(
+            "pipeline_jobs?run_id=eq." +
+              encodeURIComponent(runId) +
+              "&source_document_id=in." +
+              encodeURIComponent("(" + ids.join(",") + ")") +
+              "&status=in.(needs_review,failed)" +
+              "&select=source_document_id,source_title,stage,status,last_error",
+          )) || []
+        )
+      : [];
+
   return {
     ready: missing.length === 0,
     missing,
+    terminalJobs,
   };
 }
 
 async function deferForTemplates(job, rootTitle) {
   const state = await templateDependenciesReady(rootTitle);
 
-  if (state.ready) return false;
+  if (state.ready) return "ready";
+
+  if (state.terminalJobs.length > 0) {
+    await updatePipelineJob(job.id, {
+      status: "skipped",
+      locked_by: null,
+      locked_at: null,
+      last_error:
+        "blocked_by_template_review:" +
+        state.terminalJobs
+          .slice(0, 8)
+          .map((item) => item.source_title + ":" + item.stage)
+          .join(","),
+      finished_at: new Date().toISOString(),
+    });
+
+    return "blocked";
+  }
 
   await updatePipelineJob(job.id, {
     status: "queued",
@@ -353,7 +385,7 @@ async function deferForTemplates(job, rootTitle) {
         .join(","),
   });
 
-  return true;
+  return "waiting";
 }
 
 async function fetchStageJob(job, stage) {
@@ -495,19 +527,21 @@ while (true) {
 
   try {
     if (!templateDocument) {
-      const deferred = await deferForTemplates(
+      const dependencyState = await deferForTemplates(
         job,
         before.root_title,
       );
 
-      if (deferred) {
+      if (dependencyState !== "ready") {
         console.log(
-          "RENDER WAIT " +
+          (dependencyState === "blocked" ? "RENDER BLOCKED " : "RENDER WAIT ") +
             before.source_title +
             " · template dependencies not ready",
         );
 
-        await sleep(1200);
+        if (dependencyState === "waiting") {
+          await sleep(1200);
+        }
 
         if (once) break;
         continue;
