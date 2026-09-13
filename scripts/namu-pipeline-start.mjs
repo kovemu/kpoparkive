@@ -26,6 +26,10 @@ const dryRun = args.includes("--dry-run");
 const skipImport = args.includes("--skip-import");
 const skipHttp = args.includes("--skip-http");
 const refreshImport = args.includes("--refresh-import");
+const retryReview = args.includes("--retry-review");
+const runnerId =
+  valueArg("runner-id") ||
+  "runner-" + process.pid + "-" + Date.now().toString(36);
 
 const maxDepth = Math.max(0, Math.min(4, Number(valueArg("max-depth") || 2) || 2));
 const maxDocuments = Math.max(
@@ -395,21 +399,149 @@ async function fetchRun(runId) {
   const rows = await pipelineDb(
     "pipeline_runs?id=eq." +
       encodeURIComponent(runId) +
-      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,created_at,started_at,updated_at,finished_at&limit=1",
+      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,runner_id,heartbeat_at,created_at,started_at,updated_at,finished_at&limit=1",
   );
   return rows?.[0] || null;
 }
 
-async function setRunRunning(runId) {
-  await pipelineDb("pipeline_runs?id=eq." + encodeURIComponent(runId), {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
+async function findActiveRun(root) {
+  const rows = await pipelineDb(
+    "pipeline_runs?root_title=eq." +
+      encodeURIComponent(root) +
+      "&status=in.(queued,running,paused)" +
+      "&select=id,root_title,status,scope_count,completed_count,failed_count,review_count,runner_id,heartbeat_at,created_at,started_at,updated_at,finished_at" +
+      "&order=created_at.desc&limit=1",
+  );
+  return rows?.[0] || null;
+}
+
+async function claimRunLease(runId) {
+  const result = await pipelineDb("rpc/claim_pipeline_run", {
+    method: "POST",
     body: JSON.stringify({
-      status: "running",
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      p_run_id: runId,
+      p_runner_id: runnerId,
+      p_stale_seconds: 120,
     }),
   });
+  if (typeof result === "boolean") return result;
+  if (Array.isArray(result)) return Boolean(result[0]);
+  return Boolean(result);
+}
+
+async function heartbeatRun(runId) {
+  await pipelineDb(
+    "pipeline_runs?id=eq." +
+      encodeURIComponent(runId) +
+      "&runner_id=eq." +
+      encodeURIComponent(runnerId),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        heartbeat_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+}
+
+async function releaseRunLease(runId) {
+  if (!runId) return;
+  await pipelineDb(
+    "pipeline_runs?id=eq." +
+      encodeURIComponent(runId) +
+      "&runner_id=eq." +
+      encodeURIComponent(runnerId),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        runner_id: null,
+        heartbeat_at: null,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  ).catch(() => {});
+}
+
+async function recoverInterruptedJobs(runId) {
+  const rows = await pipelineDb(
+    "pipeline_jobs?run_id=eq." +
+      encodeURIComponent(runId) +
+      "&status=eq.running" +
+      "&select=id,source_title,stage",
+  );
+
+  if (!rows?.length) return 0;
+
+  await pipelineDb(
+    "pipeline_jobs?run_id=eq." +
+      encodeURIComponent(runId) +
+      "&status=eq.running",
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "retry",
+        locked_by: null,
+        locked_at: null,
+        last_error: "Recovered after previous pipeline runner stopped.",
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+
+  return rows.length;
+}
+
+async function retryReviewJobs(runId) {
+  const rows = await pipelineDb(
+    "pipeline_jobs?run_id=eq." +
+      encodeURIComponent(runId) +
+      "&status=in.(needs_review,failed)" +
+      "&select=id",
+  );
+  if (!rows?.length) return 0;
+
+  await pipelineDb(
+    "pipeline_jobs?run_id=eq." +
+      encodeURIComponent(runId) +
+      "&status=in.(needs_review,failed)",
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "retry",
+        locked_by: null,
+        locked_at: null,
+        finished_at: null,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  return rows.length;
+}
+
+async function setRunRunning(runId) {
+  const current = await fetchRun(runId);
+  const now = new Date().toISOString();
+  await pipelineDb(
+    "pipeline_runs?id=eq." +
+      encodeURIComponent(runId) +
+      "&runner_id=eq." +
+      encodeURIComponent(runnerId),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "running",
+        started_at: current?.started_at || now,
+        heartbeat_at: now,
+        updated_at: now,
+      }),
+    },
+  );
 }
 
 async function jobSummary(runId) {
@@ -489,6 +621,13 @@ async function monitorRun() {
   while (!stopping) {
     const run = await fetchRun(activeRunId);
     if (!run) throw new Error("pipeline run disappeared: " + activeRunId);
+    if (run.runner_id && run.runner_id !== runnerId) {
+      throw new Error(
+        "pipeline runner lease lost to " + run.runner_id,
+      );
+    }
+
+    await heartbeatRun(activeRunId);
 
     const { jobs, counts } = await jobSummary(activeRunId);
     const progressLine =
@@ -580,45 +719,65 @@ process.on("SIGTERM", () => {
 });
 
 try {
+  if (dryRun) {
+    console.log("Kpoparkive Pipeline Plan · DRY RUN");
+    console.log("root=" + (activeRootTitle || "(resume mode)"));
+    console.log(
+      "import depth=" +
+        maxDepth +
+        " maxDocs=" +
+        maxDocuments +
+        " maxCore=" +
+        maxCore,
+    );
+    console.log(
+      "workers raw=1 source=" +
+        sourceWorkers +
+        " translate=" +
+        translateWorkers +
+        " render=" +
+        renderWorkers +
+        " publish=1 integration=" +
+        integrationWorkers,
+    );
+    console.log("No database rows or source documents were modified.");
+    process.exit(0);
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "OPENAI_API_KEY is required before production translation workers can start.",
+    );
+  }
+
+  let resumingExisting = false;
+
   if (resumeRunId) {
     const run = await fetchRun(resumeRunId);
     if (!run) throw new Error("Pipeline run not found: " + resumeRunId);
     activeRunId = run.id;
     activeRootTitle = run.root_title;
-    console.log(
-      "RESUME " +
-        activeRootTitle +
-        " · run=" +
-        activeRunId +
-        " · status=" +
-        run.status,
-    );
+    resumingExisting = true;
   } else {
-    if (dryRun) {
-      console.log("Kpoparkive Pipeline Plan · DRY RUN");
-      console.log("root=" + activeRootTitle);
-      console.log(
-        "import depth=" +
-          maxDepth +
-          " maxDocs=" +
-          maxDocuments +
-          " maxCore=" +
-          maxCore,
-      );
-      console.log(
-        "workers raw=1 source=" +
-          sourceWorkers +
-          " translate=" +
-          translateWorkers +
-          " render=" +
-          renderWorkers +
-          " publish=1 integration=" +
-          integrationWorkers,
-      );
-      console.log("No database rows or source documents were modified.");
-      process.exit(0);
-    }
+    const existingRun = await findActiveRun(activeRootTitle);
+    if (existingRun) {
+      if (existingRun.status === "paused" && !retryReview) {
+        console.error(
+          "Existing pipeline is paused for review: " +
+            existingRun.id +
+            ". Re-run with --retry-review after fixing the blocker.",
+        );
+        process.exitCode = 3;
+        process.exit();
+      }
 
+      activeRunId = existingRun.id;
+      activeRootTitle = existingRun.root_title;
+      resumingExisting = true;
+    }
+  }
+
+  if (!resumingExisting) {
     await bootstrapImport();
     await generateScope();
 
@@ -631,12 +790,38 @@ try {
         " · root=" +
         activeRootTitle,
     );
+  } else {
+    const run = await fetchRun(activeRunId);
+    console.log(
+      "RESUME " +
+        activeRootTitle +
+        " · run=" +
+        activeRunId +
+        " · status=" +
+        run?.status,
+    );
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  const leased = await claimRunLease(activeRunId);
+  if (!leased) {
+    const run = await fetchRun(activeRunId);
     throw new Error(
-      "OPENAI_API_KEY is required before production translation workers can start.",
+      "Another pipeline runner is active for this run: " +
+        String(run?.runner_id || "unknown"),
     );
+  }
+
+  if (resumingExisting) {
+    const recovered = await recoverInterruptedJobs(activeRunId);
+    if (recovered > 0) {
+      console.log("Recovered " + recovered + " interrupted job(s).");
+    }
+    if (retryReview) {
+      const retried = await retryReviewJobs(activeRunId);
+      if (retried > 0) {
+        console.log("Re-queued " + retried + " review/failed job(s).");
+      }
+    }
   }
 
   await setRunRunning(activeRunId);
@@ -644,12 +829,14 @@ try {
   startWorkers();
 
   const exitCode = await monitorRun();
+  await releaseRunLease(activeRunId);
   stopAll();
   process.exitCode = exitCode;
 } catch (error) {
   console.error(
     "PIPELINE FATAL · " + String(error?.stack || error?.message || error),
   );
+  await releaseRunLease(activeRunId);
   stopAll();
   process.exitCode = 1;
 }
