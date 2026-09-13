@@ -40,6 +40,29 @@ type RunStatus = {
   finished_at?: string | null;
 };
 
+type BatchStatus = {
+  control?: {
+    roots?: string[];
+    pid?: number;
+    startedAt?: string;
+  } | null;
+  state?: {
+    updatedAt?: string;
+    teams?: Record<
+      string,
+      {
+        status?: string;
+        attempts?: number;
+        startedAt?: string;
+        completedAt?: string;
+        lastExitCode?: number;
+      }
+    >;
+  } | null;
+  logTail?: string;
+  batch?: BatchStatus | null;
+};
+
 type StatusResponse = {
   run?: RunStatus | null;
   capture?: {
@@ -108,6 +131,8 @@ export default function PipelineAdminPage() {
   const [roots, setRoots] = useState<RootRow[]>([]);
   const [collection, setCollection] = useState<CollectionCheck | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [batch, setBatch] = useState<BatchStatus | null>(null);
+  const [batchText, setBatchText] = useState("");
   const [message, setMessage] = useState("확장프로그램 수집 완료 후 팀을 선택하세요.");
   const [busy, setBusy] = useState(false);
 
@@ -164,6 +189,7 @@ export default function PipelineAdminPage() {
     try {
       const result = await api("/api/admin/pipeline-control");
       setRoots(Array.isArray(result.roots) ? result.roots : []);
+      setBatch(result.batch || null);
 
       if (!rootTitle && result.roots?.[0]?.rootTitle) {
         setRootTitle(result.roots[0].rootTitle);
@@ -181,6 +207,7 @@ export default function PipelineAdminPage() {
         "/api/admin/pipeline-control?root=" + encodeURIComponent(rootTitle),
       );
       setStatus(result);
+      setBatch(result.batch || null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "상태 조회 실패");
     }
@@ -267,6 +294,84 @@ export default function PipelineAdminPage() {
     }
   }
 
+  function parsedBatchRoots() {
+    return [
+      ...new Set(
+        batchText
+          .split(/[\n,]+/)
+          .map((value) => value.normalize("NFKC").trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  async function runBatchAction(action: "batch_start" | "batch_stop") {
+    if (!adminKey) return;
+
+    const batchRoots = parsedBatchRoots();
+
+    if (action === "batch_start" && batchRoots.length === 0) {
+      setMessage("일괄 처리할 팀 이름을 한 줄에 하나씩 입력하세요.");
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      setMessage(
+        action === "batch_start"
+          ? "일괄 자동 처리를 시작하는 중..."
+          : "일괄 처리를 중지하는 중...",
+      );
+
+      const result = await api("/api/admin/pipeline-control", {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          roots: batchRoots,
+        }),
+      });
+
+      setBatch(result.batch || null);
+
+      if (action === "batch_start") {
+        const deferred = Array.isArray(result.deferredRoots)
+          ? result.deferredRoots
+          : [];
+
+        setMessage(
+          "일괄 자동 처리를 시작했습니다. 수집 불완전 팀은 자동으로 건너뜁니다." +
+            (deferred.length
+              ? " 현재 수집 중이라 제외: " + deferred.join(", ")
+              : ""),
+        );
+      } else {
+        setMessage("일괄 처리를 중지했습니다.");
+      }
+
+      await loadRoots();
+      await refreshStatus();
+    } catch (error: any) {
+      if (error?.payload?.batch) {
+        setBatch(error.payload.batch);
+      }
+
+      if (error?.payload?.code === "BATCH_RUNNING") {
+        setMessage("이미 일괄 처리가 실행 중입니다.");
+      } else if (error?.payload?.code === "COLLECTION_RUNNING") {
+        setMessage(
+          "선택한 팀이 아직 확장프로그램에서 수집 중입니다.",
+        );
+      } else {
+        setMessage(
+          error instanceof Error ? error.message : "일괄 처리 실패",
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const run = status?.run || null;
   const capture = status?.capture || null;
   const captureJob = capture?.job || null;
@@ -305,6 +410,22 @@ export default function PipelineAdminPage() {
             100,
         )
       : 0;
+
+  const batchTeams = batch?.state?.teams || {};
+  const batchEntries = Object.entries(batchTeams);
+  const batchCounts = batchEntries.reduce<Record<string, number>>(
+    (acc, [, item]) => {
+      const key = String(item?.status || "unknown");
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const batchActive = batchEntries.some(([, item]) =>
+    ["pending", "running", "retry"].includes(
+      String(item?.status || ""),
+    ),
+  );
 
   function forgetAdminKey() {
     try {
@@ -472,6 +593,116 @@ export default function PipelineAdminPage() {
               </>
             )}
           </div>
+        </section>
+
+        <section style={{ marginTop: 24 }}>
+          <h2>일괄 자동 처리</h2>
+          <p style={{ opacity: 0.8, lineHeight: 1.65 }}>
+            확장프로그램으로 수집을 끝낸 팀 이름을 한 줄에 하나씩 입력하세요.
+            기본 2팀을 병렬 처리합니다. 수집이 덜 된 팀은 건너뛰고 다음 팀을
+            계속 처리합니다.
+          </p>
+
+          <textarea
+            value={batchText}
+            onChange={(event) => setBatchText(event.target.value)}
+            placeholder={"BLACKPINK\naespa\nIVE"}
+            rows={6}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              marginBottom: 10,
+              padding: 10,
+              font: "inherit",
+            }}
+          />
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={busy || !adminKey || parsedBatchRoots().length === 0 || batchActive}
+              onClick={() => void runBatchAction("batch_start")}
+            >
+              일괄 자동 처리 시작
+            </button>
+
+            <button
+              type="button"
+              disabled={busy || !adminKey || !batchActive}
+              onClick={() => void runBatchAction("batch_stop")}
+            >
+              일괄 처리 중지
+            </button>
+
+            <button
+              type="button"
+              disabled={!rootTitle}
+              onClick={() => {
+                if (!rootTitle) return;
+                const current = parsedBatchRoots();
+                if (!current.includes(rootTitle)) {
+                  setBatchText([...current, rootTitle].join("\n"));
+                }
+              }}
+            >
+              현재 팀 목록에 추가
+            </button>
+          </div>
+
+          {batchEntries.length > 0 && (
+            <div
+              style={{
+                marginTop: 14,
+                border: "1px solid rgba(127,127,127,.3)",
+                borderRadius: 10,
+                padding: 14,
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                Batch 상태 ·{" "}
+                {Object.entries(batchCounts)
+                  .sort()
+                  .map(([key, value]) => key + " " + value)
+                  .join(" · ")}
+              </div>
+
+              <div style={{ maxHeight: 280, overflow: "auto" }}>
+                {batchEntries.map(([team, item]) => (
+                  <div
+                    key={team}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "6px 0",
+                      borderTop: "1px solid rgba(127,127,127,.15)",
+                    }}
+                  >
+                    <span>{team}</span>
+                    <strong>{item?.status || "unknown"}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {batch?.logTail && (
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ cursor: "pointer" }}>
+                    Batch 로그
+                  </summary>
+                  <pre
+                    className="adminStatus"
+                    style={{
+                      maxHeight: 300,
+                      overflow: "auto",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {batch.logTail}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
         </section>
 
         {collection && (
