@@ -219,6 +219,15 @@ for (const doc of cluster) {
   });
 }
 
+const missingRaw = rows
+  .filter((row) => row.status === "needs_raw")
+  .sort((a, b) => b.priority - a.priority || a.source_title.localeCompare(b.source_title, "ko"))
+  .map((row) => ({
+    title: row.source_title,
+    priority: row.priority,
+    reasons: row.reason_codes,
+  }));
+
 const summary = {
   rootTitle,
   detectorVersion: DETECTOR_VERSION,
@@ -227,7 +236,8 @@ const summary = {
   coreCount: ordered.length,
   templateDependencyCount: requiredTemplates.size,
   ignoredCount: rows.filter((row) => row.status === "ignored").length,
-  needsRawCount: rows.filter((row) => row.status === "needs_raw").length,
+  needsRawCount: missingRaw.length,
+  missingRaw,
   core: ordered.map(({ title, reason, priority, score }) => ({
     title,
     reason,
