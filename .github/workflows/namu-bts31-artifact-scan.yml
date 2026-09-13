@@ -42,7 +42,7 @@ jobs:
           const headers={apikey:key,Authorization:"Bearer "+key};
           async function db(p){const r=await fetch(base+"/rest/v1/"+p,{headers});const t=await r.text();if(!r.ok)throw Error(t);return t?JSON.parse(t):[]}
           const [doc]=await db("source_documents?source=eq.namu_mirror&source_title=eq."+encodeURIComponent("RM")+"&select=id,source_title,source_namumark_meta,source_browser_capture_meta&limit=1");
-          const rows=await db("source_asset_queue?source_document_id=eq."+doc.id+"&asset_type=eq.image&status=eq.resolved&select=label,source_ref,resolved_url,metadata&limit=1000");
+          const rows=await db("source_asset_queue?source_document_id=eq."+doc.id+"&asset_type=eq.image&status=eq.resolved&select=label,source_ref,resolved_url,storage_path,metadata&limit=1000");
           const st=doc.source_browser_capture_meta.artifact_storage;
           const p=st.article_path.split("/").map(encodeURIComponent).join("/");
           let r=await fetch(base+"/storage/v1/object/authenticated/"+encodeURIComponent(st.bucket)+"/"+p,{headers});
@@ -57,15 +57,24 @@ jobs:
           }
           const uniq=[...new Set(urls)];
           const req=doc.source_namumark_meta.requiredFiles||[];
-          function original(row){return row?.metadata?.original_url||row?.metadata?.browser_candidate_url||row?.metadata?.source_url||""}
-          const anchors=[];
-          for(const row of rows){
-            const o=original(row); if(!o)continue;
+          function matchIndex(row){
+            const sp=String(row?.storage_path||"");
+            if(sp){
+              const idx=uniq.findIndex(x=>{try{return decodeURIComponent(new URL(x).pathname).includes(sp)}catch{return String(x).includes(sp)}});
+              if(idx>=0)return {idx,key:sp,via:"storage_path"};
+            }
+            const o=row?.metadata?.original_url||row?.metadata?.browser_candidate_url||row?.metadata?.source_url||"";
+            if(!o)return null;
             let idx=uniq.indexOf(o);
             if(idx<0){
               try{const ou=new URL(o);idx=uniq.findIndex(x=>{try{const u=new URL(x);return u.pathname===ou.pathname}catch{return false}})}catch{}
             }
-            if(idx>=0)anchors.push({file:row.label||row.source_ref,url:o,index:idx});
+            return idx>=0?{idx,key:o,via:"original_url"}:null;
+          }
+          const anchors=[];
+          for(const row of rows){
+            const m=matchIndex(row); if(!m)continue;
+            anchors.push({file:row.label||row.source_ref,url:m.key,index:m.idx,via:m.via});
           }
           anchors.sort((a,b)=>a.index-b.index);
           console.log("PROBE",JSON.stringify({
