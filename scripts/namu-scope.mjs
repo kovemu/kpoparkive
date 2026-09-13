@@ -352,6 +352,55 @@ const fallbackByTemplate = await fetchTemplateFallbacks(
   [...requiredTemplates],
 );
 
+const missingDocumentTitles = [...requiredTemplates].filter(
+  (title) => !dependencyDocs.has(title),
+);
+
+function sourceUrlForTitle(title) {
+  return (
+    "https://namu.wiki/w/" +
+    String(title)
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/")
+  );
+}
+
+// A missing dependency document still needs a stable FK target so the manual
+// capture extension can fill the same source_documents row later. Dry-run never
+// creates these placeholders; --apply does.
+if (apply && missingDocumentTitles.length > 0) {
+  await pipelineDb(
+    "source_documents?on_conflict=source,source_title",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify(
+        missingDocumentTitles.map((title) => ({
+          source: "namu_mirror",
+          source_title: title,
+          source_url: sourceUrlForTitle(title),
+          root_title: rootTitle,
+          crawl_depth: 0,
+          source_format: "namumark-pending-manual-capture",
+          generation_status: "pending",
+          updated_at: new Date().toISOString(),
+        })),
+      ),
+    },
+  );
+
+  const placeholderDocs = await fetchDocumentsByTitles(
+    missingDocumentTitles,
+  );
+
+  for (const doc of placeholderDocs) {
+    dependencyDocs.set(normalized(doc.source_title), doc);
+  }
+}
+
 const allDocuments = new Map(
   cluster.map((doc) => [normalized(doc.source_title), doc]),
 );
@@ -463,20 +512,53 @@ for (const doc of cluster) {
   });
 }
 
-const missingRaw = rows
-  .filter((row) => row.status === "needs_raw")
-  .sort(
-    (a, b) =>
-      b.priority - a.priority ||
-      a.source_title.localeCompare(b.source_title, "ko"),
-  )
-  .map((row) => ({
-    title: row.source_title,
-    priority: row.priority,
-    reasons: row.reason_codes,
-  }));
+const missingRawByTitle = new Map(
+  rows
+    .filter((row) => row.status === "needs_raw")
+    .map((row) => [
+      row.source_title,
+      {
+        title: row.source_title,
+        priority: row.priority,
+        reasons: row.reason_codes,
+      },
+    ]),
+);
 
-const reusableFallbackCount = rows.filter(
+// In dry-run, missing source_documents rows do not yet have requirement rows.
+// Still expose them so the GUI tells the operator exactly what the extension
+// must collect. A captured DOM fallback is already sufficient and is excluded.
+for (const title of missingDocumentTitles) {
+  if (fallbackByTemplate.has(title)) continue;
+
+  missingRawByTitle.set(title, {
+    title,
+    priority: 70,
+    reasons: [
+      "source_document_missing",
+      "canonical_raw_missing",
+      "captured_dom_fallback_missing",
+      "core_template_dependency",
+    ],
+  });
+}
+
+const missingRaw = [...missingRawByTitle.values()].sort(
+  (a, b) =>
+    b.priority - a.priority ||
+    a.title.localeCompare(b.title, "ko"),
+);
+
+const reusableFallbackCount = [...requiredTemplates].filter(
+  (title) => {
+    const doc = dependencyDocs.get(title);
+    return !rawPresent(doc) && fallbackByTemplate.has(title);
+  },
+).length;
+
+const placeholderDependencyCount = missingDocumentTitles.length;
+
+const reusableFallbackRows = rows.filter(
   (row) =>
     row.status === "captured" &&
     row.reason_codes.includes("captured_dom_fallback"),
@@ -489,7 +571,11 @@ const summary = {
   clusterDocuments: cluster.length,
   coreCount: ordered.length,
   templateDependencyCount: requiredTemplates.size,
-  reusableFallbackCount,
+  reusableFallbackCount: Math.max(
+    reusableFallbackCount,
+    reusableFallbackRowCount,
+  ),
+  placeholderDependencyCount,
   ignoredCount: rows.filter(
     (row) => row.status === "ignored",
   ).length,
