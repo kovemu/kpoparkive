@@ -30,7 +30,8 @@
     "namu:pipeline": "node scripts/namu-pipeline.mjs",
     "namu:pipeline:queue": "node scripts/namu-pipeline-queue.mjs",
     "namu:translate-worker": "node scripts/namu-translation-worker.mjs",
-    "namu:render-worker": "node scripts/namu-render-worker.mjs"
+    "namu:render-worker": "node scripts/namu-render-worker.mjs",
+    "namu:source-worker": "node scripts/namu-source-worker.mjs"
   },
   "dependencies": {
     "next": "15.5.24",
