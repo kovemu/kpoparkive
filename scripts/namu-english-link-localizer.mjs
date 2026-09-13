@@ -1,6 +1,6 @@
 import { parse } from "node-html-parser";
 
-export const ENGLISH_LINK_LOCALIZER_VERSION = 1;
+export const ENGLISH_LINK_LOCALIZER_VERSION = 2;
 
 const SAFE_CANONICAL_FALLBACKS = new Map([
   ["대한민국", "South Korea"],
@@ -146,6 +146,47 @@ function addParam(parts, key, value) {
   return [...parts, ` ${key}=${clean}`].join(",");
 }
 
+function setParam(parts, params, key, value) {
+  const entry = params.get(key);
+  if (!entry) return parts;
+  const next = [...parts];
+  const prefix = String(parts[entry.index] || "").match(/^\s*/)?.[0] || " ";
+  next[entry.index] = `${prefix}${key}=${value}`;
+  return next;
+}
+
+function englishAlbumType(value) {
+  const normalized = normalize(value);
+  const map = new Map([
+    ["싱글", "Single"],
+    ["디지털 싱글", "Digital Single"],
+    ["정규", "Studio Album"],
+    ["미니", "Mini Album"],
+    ["스페셜", "Special Album"],
+    ["리패키지", "Repackage"],
+    ["컴필레이션", "Compilation"],
+    ["믹스테이프", "Mixtape"],
+    ["라이브 앨범", "Live Album"],
+    ["KBS 2TV 드라마", "KBS 2TV Drama"],
+  ]);
+  return map.get(normalized) || value;
+}
+
+function englishAlbumSequence(value) {
+  const normalized = normalize(value);
+  const match = normalized.match(/^(\d+)집$/);
+  if (!match) return value;
+  const n = Number(match[1]);
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  const suffix = mod100 >= 11 && mod100 <= 13 ? "th"
+    : mod10 === 1 ? "st"
+    : mod10 === 2 ? "nd"
+    : mod10 === 3 ? "rd"
+    : "th";
+  return `${n}${suffix}`;
+}
+
 function lastPathSegment(value) {
   const target = normalize(value).replace(/^\s+|\s+$/g, "");
   const slash = target.lastIndexOf("/");
@@ -239,6 +280,15 @@ export function localizeEnglishTemplateLabels(source, { currentTitle = "", index
     const parts = splitTopLevel(body);
     const name = templateName(parts[0]);
     const params = parseParams(parts);
+
+    if (name.toLowerCase() === "틀:음반 표시") {
+      let localizedParts = [...parts];
+      const type = params.get("음반종류")?.value;
+      const sequence = params.get("n집")?.value;
+      if (type) localizedParts = setParam(localizedParts, params, "음반종류", englishAlbumType(type));
+      if (sequence) localizedParts = setParam(localizedParts, params, "n집", englishAlbumSequence(sequence));
+      return `[include(${localizedParts.join(",")})]`;
+    }
 
     if (name.toLowerCase() === "틀:국기") {
       if (params.has("출력")) return full;
