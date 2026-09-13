@@ -182,6 +182,123 @@ async function validateHttp(title) {
   return { url, status: response.status, blockers };
 }
 
+async function fetchStageJob(job, stage) {
+  const rows = await pipelineDb(
+    "pipeline_jobs?run_id=eq." +
+      encodeURIComponent(job.run_id) +
+      "&source_document_id=eq." +
+      encodeURIComponent(job.source_document_id) +
+      "&stage=eq." +
+      encodeURIComponent(stage) +
+      "&select=*" +
+      "&limit=1",
+  );
+
+  return rows?.[0] || null;
+}
+
+function classifyBlockers(blockers) {
+  if (
+    blockers.some(
+      (value) =>
+        value.startsWith("missing_canonical_raw") ||
+        value.startsWith("missing_source_render") ||
+        value.startsWith("missing_source_meta") ||
+        value.startsWith("source_render_error") ||
+        value.startsWith("source_compat_not_current") ||
+        value.startsWith("source_patchset_not_current") ||
+        value.startsWith("source_missing_files:") ||
+        value.startsWith("source_missing_templates:") ||
+        value.startsWith("source_missing_youtube:") ||
+        value.startsWith("missing_files:") ||
+        value.startsWith("missing_templates:") ||
+        value.startsWith("missing_youtube:"),
+    )
+  ) {
+    return "source_render";
+  }
+
+  if (
+    blockers.some(
+      (value) =>
+        value.startsWith("missing_english_revision") ||
+        value.startsWith("missing_translated_title") ||
+        value.startsWith("translated_title_contains_hangul") ||
+        value.startsWith("published_visible_korean_") ||
+        value.startsWith("published_syntax_leak:") ||
+        value.startsWith("public_syntax_leak:"),
+    )
+  ) {
+    return "translation";
+  }
+
+  if (
+    blockers.some(
+      (value) =>
+        value.startsWith("missing_english_render") ||
+        value.startsWith("missing_english_render_meta") ||
+        value.startsWith("stale_english_render:") ||
+        value.startsWith("english_render_error"),
+    )
+  ) {
+    return "en_render";
+  }
+
+  if (
+    blockers.some(
+      (value) =>
+        value.startsWith("published_revision_mismatch:") ||
+        value.startsWith("missing_english_publish_snapshot") ||
+        value.startsWith("public_placeholder") ||
+        value.startsWith("http_status:"),
+    )
+  ) {
+    return "publish";
+  }
+
+  return "";
+}
+
+async function routeBack(job, stage, blockers) {
+  const target = await fetchStageJob(job, stage);
+
+  if (!target) {
+    throw new Error("cannot_route_back_missing_stage:" + stage);
+  }
+
+  const checkpoint =
+    target.checkpoint && typeof target.checkpoint === "object"
+      ? target.checkpoint
+      : {};
+
+  await updatePipelineJob(target.id, {
+    status: "retry",
+    locked_by: null,
+    locked_at: null,
+    finished_at: null,
+    last_error: "integration_feedback:" + blockers.join("|"),
+    checkpoint:
+      stage === "translation"
+        ? {
+            ...checkpoint,
+            forceRetranslate: true,
+            integrationFeedback: blockers,
+          }
+        : checkpoint,
+  });
+
+  await updatePipelineJob(job.id, {
+    status: "skipped",
+    locked_by: null,
+    locked_at: null,
+    last_error:
+      "routed_back_to_" + stage + ":" + blockers.join("|"),
+    finished_at: new Date().toISOString(),
+  });
+
+  await refreshRun();
+}
+
 async function fail(job, error) {
   const status = nextRetryStatus(job);
   await updatePipelineJob(job.id, {
@@ -273,7 +390,27 @@ while (true) {
     }
 
     if (blockers.length) {
-      throw new Error("integration_qa_failed:" + blockers.join("|"));
+      const routeBackStage = classifyBlockers(blockers);
+
+      if (routeBackStage) {
+        console.log(
+          "INTEGRATION ROUTE " +
+            doc.source_title +
+            " → " +
+            routeBackStage +
+            " · " +
+            blockers.join("|"),
+        );
+
+        await routeBack(job, routeBackStage, blockers);
+
+        if (once) break;
+        continue;
+      }
+
+      throw new Error(
+        "integration_qa_failed:" + blockers.join("|"),
+      );
     }
 
     await updatePipelineJob(job.id, {
