@@ -61,3 +61,57 @@ revoke all on public.pipeline_jobs from anon, authenticated;
 
 grant all on public.pipeline_runs to service_role;
 grant all on public.pipeline_jobs to service_role;
+
+create or replace function public.claim_pipeline_job(
+  p_run_id uuid,
+  p_worker_id text,
+  p_stage text default null
+)
+returns public.pipeline_jobs
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  claimed public.pipeline_jobs;
+begin
+  with candidate as (
+    select id
+    from public.pipeline_jobs
+    where run_id = p_run_id
+      and status in ('queued','retry')
+      and (p_stage is null or stage = p_stage)
+    order by
+      case stage
+        when 'raw' then 1
+        when 'source_render' then 2
+        when 'translation' then 3
+        when 'en_render' then 4
+        when 'publish' then 5
+        when 'integration_qa' then 6
+        else 99
+      end,
+      updated_at asc,
+      source_title asc
+    for update skip locked
+    limit 1
+  )
+  update public.pipeline_jobs j
+  set
+    status = 'running',
+    attempt = j.attempt + 1,
+    locked_by = p_worker_id,
+    locked_at = now(),
+    started_at = coalesce(j.started_at, now()),
+    updated_at = now(),
+    last_error = null
+  from candidate
+  where j.id = candidate.id
+  returning j.* into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_pipeline_job(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.claim_pipeline_job(uuid, text, text) to service_role;
