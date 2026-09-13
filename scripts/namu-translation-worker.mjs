@@ -416,6 +416,29 @@ async function updateJob(jobId, patch) {
   });
 }
 
+async function enqueueStage(job, stage) {
+  await db(
+    "pipeline_jobs?on_conflict=run_id,source_document_id,stage",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        run_id: job.run_id,
+        source_document_id: job.source_document_id,
+        source_title: job.source_title,
+        stage,
+        status: "queued",
+        attempt: 0,
+        max_attempts: 3,
+        checkpoint: {},
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+}
+
 async function markRetry(job, error, checkpoint = null) {
   const nextStatus =
     Number(job.attempt || 0) >= Number(job.max_attempts || 3)
@@ -523,6 +546,16 @@ async function processJob(job) {
     String(checkpoint.translatedTitle || document.translated_title || "").trim();
   let inputTokens = Number(checkpoint.inputTokens || 0);
   let outputTokens = Number(checkpoint.outputTokens || 0);
+  let modelsUsed = [
+    ...new Set([
+      ...(Array.isArray(checkpoint.modelsUsed)
+        ? checkpoint.modelsUsed
+        : checkpoint.model
+          ? [checkpoint.model]
+          : []),
+      requestModel,
+    ]),
+  ];
 
   await updateJob(job.id, {
     chunk_total: chunks.length,
@@ -531,6 +564,7 @@ async function processJob(job) {
       ...checkpoint,
       sourceHash,
       model: requestModel,
+      modelsUsed,
       chunkChars,
       chunkTotal: chunks.length,
       workspace: path.relative(dataRoot, dir),
@@ -606,6 +640,7 @@ async function processJob(job) {
     checkpoint = {
       sourceHash,
       model: requestModel,
+      modelsUsed,
       chunkChars,
       chunkTotal: chunks.length,
       completedChunks: index + 1,
@@ -652,12 +687,7 @@ async function processJob(job) {
     "utf8",
   );
 
-  const modelsUsed = [
-    ...new Set([
-      ...(Array.isArray(checkpoint.modelsUsed) ? checkpoint.modelsUsed : []),
-      requestModel,
-    ]),
-  ];
+  modelsUsed = [...new Set([...modelsUsed, requestModel])];
 
   const revision = await saveRevision({
     document,
@@ -666,6 +696,8 @@ async function processJob(job) {
     translationModelLabel:
       modelsUsed.length === 1 ? modelsUsed[0] : "mixed(" + modelsUsed.join(",") + ")",
   });
+
+  await enqueueStage(job, "en_render");
 
   await updateJob(job.id, {
     status: "pass",
