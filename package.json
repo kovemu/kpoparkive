@@ -35,7 +35,6 @@
     "namu:publish-worker": "node scripts/namu-publish-worker.mjs",
     "namu:integration-worker": "node scripts/namu-integration-worker.mjs",
     "namu:scope": "node scripts/namu-scope.mjs",
-    "namu:raw-worker": "node scripts/namu-raw-worker.mjs",
     "namu:pipeline:start": "node scripts/namu-pipeline-start.mjs",
     "namu:pipeline:check": "node scripts/namu-pipeline-check.mjs",
     "namu:batch": "node scripts/namu-batch.mjs"
