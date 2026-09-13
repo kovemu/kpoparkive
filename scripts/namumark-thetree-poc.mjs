@@ -295,6 +295,21 @@ function canonicalAssetKey(ref) {
   return assetName(ref).replace(/[?#].*$/, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function canonicalAssetBaseKey(ref) {
+  return canonicalAssetKey(ref)
+    .replace(/\.(?:svg|png|jpe?g|webp|gif|avif)$/i, "")
+    .trim();
+}
+
+function stagedAltAssetKey(row) {
+  const alt = normalizeTitle(row?.metadata?.alt || "")
+    .replace(/\.{3,}$/g, "")
+    .replace(/…$/g, "")
+    .trim();
+  if (!alt || /\.\.\.$/.test(alt)) return "";
+  return canonicalAssetBaseKey(alt);
+}
+
 function extractRawFileRefs(rawValue) {
   const refs = [];
   const seen = new Set();
@@ -337,15 +352,29 @@ async function reconcileExactStagedAssets(target, renderSource, existingRows) {
       "&order=captured_at.desc",
   );
   const stagedByKey = new Map();
+  const stagedByAlt = new Map();
   for (const row of stagedRows || []) {
-    const key = canonicalAssetKey(row?.canonical_key || row?.file_name || "");
-    if (!key || stagedByKey.has(key)) continue;
-    if (/^__anonymous__/i.test(String(row?.file_name || ""))) continue;
-    stagedByKey.set(key, row);
+    const fileName = String(row?.file_name || "");
+    const key = canonicalAssetKey(row?.canonical_key || fileName);
+    const anonymous = /^__anonymous__/i.test(fileName);
+
+    if (!anonymous && key && !stagedByKey.has(key)) {
+      stagedByKey.set(key, row);
+    }
+
+    // Browser DOM capture can preserve the exact Namu file alt even when the
+    // page capture could not infer a semantic file name. Reuse those anonymous
+    // captures only on an exact basename match (extension ignored), never on a
+    // fuzzy/truncated alt match.
+    const altKey = stagedAltAssetKey(row);
+    if (altKey && !stagedByAlt.has(altKey)) {
+      stagedByAlt.set(altKey, row);
+    }
   }
 
   for (const item of needed) {
-    const staged = stagedByKey.get(item.key);
+    const staged = stagedByKey.get(item.key)
+      || stagedByAlt.get(canonicalAssetBaseKey(item.name));
     if (!staged) continue;
     const resolvedUrl = stagedAssetPublicUrl(staged);
     if (!resolvedUrl) continue;
@@ -358,7 +387,10 @@ async function reconcileExactStagedAssets(target, renderSource, existingRows) {
       height: Number(staged.height || 0) || 0,
       resolved_from: "captured-dom-staging-exact",
       browser_capture_at: staged.captured_at || null,
-      browser_match_method: "staging-canonical-key-exact",
+      browser_match_method:
+        stagedByKey.get(item.key)?.id === staged.id
+          ? "staging-canonical-key-exact"
+          : "staging-alt-basename-exact",
     };
 
     const pseudo = {
@@ -1636,7 +1668,7 @@ async function main() {
     domFallbackRemoteMediaRemaining: Number(injectedFallbacks.remoteMediaRemaining || 0),
     fallbackTranslationQueue,
     fallbackExtractorVersion: 5,
-    assetReconcilerVersion: 3,
+    assetReconcilerVersion: 4,
     assetDependencyTemplateCount: reachableAssetSource.templateCount,
     categories: Array.isArray(result?.categories) ? result.categories.length : 0,
     headings: Array.isArray(result?.headings) ? result.headings.length : 0,
