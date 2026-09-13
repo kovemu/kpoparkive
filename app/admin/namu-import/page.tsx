@@ -190,19 +190,45 @@ export default function NamuImportPage() {
   return (
     <main className="adminShell">
       <section className="adminPanel">
-        <h1>Namu mirror importer</h1>
-        <p className="adminIntro">Reusable K-pop mirror pipeline. Normal operation is one Import click followed by Preview. Individual stages are kept only for debugging and recovery.</p>
+        <h1>Namu collection / debug</h1>
+        <p className="adminIntro">
+          Production collection is started manually from the existing Chrome extension
+          because NamuWiki may require human verification. After DOM/RAW collection is
+          complete, continue from the post-collection automation GUI.
+        </p>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 18,
+          }}
+        >
+          <a href="/admin/pipeline">
+            Open post-collection automation
+          </a>
+          <a href={rawPreviewHref} target="_blank" rel="noreferrer">
+            Open DOM/RAW preview
+          </a>
+        </div>
         <div className="adminForm">
           <label>Admin key<input type="password" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} autoComplete="current-password" /><small>Saved only in this browser after you enter it once.</small></label>
           <button type="button" disabled={busy || !adminKey} onClick={forgetAdminKey}>Forget saved admin key</button>
           <label>Root document<input value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} /></label>
           <label>Max depth<input type="number" min={0} max={4} value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} /></label>
           <label>Max documents<input type="number" min={1} max={200} value={maxDocuments} onChange={(e) => setMaxDocuments(Number(e.target.value))} /></label>
-          <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImportAndParse}>{busy ? "Working..." : `Import ${rootTitle || "document"}`}</button>
-          <a href={rawPreviewHref} target="_blank" rel="noreferrer">Open DOM/RAW preview</a>
           <details>
-            <summary style={{ cursor: "pointer", fontWeight: 700, margin: "10px 0" }}>Advanced / Debug tools</summary>
+            <summary style={{ cursor: "pointer", fontWeight: 700, margin: "10px 0" }}>
+              Legacy import / Advanced debug tools
+            </summary>
             <div className="adminForm">
+              <button
+                type="button"
+                disabled={busy || !adminKey || !rootTitle}
+                onClick={runImportAndParse}
+              >
+                {busy ? "Working..." : `Legacy import ${rootTitle || "document"}`}
+              </button>
               <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runImport}>1. Crawl only</button>
               <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runParse}>2. Rebuild compatibility AST</button>
               <button type="button" disabled={busy || !adminKey || !rootTitle} onClick={runRawExtract}>3. Force rebuild DOM/RAW artifacts</button>
