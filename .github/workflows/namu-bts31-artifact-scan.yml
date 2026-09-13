@@ -1,0 +1,134 @@
+name: BTS31 Artifact Asset Scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/namu-bts31-artifact-scan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: "https://hukrrzhltiyirtkxmotj.supabase.co/functions/v1/namu-bts31-proxy"
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install parser
+        run: |
+          mkdir -p /tmp/scan && cd /tmp/scan
+          npm init -y >/dev/null 2>&1
+          npm install node-html-parser@7.0.1 --no-audit --no-fund
+
+      - name: Exchange OIDC session
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=namu-bts31")"
+          oidc="$(printf '%s' "$oidc_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).value))')"
+          session_json="$(curl -fsSL -X POST -H "Authorization: Bearer $oidc" "$NEXT_PUBLIC_SUPABASE_URL/session")"
+          session="$(printf '%s' "$session_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')"
+          echo "::add-mask::$session"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$session" >> "$GITHUB_ENV"
+
+      - name: Scan stored browser artifacts for missing file URLs
+        shell: bash
+        run: |
+          cat >/tmp/scan/scan.mjs <<'NODE'
+          import { parse } from "node-html-parser";
+          import { gunzipSync } from "node:zlib";
+
+          const base = process.env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/,"");
+          const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          const headers = { apikey:key, Authorization:"Bearer "+key };
+
+          async function db(path) {
+            const r = await fetch(base + "/rest/v1/" + path, {headers});
+            const t = await r.text();
+            if (!r.ok) throw new Error("DB "+r.status+" "+t);
+            return t ? JSON.parse(t) : [];
+          }
+          const norm = s => String(s||"").normalize("NFKC").trim().replace(/^(?:파일|File):/i,"").replace(/\s+/g," ").toLowerCase();
+          function decodeTarget(href) {
+            try {
+              const u = new URL(href, "https://namu.wiki");
+              const m = u.pathname.match(/^\/w\/(.+)$/);
+              if (!m) return "";
+              return decodeURIComponent(m[1]);
+            } catch { return ""; }
+          }
+          function urlsFromImg(img) {
+            const out = [];
+            for (const a of ["src","data-src","data-original","data-lazy-src"]) {
+              const v = img.getAttribute(a); if (v) out.push(v);
+            }
+            const ss = img.getAttribute("srcset") || "";
+            for (const p of ss.split(",")) { const v=p.trim().split(/\s+/)[0]; if(v) out.push(v); }
+            return [...new Set(out.filter(v=>/^https?:\/\//i.test(v)))];
+          }
+
+          const reqs = await db("namu_raw_requirements?root_title=eq."+encodeURIComponent("방탄소년단")+"&status=neq.ignored&select=source_document_id,source_title&limit=500");
+          const articles = reqs.filter(x=>x.source_document_id && !String(x.source_title||"").startsWith("틀:"));
+          const ids = articles.map(x=>x.source_document_id);
+          let docs=[];
+          for(let i=0;i<ids.length;i+=20){
+            const batch=ids.slice(i,i+20).map(encodeURIComponent).join(",");
+            docs.push(...await db("source_documents?id=in.("+batch+")&select=id,source_title,content_namumark_meta,source_browser_capture_meta"));
+          }
+
+          let uniqueMissing=new Set(), matched=new Map(), rawMentions=new Set(), scanned=0;
+          for(const doc of docs){
+            const miss = Array.isArray(doc?.content_namumark_meta?.missingFiles) ? doc.content_namumark_meta.missingFiles : [];
+            if(!miss.length) continue;
+            for(const m of miss) uniqueMissing.add(norm(m));
+            const st=doc?.source_browser_capture_meta?.artifact_storage;
+            if(!st?.bucket || !st?.article_path) continue;
+            const p=st.article_path.split("/").map(encodeURIComponent).join("/");
+            const r=await fetch(base+"/storage/v1/object/authenticated/"+encodeURIComponent(st.bucket)+"/"+p,{headers});
+            if(!r.ok){ console.log("ARTIFACT_FAIL",doc.source_title,r.status); continue; }
+            let b=Buffer.from(await r.arrayBuffer());
+            if(st.encoding==="gzip") b=gunzipSync(b);
+            const html=b.toString("utf8");
+            scanned++;
+            const root=parse(html);
+            const missingMap=new Map(miss.map(x=>[norm(x),x]));
+            for(const [k,orig] of missingMap){
+              if(html.toLowerCase().includes(String(orig).replace(/^(?:파일|File):/i,"").toLowerCase())) rawMentions.add(k);
+            }
+            for(const a of root.querySelectorAll("a")){
+              const target=decodeTarget(a.getAttribute("href")||"");
+              const k=norm(target);
+              if(!missingMap.has(k)) continue;
+              let urls=[];
+              for(const img of a.querySelectorAll("img")) urls.push(...urlsFromImg(img));
+              if(urls.length) matched.set(k,{name:missingMap.get(k),owner:doc.source_title,urls:[...new Set(urls)]});
+            }
+            for(const img of root.querySelectorAll("img")){
+              for(const label of [img.getAttribute("alt"),img.getAttribute("title")]){
+                const k=norm(label);
+                if(!missingMap.has(k)) continue;
+                const urls=urlsFromImg(img);
+                if(urls.length && !matched.has(k)) matched.set(k,{name:missingMap.get(k),owner:doc.source_title,urls});
+              }
+            }
+          }
+          const hostCounts={};
+          for(const v of matched.values()) for(const u of v.urls){
+            try{const h=new URL(u).hostname;hostCounts[h]=(hostCounts[h]||0)+1;}catch{}
+          }
+          const unmatched=[...uniqueMissing].filter(k=>!matched.has(k));
+          console.log("SUMMARY",JSON.stringify({docsScanned:scanned,uniqueMissing:uniqueMissing.size,rawMentions:rawMentions.size,matchedWithUrl:matched.size,unmatched:unmatched.length,hostCounts},null,2));
+          console.log("MATCHED");
+          for(const [k,v] of matched) console.log(JSON.stringify({key:k,name:v.name,owner:v.owner,urls:v.urls.slice(0,3)}));
+          console.log("UNMATCHED_KEYS",JSON.stringify(unmatched));
+          NODE
+          cd /tmp/scan
+          node scan.mjs
