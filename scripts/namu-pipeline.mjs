@@ -170,7 +170,7 @@ function sourceChecks(doc) {
   return { pass: blockers.length === 0, blockers };
 }
 
-function translationChecks(doc) {
+function translationChecks(doc, { isTemplate = false } = {}) {
   const blockers = [];
 
   if (doc?.content_language !== "en" || !textPresent(doc?.content_wikitext)) {
@@ -189,13 +189,15 @@ function translationChecks(doc) {
     blockers.push("missing_content_revision");
   }
 
-  const translatedTitle = String(doc?.translated_title || "")
-    .normalize("NFKC")
-    .trim();
+  if (!isTemplate) {
+    const translatedTitle = String(doc?.translated_title || "")
+      .normalize("NFKC")
+      .trim();
 
-  if (!translatedTitle) blockers.push("missing_translated_title");
-  else if (/[가-힣]/.test(translatedTitle)) {
-    blockers.push("translated_title_contains_hangul");
+    if (!translatedTitle) blockers.push("missing_translated_title");
+    else if (/[가-힣]/.test(translatedTitle)) {
+      blockers.push("translated_title_contains_hangul");
+    }
   }
 
   const sourceHash = String(doc?.source_hash || "");
@@ -305,13 +307,17 @@ function publishChecks(doc) {
   return { pass: blockers.length === 0, blockers };
 }
 
-function assessDocument(requirement, doc) {
+function assessDocument(requirement, doc, { dependency = false } = {}) {
+  const isTemplate = dependency ||
+    /^(?:틀|Template):/i.test(String(requirement?.source_title || doc?.source_title || ""));
+
   if (!doc) {
     return {
       sourceTitle: requirement.source_title,
       sourceDocumentId: requirement.source_document_id,
       stage: "RAW",
       status: "BLOCKED",
+      dependency: isTemplate,
       nextAction: "capture_or_restore_document",
       blockers: ["missing_source_document"],
       checks: {
@@ -326,11 +332,13 @@ function assessDocument(requirement, doc) {
 
   const hasRaw = textPresent(doc.source_wikitext);
   const source = sourceChecks(doc);
-  const translation = translationChecks(doc);
+  const translation = translationChecks(doc, { isTemplate });
   const englishRender = englishRenderChecks(doc);
-  const publish = publishChecks(doc);
+  const publish = isTemplate
+    ? { pass: true, blockers: [] }
+    : publishChecks(doc);
 
-  let stage = "COMPLETE";
+  let stage = isTemplate ? "COMPLETE_DEPENDENCY" : "COMPLETE";
   let nextAction = "none";
   let blockers = [];
 
@@ -350,7 +358,7 @@ function assessDocument(requirement, doc) {
     stage = "EN_RENDER";
     nextAction = "render_or_repair_english";
     blockers = englishRender.blockers;
-  } else if (!publish.pass) {
+  } else if (!isTemplate && !publish.pass) {
     stage = "PUBLISH";
     nextAction = "publish";
     blockers = publish.blockers;
@@ -358,10 +366,14 @@ function assessDocument(requirement, doc) {
 
   return {
     sourceTitle: doc.source_title,
+    dependency: isTemplate,
     translatedTitle: doc.translated_title || null,
     sourceDocumentId: doc.id,
     stage,
-    status: stage === "COMPLETE" ? "PASS" : "WAIT",
+    status:
+      stage === "COMPLETE" || stage === "COMPLETE_DEPENDENCY"
+        ? "PASS"
+        : "WAIT",
     nextAction,
     blockers,
     contentRevision: Number(doc.content_revision_no || 0),
@@ -382,12 +394,12 @@ async function fetchScope(root) {
       enc(root) +
       "&status=neq.ignored" +
       "&select=source_document_id,source_title,status,priority,reason_codes" +
-      "&order=priority.asc,source_title.asc",
+      "&order=priority.desc,source_title.asc",
   );
 
   return (rows || []).filter((row) => {
     const title = String(row?.source_title || "").normalize("NFKC").trim();
-    return title && !title.startsWith("틀:");
+    return Boolean(title);
   });
 }
 
@@ -434,13 +446,33 @@ async function fetchDocuments(ids) {
 }
 
 const scope = await fetchScope(rootTitle);
+const releaseScope = scope.filter(
+  (row) => !/^(?:틀|Template):/i.test(String(row.source_title || "")),
+);
+const dependencyScope = scope.filter(
+  (row) => /^(?:틀|Template):/i.test(String(row.source_title || "")),
+);
+
 const ids = [
   ...new Set(scope.map((row) => row.source_document_id).filter(Boolean)),
 ];
 const docs = await fetchDocuments(ids);
 const byId = new Map(docs.map((row) => [row.id, row]));
-const results = scope.map((requirement) =>
-  assessDocument(requirement, byId.get(requirement.source_document_id)),
+
+const results = releaseScope.map((requirement) =>
+  assessDocument(
+    requirement,
+    byId.get(requirement.source_document_id),
+    { dependency: false },
+  ),
+);
+
+const dependencyResults = dependencyScope.map((requirement) =>
+  assessDocument(
+    requirement,
+    byId.get(requirement.source_document_id),
+    { dependency: true },
+  ),
 );
 
 const stages = [
@@ -452,6 +484,14 @@ const stages = [
   "COMPLETE",
 ];
 
+const dependencyStages = [
+  "RAW",
+  "SOURCE_RENDER",
+  "TRANSLATION",
+  "EN_RENDER",
+  "COMPLETE_DEPENDENCY",
+];
+
 const stageCounts = Object.fromEntries(
   stages.map((stage) => [
     stage,
@@ -459,16 +499,28 @@ const stageCounts = Object.fromEntries(
   ]),
 );
 
+const dependencyStageCounts = Object.fromEntries(
+  dependencyStages.map((stage) => [
+    stage,
+    dependencyResults.filter((row) => row.stage === stage).length,
+  ]),
+);
+
 const summary = {
   rootTitle,
   mode: persist ? "status+persist" : "status-only",
   scopeCount: results.length,
+  dependencyCount: dependencyResults.length,
+  dependencyReady: dependencyStageCounts.COMPLETE_DEPENDENCY,
+  dependencyWaiting:
+    dependencyResults.length - dependencyStageCounts.COMPLETE_DEPENDENCY,
   expectedCount,
   scopeCountMatches:
     expectedCount == null ? null : results.length === expectedCount,
   complete: stageCounts.COMPLETE,
   waiting: results.length - stageCounts.COMPLETE,
   stageCounts,
+  dependencyStageCounts,
   generatedAt: new Date().toISOString(),
 };
 
@@ -482,9 +534,10 @@ if (persist) {
       status: "queued",
       scope_count: results.length,
       config: {
-        controllerVersion: 1,
+        controllerVersion: 2,
         createdFrom: "namu:pipeline --persist",
         snapshotAt: summary.generatedAt,
+        dependencyCount: dependencyResults.length,
       },
     }),
   });
@@ -502,7 +555,7 @@ if (persist) {
     COMPLETE: "integration_qa",
   };
 
-  const jobs = results.map((row) => ({
+  const releaseJobs = results.map((row) => ({
     run_id: persistedRun.id,
     source_document_id: row.sourceDocumentId,
     source_title: row.sourceTitle,
@@ -513,6 +566,7 @@ if (persist) {
     chunk_current: 0,
     chunk_total: 0,
     checkpoint: {
+      dependency: false,
       controllerStage: row.stage,
       controllerStatus: row.status,
       blockers: row.blockers,
@@ -521,6 +575,30 @@ if (persist) {
       snapshotAt: summary.generatedAt,
     },
   }));
+
+  const dependencyJobs = dependencyResults
+    .filter((row) => row.stage !== "COMPLETE_DEPENDENCY")
+    .map((row) => ({
+      run_id: persistedRun.id,
+      source_document_id: row.sourceDocumentId,
+      source_title: row.sourceTitle,
+      stage: stageMap[row.stage] || "raw",
+      status: "queued",
+      attempt: 0,
+      max_attempts: 3,
+      chunk_current: 0,
+      chunk_total: 0,
+      checkpoint: {
+        dependency: true,
+        controllerStage: row.stage,
+        controllerStatus: row.status,
+        blockers: row.blockers,
+        contentRevision: row.contentRevision || 0,
+        snapshotAt: summary.generatedAt,
+      },
+    }));
+
+  const jobs = [...dependencyJobs, ...releaseJobs];
 
   if (jobs.length > 0) {
     await db(
@@ -551,7 +629,11 @@ if (json) {
       " complete=" +
       summary.complete +
       " waiting=" +
-      summary.waiting,
+      summary.waiting +
+      " · templates=" +
+      summary.dependencyReady +
+      "/" +
+      summary.dependencyCount,
   );
   console.log(
     stages
@@ -575,6 +657,23 @@ if (json) {
         " · " +
         details,
     );
+  }
+
+  if (dependencyResults.length > 0) {
+    console.log("");
+    console.log("Template dependencies:");
+    for (const row of dependencyResults) {
+      const marker =
+        row.stage === "COMPLETE_DEPENDENCY" ? "PASS" : "WAIT";
+      console.log(
+        marker.padEnd(4) +
+          " " +
+          row.stage.padEnd(20) +
+          " " +
+          row.sourceTitle +
+          (row.blockers.length ? " · " + row.blockers.join(",") : ""),
+      );
+    }
   }
 
   console.log("");
